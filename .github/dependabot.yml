@@ -1,0 +1,39 @@
+version: 2
+updates:
+  # === Rust / Cargo ===
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 6
+    rebase-strategy: "auto"
+    commit-message-prefix: "deps(rust):"
+
+    # Agrupa actualizaciones minor y patch para reducir ruido
+    groups:
+      rust-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+    # Las actualizaciones de seguridad NO se agrupan (llegan rápido y por separado)
+
+  # === GitHub Actions ===
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+    open-pull-requests-limit: 4
+    rebase-strategy: "auto"
+    commit-message-prefix: "ci(deps):"
+
+    groups:
+      github-actions:
+        patterns:
+          - "*"
