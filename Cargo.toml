@@ -5,5 +5,15 @@ members = [
     "packages/core",
     "packages/ffi",
     "packages/cli",
-    "packages/wasm"
+    "packages/wasm",
 ]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/xdvi/l10n4x"
+rust-version = "1.75"  # MSRV
+
+[workspace.dependencies]
+# Shared dependencies will go here
