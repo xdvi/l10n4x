@@ -1,0 +1,119 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build-assets:
+    name: Build assets for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            bin_name: l10n4x
+          - os: macos-latest
+            bin_name: l10n4x
+          - os: windows-latest
+            bin_name: l10n4x.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Build target
+        run: cargo build --release -p l10n4x-toolkit -p l10n4c
+
+      - name: Package assets (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          mkdir -p dist-assets
+          cp target/release/l10n4x dist-assets/l10n4x-linux
+          cp target/release/libl10n4c.so dist-assets/libl10n4c-linux.so
+          cp target/release/libl10n4c.a dist-assets/libl10n4c-linux.a
+
+      - name: Package assets (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          mkdir -p dist-assets
+          cp target/release/l10n4x dist-assets/l10n4x-macos
+          cp target/release/libl10n4c.dylib dist-assets/libl10n4c-macos.dylib
+          cp target/release/libl10n4c.a dist-assets/libl10n4c-macos.a
+
+      - name: Package assets (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          mkdir -p dist-assets
+          cp target/release/l10n4x.exe dist-assets/l10n4x-windows.exe
+          cp target/release/l10n4c.dll dist-assets/l10n4c-windows.dll
+          cp target/release/l10n4c.lib dist-assets/l10n4c-windows.lib
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-${{ matrix.os }}
+          path: dist-assets/*
+
+  build-wasm:
+    name: Build WASM asset
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - name: Build WASM
+        run: cargo build --target wasm32-unknown-unknown --release -p l10n4x-wasm
+
+      - name: Prepare WASM asset
+        run: |
+          mkdir -p dist-wasm
+          cp target/wasm32-unknown-unknown/release/l10n4x.wasm dist-wasm/l10n4x.wasm
+
+      - name: Upload WASM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: assets-wasm
+          path: dist-wasm/*
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-assets, build-wasm]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten artifacts structure
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f -exec cp {} release-assets/ \;
+          ls -la release-assets
+
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create ${{ github.ref_name }} release-assets/* \
+            --title "${{ github.ref_name }}" \
+            --generate-notes

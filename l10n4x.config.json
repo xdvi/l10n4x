@@ -1,0 +1,19 @@
+{
+  "project": "l10n4x_project",
+  "sourceDir": "./locales",
+  "outputDir": "./dist/locales",
+  "keyEnv": "L10N4X_KEY",
+  "fallback": "en",
+  "targets": [
+    {
+      "type": "go",
+      "outDir": "./i18n/go",
+      "options": {}
+    },
+    {
+      "type": "typescript",
+      "outDir": "./i18n/ts",
+      "options": {}
+    }
+  ]
+}

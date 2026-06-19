@@ -1,0 +1,106 @@
+# .github/dependabot.yml
+# Ref: https://docs.github.com/en/code-security/dependabot
+
+version: 2
+
+updates:
+
+    # ────────────────────────────────────────────────────────────────
+  # Cargo workspace
+  # Minor + patch bumps are grouped to minimize PR noise.
+  # Major bumps intentionally surface as individual PRs so reviewers
+  # can evaluate each breaking change in isolation.
+  # ────────────────────────────────────────────────────────────────
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"          # early UTC — merges before EU/US business hours
+      timezone: "UTC"
+    open-pull-requests-limit: 20   # generous ceiling; groups collapse many into few PRs
+    rebase-strategy: "auto"        # keep PRs current with main automatically
+    versioning-strategy: "auto"    # increase for libs, lockfile-only for bins — per crate type
+    labels:
+      - "dependencies"
+      - "rust"
+      - "automated"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(dev-deps)"
+      include: "scope"           # e.g. chore(deps): bump serde from 1.0.195 to 1.0.196
+
+        # Uncomment to gate PRs on team review before merge
+    # reviewers:
+    #   - "your-security-team"
+    # assignees:
+    #   - "platform-lead"
+
+    # Target a dedicated branch if you use a PR-based release flow
+    # target-branch: "deps"
+
+    groups:
+            # ── Patch-only: safe to auto-merge with green CI ──
+      cargo-patch-all:
+        patterns: ["*"]
+        update-types: ["patch"]
+
+            # ── Minor by ecosystem stack (grouped for coherent review) ──
+      cargo-async-runtime:
+        patterns: ["tokio", "tokio-*", "futures", "futures-*", "async-*", "pin-project*"]
+        update-types: ["minor", "patch"]
+
+      cargo-serialization:
+        patterns: ["serde", "serde_*", "bincode", "rmp*", "postcard"]
+        update-types: ["minor", "patch"]
+
+      cargo-observability:
+        patterns: ["tracing", "tracing-*", "log", "env_logger", "metrics*"]
+        update-types: ["minor", "patch"]
+
+      cargo-cli:
+        patterns: ["clap", "clap-*", "clap_*"]
+        update-types: ["minor", "patch"]
+
+      cargo-wasm-web:
+        patterns: ["wasm-bindgen*", "js-sys", "web-sys", "wasm-*", "gloo*"]
+        update-types: ["minor", "patch"]
+
+            # Catch-all: everything else, minor bumps in one PR
+      cargo-minor-rest:
+        patterns: ["*"]
+        update-types: ["minor"]
+
+        # Major bumps are NOT grouped — each surfaces as its own PR.
+    # To suppress a specific major bump until you are ready:
+    # ignore:
+    #   - dependency-name: "tokio"
+    #     update-types: ["version-update:semver-major"]
+
+    # ────────────────────────────────────────────────────────────────
+  # GitHub Actions
+  # All minor + patch updates grouped into one PR per week.
+  # Major bumps (e.g. actions/checkout v3 → v4) stay individual.
+  # SHA-pinning for supply-chain safety should be enforced by a
+  # separate policy tool (e.g. Harden-Runner, StepSecurity).
+  # ────────────────────────────────────────────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    open-pull-requests-limit: 10
+    rebase-strategy: "auto"
+    labels:
+      - "dependencies"
+      - "github-actions"
+      - "automated"
+    commit-message:
+      prefix: "chore(ci)"
+      include: "scope"
+    groups:
+      github-actions-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
