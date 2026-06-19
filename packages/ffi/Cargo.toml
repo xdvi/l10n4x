@@ -1,0 +1,15 @@
+[package]
+name = "l10n4c"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+l10n4x-core = { path = "../core", default-features = false, features = ["alloc", "encryption"] }
+l10n4x-compiler = { path = "../compiler" }
+serde_json = { version = "1.0" }
