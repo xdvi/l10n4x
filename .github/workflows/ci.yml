@@ -8,7 +8,7 @@ on:
 
 jobs:
   check:
-    name: Check + Clippy
+    name: Check + Clippy + Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -20,11 +20,11 @@ jobs:
         run: cargo check --workspace --all-features
       - name: Clippy
         run: cargo clippy --workspace --all-features -- -D warnings
-      - name: Format check
+      - name: Format
         run: cargo fmt --all -- --check
 
   test:
-    name: Test
+    name: Tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,16 +34,16 @@ jobs:
         run: cargo test --workspace --all-features
 
   no_std:
-    name: no_std + alloc check
+    name: no_std + alloc
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Check core with no_std + alloc
+      - name: Check core (no_std + alloc)
         run: cargo check -p l10n4x-core --no-default-features --features alloc
 
   wasm:
-    name: Wasm check
+    name: Wasm32
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +52,21 @@ jobs:
           targets: wasm32-unknown-unknown
       - name: Check core for wasm32
         run: cargo check -p l10n4x-core --no-default-features --features alloc --target wasm32-unknown-unknown
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v1
+        with:
+          command: check
+
+  msrv:
+    name: MSRV Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.75
+      - name: Check with MSRV
+        run: cargo check --workspace --all-features
