@@ -1,0 +1,22 @@
+# Rust compilation target
+/target/
+
+# Compiled distribution files
+/dist/
+/locales_compiled/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+.env.local
+.env.*.local
