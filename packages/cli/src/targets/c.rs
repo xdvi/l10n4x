@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 
 pub fn generate(
     out_dir: &Path,
@@ -15,8 +15,14 @@ pub fn generate(
     for k in sorted_keys {
         let name = to_upper_snake_case(k);
         enum_definitions.push_str(&format!("    L10N4X_{},\n", name));
-        to_string_cases.push_str(&format!("        case L10N4X_{}: return \"{}\";\n", name, k));
-        from_string_cases.push_str(&format!("    if (strcmp(str, \"{}\") == 0) return L10N4X_{};\n", k, name));
+        to_string_cases.push_str(&format!(
+            "        case L10N4X_{}: return \"{}\";\n",
+            name, k
+        ));
+        from_string_cases.push_str(&format!(
+            "    if (strcmp(str, \"{}\") == 0) return L10N4X_{};\n",
+            k, name
+        ));
     }
 
     // Generate .h

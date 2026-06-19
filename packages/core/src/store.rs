@@ -1,12 +1,12 @@
 extern crate alloc;
-use alloc::vec::Vec;
-use alloc::string::String;
-use alloc::string::ToString;
-use alloc::boxed::Box;
-use core::sync::atomic::{AtomicPtr, AtomicUsize, Ordering, AtomicBool};
-use core::cell::UnsafeCell;
 use crate::binary_format::BinaryFormatReader;
 use crate::formatter::format_message;
+use alloc::boxed::Box;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use core::cell::UnsafeCell;
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
 pub struct TranslationStore {
     // List of (locale, decrypted binary buffer)
@@ -51,7 +51,11 @@ impl<T> SpinMutex<T> {
     }
 
     fn lock(&self) -> SpinMutexGuard<'_, T> {
-        while self.lock.compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed).is_err() {
+        while self
+            .lock
+            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
             core::hint::spin_loop();
         }
         SpinMutexGuard { mutex: self }
@@ -97,7 +101,9 @@ where
     let res = if !ptr.is_null() {
         unsafe { f(&*ptr) }
     } else {
-        let empty = TranslationStore { locales: Vec::new() };
+        let empty = TranslationStore {
+            locales: Vec::new(),
+        };
         f(&empty)
     };
     READERS.fetch_sub(1, Ordering::SeqCst);
@@ -170,7 +176,9 @@ pub fn set_fallback_locale(locale_str: &str) -> bool {
 
 /// Clears all loaded translations.
 pub fn clear_translations() {
-    swap_store(TranslationStore { locales: Vec::new() });
+    swap_store(TranslationStore {
+        locales: Vec::new(),
+    });
 }
 
 /// Helper function to translate a key directly into a caller-provided Writer
@@ -209,7 +217,9 @@ pub fn translate_to_writer<W: core::fmt::Write>(
     if success.is_some() {
         Ok(())
     } else {
-        writer.write_str(key).map_err(|_| "Failed to write key fallback")?;
+        writer
+            .write_str(key)
+            .map_err(|_| "Failed to write key fallback")?;
         Ok(())
     }
 }

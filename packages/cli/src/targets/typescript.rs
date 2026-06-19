@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 
 const TS_TEMPLATE: &str = include_str!("../templates/ts_generated.ts");
 

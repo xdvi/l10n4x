@@ -1,11 +1,13 @@
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
+
 use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::path::Path;
 
-use l10n4x_core::crypto::set_encryption_key;
-use l10n4x_core::store::{get_fallback_locale, set_fallback_locale, clear_translations};
 use l10n4x_compiler::compile_translations;
-use l10n4x_core::loader::{load_pak_locale, load_pak_directory};
+use l10n4x_core::crypto::set_encryption_key;
+use l10n4x_core::loader::{load_pak_directory, load_pak_locale};
+use l10n4x_core::store::{clear_translations, get_fallback_locale, set_fallback_locale};
 
 fn write_to_c_buffer(s: &str, buf: *mut u8, max_len: usize) -> usize {
     let len = s.len();
@@ -94,10 +96,9 @@ pub extern "C" fn l10n4c_load_locale(
     let prefix_str = if prefix.is_null() {
         ""
     } else {
-        match unsafe { CStr::from_ptr(prefix) }.to_str() {
-            Ok(s) => s,
-            Err(_) => "",
-        }
+        unsafe { CStr::from_ptr(prefix) }
+            .to_str()
+            .unwrap_or_default()
     };
 
     let parsed_json: serde_json::Value = match serde_json::from_str(json_str) {
@@ -180,13 +181,11 @@ pub extern "C" fn l10n4c_translate(
         Err(_) => &fallback,
     };
 
-    let key_str = match unsafe { CStr::from_ptr(key) }.to_str() {
-        Ok(s) => s,
-        Err(_) => "",
-    };
+    let key_str = unsafe { CStr::from_ptr(key) }.to_str().unwrap_or_default();
 
     let mut resolved_str = String::new();
-    if l10n4x_core::store::translate_to_writer(locale_str, key_str, &[], &mut resolved_str).is_err() {
+    if l10n4x_core::store::translate_to_writer(locale_str, key_str, &[], &mut resolved_str).is_err()
+    {
         resolved_str = key_str.to_string();
     }
 
@@ -214,24 +213,28 @@ pub extern "C" fn l10n4c_translate_with_params(
         Err(_) => &fallback,
     };
 
-    let key_str = match unsafe { CStr::from_ptr(key) }.to_str() {
-        Ok(s) => s,
-        Err(_) => "",
-    };
+    let key_str = unsafe { CStr::from_ptr(key) }.to_str().unwrap_or_default();
 
     let mut params = std::collections::HashMap::new();
     if !params_json.is_null() {
         if let Ok(json_str) = unsafe { CStr::from_ptr(params_json) }.to_str() {
-            if let Ok(parsed) = serde_json::from_str::<std::collections::HashMap<String, String>>(json_str) {
+            if let Ok(parsed) =
+                serde_json::from_str::<std::collections::HashMap<String, String>>(json_str)
+            {
                 params = parsed;
             }
         }
     }
 
-    let params_vec: Vec<(&str, &str)> = params.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let params_vec: Vec<(&str, &str)> = params
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     let mut resolved_str = String::new();
-    if l10n4x_core::store::translate_to_writer(locale_str, key_str, &params_vec, &mut resolved_str).is_err() {
+    if l10n4x_core::store::translate_to_writer(locale_str, key_str, &params_vec, &mut resolved_str)
+        .is_err()
+    {
         resolved_str = key_str.to_string();
     }
 

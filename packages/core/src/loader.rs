@@ -1,7 +1,7 @@
 extern crate alloc;
-use alloc::string::ToString;
 use crate::crypto::decrypt_gcm;
 use crate::store::{read_store, swap_store, TranslationStore};
+use alloc::string::ToString;
 
 /// Loads raw (decrypted) binary format bytes into the global store for a given locale.
 pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
@@ -13,7 +13,9 @@ pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
         } else {
             new_locales.push((locale_str.to_string(), bytes.to_vec()));
         }
-        swap_store(TranslationStore { locales: new_locales });
+        swap_store(TranslationStore {
+            locales: new_locales,
+        });
         success = true;
     });
     success
@@ -56,15 +58,13 @@ pub fn load_pak_directory(dir_path_str: &str) -> bool {
     };
 
     let mut loaded_any = false;
-    for entry in entries {
-        if let Ok(entry) = entry {
-            let file_path = entry.path();
-            if file_path.is_file() && file_path.extension().map_or(false, |ext| ext == "pak") {
-                if let Some(locale) = file_path.file_stem().and_then(|s| s.to_str()) {
-                    if let Some(path_str) = file_path.to_str() {
-                        if load_pak_locale(locale, path_str) {
-                            loaded_any = true;
-                        }
+    for entry in entries.flatten() {
+        let file_path = entry.path();
+        if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "pak") {
+            if let Some(locale) = file_path.file_stem().and_then(|s| s.to_str()) {
+                if let Some(path_str) = file_path.to_str() {
+                    if load_pak_locale(locale, path_str) {
+                        loaded_any = true;
                     }
                 }
             }

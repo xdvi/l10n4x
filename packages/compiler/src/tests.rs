@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::icu_parser::{MessageParser, MessageNode, PluralCaseKey};
     use crate::binary_writer::write_binary_format;
+    use crate::icu_parser::{MessageNode, MessageParser, PluralCaseKey};
     use l10n4x_core::binary_format::BinaryFormatReader;
     use l10n4x_core::formatter::format_message;
     use std::collections::HashMap;
@@ -18,24 +18,35 @@ mod tests {
 
     #[test]
     fn test_parser_plural_mf1() {
-        let parser = MessageParser::new("{count, plural, =0 {no messages} =1 {one message} other {# messages}}");
+        let parser = MessageParser::new(
+            "{count, plural, =0 {no messages} =1 {one message} other {# messages}}",
+        );
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         if let MessageNode::Plural { var, cases } = &nodes[0] {
             assert_eq!(var, "count");
             assert_eq!(cases.len(), 3);
             assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
-            assert_eq!(cases[0].1, vec![MessageNode::Text("no messages".to_string())]);
+            assert_eq!(
+                cases[0].1,
+                vec![MessageNode::Text("no messages".to_string())]
+            );
 
             assert_eq!(cases[1].0, PluralCaseKey::Exact(1.0));
-            assert_eq!(cases[1].1, vec![MessageNode::Text("one message".to_string())]);
+            assert_eq!(
+                cases[1].1,
+                vec![MessageNode::Text("one message".to_string())]
+            );
 
             assert_eq!(cases[2].0, PluralCaseKey::Other);
             // '#' in MF1 gets translated to Variable(count)
-            assert_eq!(cases[2].1, vec![
-                MessageNode::Variable("count".to_string()),
-                MessageNode::Text(" messages".to_string())
-            ]);
+            assert_eq!(
+                cases[2].1,
+                vec![
+                    MessageNode::Variable("count".to_string()),
+                    MessageNode::Text(" messages".to_string())
+                ]
+            );
         } else {
             panic!("Expected Plural node");
         }
@@ -43,29 +54,40 @@ mod tests {
 
     #[test]
     fn test_parser_plural_mf2() {
-        let parser = MessageParser::new(r#"
+        let parser = MessageParser::new(
+            r#"
             match $count
             when 0 {no messages}
             when one {one message}
             * {{ $count } messages}
-        "#);
+        "#,
+        );
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 1);
         if let MessageNode::Plural { var, cases } = &nodes[0] {
             assert_eq!(var, "count");
             assert_eq!(cases.len(), 3);
-            
+
             assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
-            assert_eq!(cases[0].1, vec![MessageNode::Text("no messages".to_string())]);
+            assert_eq!(
+                cases[0].1,
+                vec![MessageNode::Text("no messages".to_string())]
+            );
 
             assert_eq!(cases[1].0, PluralCaseKey::One);
-            assert_eq!(cases[1].1, vec![MessageNode::Text("one message".to_string())]);
+            assert_eq!(
+                cases[1].1,
+                vec![MessageNode::Text("one message".to_string())]
+            );
 
             assert_eq!(cases[2].0, PluralCaseKey::Other);
-            assert_eq!(cases[2].1, vec![
-                MessageNode::Variable("count".to_string()),
-                MessageNode::Text(" messages".to_string())
-            ]);
+            assert_eq!(
+                cases[2].1,
+                vec![
+                    MessageNode::Variable("count".to_string()),
+                    MessageNode::Text(" messages".to_string())
+                ]
+            );
         } else {
             panic!("Expected Plural node");
         }
@@ -76,8 +98,10 @@ mod tests {
         // Compile a complex message with plural via binary_writer
         // and validate that BinaryFormatReader + formatter processes it
         let mut translations = HashMap::new();
-        
-        let parser = MessageParser::new("{count, plural, =0 {no messages} =1 {one message} other {# messages}}");
+
+        let parser = MessageParser::new(
+            "{count, plural, =0 {no messages} =1 {one message} other {# messages}}",
+        );
         let nodes = parser.parse().unwrap();
         translations.insert("msg.key".to_string(), nodes);
 
@@ -108,12 +132,15 @@ mod tests {
 
         let uncompressed = write_binary_format(&translations);
         let compressed = miniz_oxide::deflate::compress_to_vec(&uncompressed, 6);
-        
+
         let uncompressed_len = uncompressed.len();
         let compressed_len = compressed.len();
         let reduction = 100.0 - (compressed_len as f64 / uncompressed_len as f64 * 100.0);
-        
-        println!("COMPRESSION_TEST_RESULT: Uncompressed: {}, Compressed: {}, Reduction: {:.2}%", uncompressed_len, compressed_len, reduction);
+
+        println!(
+            "COMPRESSION_TEST_RESULT: Uncompressed: {}, Compressed: {}, Reduction: {:.2}%",
+            uncompressed_len, compressed_len, reduction
+        );
         assert!(reduction > 50.0);
     }
 }

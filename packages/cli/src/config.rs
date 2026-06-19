@@ -1,6 +1,6 @@
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -38,7 +38,11 @@ pub fn get_encryption_key(config: &Config) -> Result<Vec<u8>, anyhow::Error> {
         .map_err(|_| anyhow::anyhow!("Encryption key env variable '{}' is not set.", key_var))?;
     let key_bytes = key_str.as_bytes();
     if key_bytes.len() != 32 {
-        anyhow::bail!("Encryption key in environment variable '{}' must be exactly 32 bytes (got {} bytes).", key_var, key_bytes.len());
+        anyhow::bail!(
+            "Encryption key in environment variable '{}' must be exactly 32 bytes (got {} bytes).",
+            key_var,
+            key_bytes.len()
+        );
     }
     Ok(key_bytes.to_vec())
 }

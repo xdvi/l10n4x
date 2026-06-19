@@ -2,24 +2,27 @@ mod config;
 mod generator;
 mod targets;
 
+use clap::{Parser, Subcommand};
+use config::{get_encryption_key, load_config, Config, Target};
+use generator::generate_bindings;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
-use clap::{Parser, Subcommand};
-use config::{load_config, get_encryption_key, Config, Target};
-use generator::generate_bindings;
 
 use axum::{
-    routing::get,
-    Router,
-    response::{IntoResponse, sse::{Event, Sse}},
     extract::{Path as AxumPath, State},
     http::{header, StatusCode},
+    response::{
+        sse::{Event, Sse},
+        IntoResponse,
+    },
+    routing::get,
+    Router,
 };
-use tower_http::cors::CorsLayer;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
+use tower_http::cors::CorsLayer;
 
 #[derive(Parser)]
 #[command(name = "l10n4x")]
@@ -65,7 +68,7 @@ fn get_flat_keys_for_lang_dir(lang_dir: &Path) -> Result<HashSet<String>, anyhow
     for entry in entries {
         let entry = entry?;
         let file_path = entry.path();
-        if file_path.is_file() && file_path.extension().map_or(false, |ext| ext == "json") {
+        if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
             let file_stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let content = fs::read_to_string(&file_path)?;
             let parsed: serde_json::Value = serde_json::from_str(&content)?;
@@ -92,7 +95,11 @@ fn validate_keys(source_dir: &str) -> Result<HashSet<String>, anyhow::Error> {
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            let lang = path.file_name().and_then(|n| n.to_str()).unwrap_or("").to_string();
+            let lang = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
             let keys = get_flat_keys_for_lang_dir(&path)?;
             for k in &keys {
                 all_keys.insert(k.clone());
@@ -102,7 +109,10 @@ fn validate_keys(source_dir: &str) -> Result<HashSet<String>, anyhow::Error> {
     }
 
     if lang_keys.is_empty() {
-        anyhow::bail!("No language subdirectories found in source directory '{}'.", source_dir);
+        anyhow::bail!(
+            "No language subdirectories found in source directory '{}'.",
+            source_dir
+        );
     }
 
     let mut has_mismatches = false;
@@ -121,7 +131,10 @@ fn validate_keys(source_dir: &str) -> Result<HashSet<String>, anyhow::Error> {
         anyhow::bail!("Validation failed: translation keys are inconsistent across languages.");
     }
 
-    println!("Success: Translation keys are consistent across all {} languages.", lang_keys.len());
+    println!(
+        "Success: Translation keys are consistent across all {} languages.",
+        lang_keys.len()
+    );
     Ok(all_keys)
 }
 
@@ -136,13 +149,25 @@ fn build_project() -> Result<(), anyhow::Error> {
     l10n4x_core::crypto::set_encryption_key(&key);
 
     // 3. Compile translations to .pak files
-    l10n4x_compiler::compile_translations(Path::new(&config.source_dir), Path::new(&config.output_dir))
-        .map_err(|e| anyhow::anyhow!("Compilation failed: {}", e))?;
-    
-    println!("Compiled translation packages (.pak) at '{}'", config.output_dir);
+    l10n4x_compiler::compile_translations(
+        Path::new(&config.source_dir),
+        Path::new(&config.output_dir),
+    )
+    .map_err(|e| anyhow::anyhow!("Compilation failed: {}", e))?;
+
+    println!(
+        "Compiled translation packages (.pak) at '{}'",
+        config.output_dir
+    );
 
     // 4. Generate bindings
-    generate_bindings(&config.targets, &keys, &config.fallback, &config.output_dir, &config.key_env)?;
+    generate_bindings(
+        &config.targets,
+        &keys,
+        &config.fallback,
+        &config.output_dir,
+        &config.key_env,
+    )?;
 
     println!("Build completed successfully.");
     Ok(())
@@ -159,19 +184,24 @@ async fn serve_locale_file(
             return (StatusCode::NOT_FOUND, "Locale JSON not found").into_response();
         }
         match fs::read(&pak_path) {
-            Ok(bytes) => {
-                match l10n4x_core::crypto::decrypt_gcm(&bytes) {
-                    Ok(decrypted) => {
-                        (
-                            StatusCode::OK,
-                            [(header::CONTENT_TYPE, "application/json")],
-                            decrypted,
-                        ).into_response()
-                    }
-                    Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Decryption failed: {}", e)).into_response(),
-                }
-            }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read pak file: {}", e)).into_response(),
+            Ok(bytes) => match l10n4x_core::crypto::decrypt_gcm(&bytes) {
+                Ok(decrypted) => (
+                    StatusCode::OK,
+                    [(header::CONTENT_TYPE, "application/json")],
+                    decrypted,
+                )
+                    .into_response(),
+                Err(e) => (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    format!("Decryption failed: {}", e),
+                )
+                    .into_response(),
+            },
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read pak file: {}", e),
+            )
+                .into_response(),
         }
     } else if lang_pak.ends_with(".pak") {
         let pak_path = Path::new(&state.output_dir).join(&lang_pak);
@@ -179,14 +209,17 @@ async fn serve_locale_file(
             return (StatusCode::NOT_FOUND, "Locale PAK not found").into_response();
         }
         match fs::read(&pak_path) {
-            Ok(bytes) => {
-                (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, "application/octet-stream")],
-                    bytes,
-                ).into_response()
-            }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to read pak file: {}", e)).into_response(),
+            Ok(bytes) => (
+                StatusCode::OK,
+                [(header::CONTENT_TYPE, "application/octet-stream")],
+                bytes,
+            )
+                .into_response(),
+            Err(e) => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read pak file: {}", e),
+            )
+                .into_response(),
         }
     } else {
         (StatusCode::BAD_REQUEST, "Invalid file format requested").into_response()
@@ -206,7 +239,7 @@ async fn handle_events(
 
 async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Error> {
     let config = load_config()?;
-    
+
     if let Err(e) = build_project() {
         eprintln!("Initial build failed: {}. Dev server will start anyway.", e);
     }
@@ -220,7 +253,7 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
     let source_dir = config.source_dir.clone();
     let watcher_tx = tx.clone();
     tokio::task::spawn_blocking(move || {
-        use notify::{Watcher, RecursiveMode};
+        use notify::{RecursiveMode, Watcher};
         let (event_tx, event_rx) = std::sync::mpsc::channel();
         let mut watcher = match notify::recommended_watcher(event_tx) {
             Ok(w) => w,
@@ -240,17 +273,23 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
         loop {
             match event_rx.recv() {
                 Ok(Ok(event)) => {
-                    let has_json_changes = event.paths.iter().any(|p| p.extension().map_or(false, |ext| ext == "json"));
+                    let has_json_changes = event
+                        .paths
+                        .iter()
+                        .any(|p| p.extension().is_some_and(|ext| ext == "json"));
                     if has_json_changes {
                         println!("Translation file changed. Rebuilding...");
                         match build_project() {
                             Ok(_) => {
-                                let lang = event.paths.first()
+                                let lang = event
+                                    .paths
+                                    .first()
                                     .and_then(|p| p.parent())
                                     .and_then(|p| p.file_name())
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("unknown");
-                                let sse_payload = format!("{{\"type\": \"change\", \"lang\": \"{}\"}}", lang);
+                                let sse_payload =
+                                    format!("{{\"type\": \"change\", \"lang\": \"{}\"}}", lang);
                                 let _ = watcher_tx.send(sse_payload);
                             }
                             Err(e) => {
@@ -318,7 +357,9 @@ fn init_wizard() -> Result<(), anyhow::Error> {
     }
 
     if targets.is_empty() {
-        println!("No standard project files detected. Adding default 'go' and 'typescript' targets.");
+        println!(
+            "No standard project files detected. Adding default 'go' and 'typescript' targets."
+        );
         targets.push(Target {
             r#type: "go".to_string(),
             out_dir: "./i18n/go".to_string(),
@@ -349,7 +390,10 @@ fn init_wizard() -> Result<(), anyhow::Error> {
     fs::write(path, content)?;
     fs::create_dir_all(&config.source_dir)?;
     fs::create_dir_all(Path::new(&config.source_dir).join("en"))?;
-    fs::write(Path::new(&config.source_dir).join("en").join("common.json"), "{\n  \"welcome\": \"Welcome!\"\n}\n")?;
+    fs::write(
+        Path::new(&config.source_dir).join("en").join("common.json"),
+        "{\n  \"welcome\": \"Welcome!\"\n}\n",
+    )?;
 
     println!("Created l10n4x.config.json and initial locales directory successfully!");
     println!("Please configure the encryption key environment variable specified in 'keyEnv' (default: L10N4X_KEY).");
@@ -377,11 +421,21 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Generate { target } => {
             let config = load_config()?;
             let keys = validate_keys(&config.source_dir)?;
-            let filtered: Vec<Target> = config.targets.into_iter().filter(|t| t.r#type == target).collect();
+            let filtered: Vec<Target> = config
+                .targets
+                .into_iter()
+                .filter(|t| t.r#type == target)
+                .collect();
             if filtered.is_empty() {
                 anyhow::bail!("No target matching '{}' found in configuration.", target);
             }
-            generate_bindings(&filtered, &keys, &config.fallback, &config.output_dir, &config.key_env)?;
+            generate_bindings(
+                &filtered,
+                &keys,
+                &config.fallback,
+                &config.output_dir,
+                &config.key_env,
+            )?;
         }
     }
 

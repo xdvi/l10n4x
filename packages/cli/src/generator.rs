@@ -1,8 +1,8 @@
+use crate::config::Target;
+use crate::targets;
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
-use crate::config::Target;
-use crate::targets;
 
 pub fn to_pascal_case(s: &str) -> String {
     let mut result = String::new();
@@ -60,19 +60,47 @@ pub fn generate_bindings(
 
         match target.r#type.as_str() {
             "go" => {
-                targets::go::generate(out_dir, &sorted_keys, &target.options, fallback, output_dir, key_env, to_pascal_case)?;
+                targets::go::generate(
+                    out_dir,
+                    &sorted_keys,
+                    &target.options,
+                    fallback,
+                    output_dir,
+                    key_env,
+                    to_pascal_case,
+                )?;
             }
             "typescript" => {
-                targets::typescript::generate(out_dir, &sorted_keys, &target.options, fallback, output_dir, key_env)?;
+                targets::typescript::generate(
+                    out_dir,
+                    &sorted_keys,
+                    &target.options,
+                    fallback,
+                    output_dir,
+                    key_env,
+                )?;
             }
             "flutter" => {
-                targets::flutter::generate(out_dir, &sorted_keys, &target.options, fallback, output_dir, key_env, to_lower_camel_case)?;
+                targets::flutter::generate(
+                    out_dir,
+                    &sorted_keys,
+                    &target.options,
+                    fallback,
+                    output_dir,
+                    key_env,
+                    to_lower_camel_case,
+                )?;
             }
             "c" => {
                 targets::c::generate(out_dir, &sorted_keys, &target.options, to_upper_snake_case)?;
             }
             "python" => {
-                targets::python::generate(out_dir, &sorted_keys, &target.options, to_upper_snake_case)?;
+                targets::python::generate(
+                    out_dir,
+                    &sorted_keys,
+                    &target.options,
+                    to_upper_snake_case,
+                )?;
             }
             other => {
                 println!("Warning: Unknown target type '{}' ignored.", other);

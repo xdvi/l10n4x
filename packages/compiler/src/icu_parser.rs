@@ -76,7 +76,7 @@ impl<'a> MessageParser<'a> {
     fn parse_expression(&mut self) -> Result<MessageNode, String> {
         let mut expr_str = String::new();
         let mut brace_count = 1;
-        while let Some(c) = self.chars.next() {
+        for c in self.chars.by_ref() {
             if c == '{' {
                 brace_count += 1;
             } else if c == '}' {
@@ -100,10 +100,16 @@ impl<'a> MessageParser<'a> {
 
             if expr_type == "plural" {
                 let cases = parse_cases(body, &var_name)?;
-                return Ok(MessageNode::Plural { var: var_name, cases });
+                return Ok(MessageNode::Plural {
+                    var: var_name,
+                    cases,
+                });
             } else if expr_type == "select" {
                 let cases = parse_select_cases(body)?;
-                return Ok(MessageNode::Select { var: var_name, cases });
+                return Ok(MessageNode::Select {
+                    var: var_name,
+                    cases,
+                });
             }
         }
 
@@ -112,7 +118,10 @@ impl<'a> MessageParser<'a> {
     }
 }
 
-fn parse_cases(mut input: &str, var_name: &str) -> Result<Vec<(PluralCaseKey, Vec<MessageNode>)>, String> {
+fn parse_cases(
+    mut input: &str,
+    var_name: &str,
+) -> Result<Vec<(PluralCaseKey, Vec<MessageNode>)>, String> {
     let mut cases = Vec::new();
     while !input.is_empty() {
         input = input.trim_start();
@@ -120,10 +129,15 @@ fn parse_cases(mut input: &str, var_name: &str) -> Result<Vec<(PluralCaseKey, Ve
             break;
         }
 
-        let brace_idx = input.find('{').ok_or_else(|| format!("Expected case body in: {}", input))?;
+        let brace_idx = input
+            .find('{')
+            .ok_or_else(|| format!("Expected case body in: {}", input))?;
         let key_str = input[..brace_idx].trim();
-        let key = if key_str.starts_with('=') {
-            let val = key_str[1..].trim().parse::<f64>().map_err(|_| "Invalid exact plural value")?;
+        let key = if let Some(stripped) = key_str.strip_prefix('=') {
+            let val = stripped
+                .trim()
+                .parse::<f64>()
+                .map_err(|_| "Invalid exact plural value")?;
             PluralCaseKey::Exact(val)
         } else {
             match key_str {
@@ -152,7 +166,7 @@ fn parse_cases(mut input: &str, var_name: &str) -> Result<Vec<(PluralCaseKey, Ve
         }
 
         let end_idx = end_idx.ok_or("Unmatched brace in case pattern")?;
-        let pattern_str = &input[brace_idx + 1 .. end_idx];
+        let pattern_str = &input[brace_idx + 1..end_idx];
 
         let mut preprocessed = String::new();
         let mut chars = pattern_str.chars().peekable();
@@ -177,7 +191,7 @@ fn parse_cases(mut input: &str, var_name: &str) -> Result<Vec<(PluralCaseKey, Ve
         let pattern_nodes = parser.parse_pattern(false)?;
 
         cases.push((key, pattern_nodes));
-        input = &input[end_idx + 1 ..];
+        input = &input[end_idx + 1..];
     }
     Ok(cases)
 }
@@ -190,7 +204,9 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
             break;
         }
 
-        let brace_idx = input.find('{').ok_or_else(|| format!("Expected case body in: {}", input))?;
+        let brace_idx = input
+            .find('{')
+            .ok_or_else(|| format!("Expected case body in: {}", input))?;
         let key_str = input[..brace_idx].trim().to_string();
 
         let mut brace_count = 0;
@@ -208,13 +224,13 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
         }
 
         let end_idx = end_idx.ok_or("Unmatched brace in case pattern")?;
-        let pattern_str = &input[brace_idx + 1 .. end_idx];
+        let pattern_str = &input[brace_idx + 1..end_idx];
 
         let mut parser = MessageParser::new(pattern_str);
         let pattern_nodes = parser.parse_pattern(false)?;
 
         cases.push((key_str, pattern_nodes));
-        input = &input[end_idx + 1 ..];
+        input = &input[end_idx + 1..];
     }
     Ok(cases)
 }
@@ -227,7 +243,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
 
     let mut lines = input.lines().map(|s| s.trim()).filter(|s| !s.is_empty());
     let match_line = lines.next().ok_or("Missing match line")?;
-    
+
     let vars: Vec<&str> = match_line.split_whitespace().skip(1).collect();
     if vars.is_empty() {
         return Err("Match statement must have at least one selector variable".to_string());
@@ -248,14 +264,22 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         let is_fallback = remaining.starts_with('*');
 
         if !is_when && !is_fallback {
-            return Err(format!("Expected 'when' or '*' in match body: {}", remaining));
+            return Err(format!(
+                "Expected 'when' or '*' in match body: {}",
+                remaining
+            ));
         }
 
-        let brace_idx = remaining.find('{').ok_or("Expected case pattern starting with '{'")?;
+        let brace_idx = remaining
+            .find('{')
+            .ok_or("Expected case pattern starting with '{'")?;
         let key_part = remaining[..brace_idx].trim();
-        
+
         let key_str = if is_when {
-            key_part.split_whitespace().nth(1).ok_or("Expected key after when")?
+            key_part
+                .split_whitespace()
+                .nth(1)
+                .ok_or("Expected key after when")?
         } else {
             "other"
         };
@@ -275,7 +299,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         }
 
         let end_idx = end_idx.ok_or("Unmatched brace in match case")?;
-        let pattern_str = &remaining[brace_idx + 1 .. end_idx];
+        let pattern_str = &remaining[brace_idx + 1..end_idx];
 
         let mut parser = MessageParser::new(pattern_str);
         let pattern_nodes = parser.parse_pattern(false)?;
@@ -301,16 +325,26 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         }
 
         cases.push((key_str.to_string(), plural_key, pattern_nodes));
-        remaining = &remaining[end_idx + 1 ..];
+        remaining = &remaining[end_idx + 1..];
     }
 
     if is_select {
-        let select_cases = cases.into_iter().map(|(key, _, nodes)| (key, nodes)).collect();
-        Ok(MessageNode::Select { var: var_name, cases: select_cases })
+        let select_cases = cases
+            .into_iter()
+            .map(|(key, _, nodes)| (key, nodes))
+            .collect();
+        Ok(MessageNode::Select {
+            var: var_name,
+            cases: select_cases,
+        })
     } else {
-        let plural_cases = cases.into_iter().map(|(_, pkey, nodes)| {
-            (pkey.unwrap_or(PluralCaseKey::Other), nodes)
-        }).collect();
-        Ok(MessageNode::Plural { var: var_name, cases: plural_cases })
+        let plural_cases = cases
+            .into_iter()
+            .map(|(_, pkey, nodes)| (pkey.unwrap_or(PluralCaseKey::Other), nodes))
+            .collect();
+        Ok(MessageNode::Plural {
+            var: var_name,
+            cases: plural_cases,
+        })
     }
 }

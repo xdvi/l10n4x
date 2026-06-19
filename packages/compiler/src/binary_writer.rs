@@ -60,7 +60,9 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
     buf
 }
 
-pub fn write_binary_format(translations: &std::collections::HashMap<String, Vec<MessageNode>>) -> Vec<u8> {
+pub fn write_binary_format(
+    translations: &std::collections::HashMap<String, Vec<MessageNode>>,
+) -> Vec<u8> {
     let mut sorted_keys: Vec<&String> = translations.keys().collect();
     sorted_keys.sort();
 

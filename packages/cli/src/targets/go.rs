@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 
 const GO_TEMPLATE: &str = include_str!("../templates/go_i18n.go");
 
@@ -13,7 +13,8 @@ pub fn generate(
     key_env: &str,
     to_pascal_case: fn(&str) -> String,
 ) -> Result<(), anyhow::Error> {
-    let package_name = options.get("package")
+    let package_name = options
+        .get("package")
         .and_then(|v| v.as_str())
         .unwrap_or("i18n");
 
@@ -41,7 +42,10 @@ pub fn generate(
 
     let i18n_file_path = out_dir.join("i18n.go");
     fs::write(&i18n_file_path, i18n_content)?;
-    println!("Generated Go FFI integration at '{}'", i18n_file_path.display());
+    println!(
+        "Generated Go FFI integration at '{}'",
+        i18n_file_path.display()
+    );
 
     Ok(())
 }

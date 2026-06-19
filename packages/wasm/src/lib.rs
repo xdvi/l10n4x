@@ -1,5 +1,5 @@
-use wasm_bindgen::prelude::*;
 use std::collections::HashMap;
+use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub fn l10n4x_set_encryption_key(key: &[u8]) -> bool {
@@ -25,10 +25,14 @@ pub fn l10n4x_translate(locale: &str, key: &str, params_json: &str) -> String {
         }
     }
 
-    let params_vec: Vec<(&str, &str)> = params.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+    let params_vec: Vec<(&str, &str)> = params
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
     let mut resolved_str = String::new();
-    if l10n4x_core::store::translate_to_writer(locale, key, &params_vec, &mut resolved_str).is_err() {
+    if l10n4x_core::store::translate_to_writer(locale, key, &params_vec, &mut resolved_str).is_err()
+    {
         resolved_str = key.to_string();
     }
 

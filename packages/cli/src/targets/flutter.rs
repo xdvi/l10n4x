@@ -1,6 +1,6 @@
+use serde_json::Value;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
 
 const DART_TEMPLATE: &str = include_str!("../templates/dart_i18n.dart");
 
@@ -33,7 +33,10 @@ pub fn generate(
 
     let file_path = out_dir.join("i18n_keys.dart");
     fs::write(&file_path, i18n_content)?;
-    println!("Generated Flutter/Dart bindings at '{}'", file_path.display());
+    println!(
+        "Generated Flutter/Dart bindings at '{}'",
+        file_path.display()
+    );
 
     Ok(())
 }

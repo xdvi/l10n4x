@@ -1,13 +1,13 @@
 #[cfg(test)]
 mod tests {
     use crate::binary_format::BinaryFormatReader;
-    use crate::formatter::{format_message, get_plural_category, PluralCategory};
-    use crate::store::{swap_store, read_store, TranslationStore};
     use crate::crypto::set_encryption_key;
-    use alloc::vec::Vec;
+    use crate::formatter::{format_message, get_plural_category, PluralCategory};
+    use crate::store::{read_store, swap_store, TranslationStore};
     use alloc::string::String;
-    use std::thread;
+    use alloc::vec::Vec;
     use std::sync::Arc;
+    use std::thread;
 
     #[test]
     fn test_binary_format_reader_mock() {
@@ -104,7 +104,7 @@ mod tests {
     fn test_lock_free_concurrency_rcu() {
         // Initialize key and some translations
         assert!(set_encryption_key(b"concurrency-test-secret-key-32-b"));
-        
+
         let initial_store = TranslationStore {
             locales: vec![("en".to_string(), vec![])],
         };

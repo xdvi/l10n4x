@@ -27,22 +27,40 @@ impl<'a> BinaryFormatReader<'a> {
                 return None;
             }
 
-            let key_offset = u32::from_be_bytes(self.data[entry_offset .. entry_offset+4].try_into().unwrap()) as usize;
-            let key_len = u32::from_be_bytes(self.data[entry_offset+4 .. entry_offset+8].try_into().unwrap()) as usize;
+            let key_offset = u32::from_be_bytes(
+                self.data[entry_offset..entry_offset + 4]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
+            let key_len = u32::from_be_bytes(
+                self.data[entry_offset + 4..entry_offset + 8]
+                    .try_into()
+                    .unwrap(),
+            ) as usize;
 
             if key_offset + key_len > self.data.len() {
                 return None;
             }
 
-            if let Ok(entry_key) = core::str::from_utf8(&self.data[key_offset .. key_offset + key_len]) {
+            if let Ok(entry_key) =
+                core::str::from_utf8(&self.data[key_offset..key_offset + key_len])
+            {
                 match entry_key.cmp(key) {
                     core::cmp::Ordering::Equal => {
-                        let val_offset = u32::from_be_bytes(self.data[entry_offset+8 .. entry_offset+12].try_into().unwrap()) as usize;
-                        let val_len = u32::from_be_bytes(self.data[entry_offset+12 .. entry_offset+16].try_into().unwrap()) as usize;
+                        let val_offset = u32::from_be_bytes(
+                            self.data[entry_offset + 8..entry_offset + 12]
+                                .try_into()
+                                .unwrap(),
+                        ) as usize;
+                        let val_len = u32::from_be_bytes(
+                            self.data[entry_offset + 12..entry_offset + 16]
+                                .try_into()
+                                .unwrap(),
+                        ) as usize;
                         if val_offset + val_len > self.data.len() {
                             return None;
                         }
-                        return Some(&self.data[val_offset .. val_offset + val_len]);
+                        return Some(&self.data[val_offset..val_offset + val_len]);
                     }
                     core::cmp::Ordering::Less => {
                         low = mid + 1;

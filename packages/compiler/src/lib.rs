@@ -1,13 +1,13 @@
 pub mod binary_writer;
 pub mod icu_parser;
 
+use binary_writer::write_binary_format;
+use icu_parser::MessageParser;
+use l10n4x_core::crypto::encrypt_gcm;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use serde_json::Value;
-use l10n4x_core::crypto::encrypt_gcm;
-use icu_parser::MessageParser;
-use binary_writer::write_binary_format;
 
 /// Recursively flattens a JSON Value into a flat string map.
 pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, String>) {
@@ -54,11 +54,12 @@ pub fn compile_translations(src_path: &Path, out_path: &Path) -> Result<(), &'st
         let lang_entry = lang_entry.map_err(|_| "Failed to read language entry")?;
         let lang_path = lang_entry.path();
         if lang_path.is_dir() {
-            let lang = lang_path.file_name()
+            let lang = lang_path
+                .file_name()
                 .and_then(|n| n.to_str())
                 .ok_or("Invalid directory name")?
                 .to_string();
-            
+
             let mut raw_flat_translations = HashMap::new();
             let mut file_count = 0;
 
@@ -67,14 +68,17 @@ pub fn compile_translations(src_path: &Path, out_path: &Path) -> Result<(), &'st
             for file_entry in files {
                 let file_entry = file_entry.map_err(|_| "Failed to read file entry")?;
                 let file_path = file_entry.path();
-                if file_path.is_file() && file_path.extension().map_or(false, |ext| ext == "json") {
-                    let file_name = file_path.file_stem()
+                if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
+                    let file_name = file_path
+                        .file_stem()
                         .and_then(|s| s.to_str())
                         .ok_or("Invalid filename")?
                         .to_string();
-                    
-                    let content = fs::read_to_string(&file_path).map_err(|_| "Failed to read translation file")?;
-                    let parsed_json: Value = serde_json::from_str(&content).map_err(|_| "Failed to parse JSON")?;
+
+                    let content = fs::read_to_string(&file_path)
+                        .map_err(|_| "Failed to read translation file")?;
+                    let parsed_json: Value =
+                        serde_json::from_str(&content).map_err(|_| "Failed to parse JSON")?;
 
                     // Flatten under the filename prefix namespace (exactly like Go compiler did)
                     flatten_value(file_name, &parsed_json, &mut raw_flat_translations);
@@ -90,7 +94,9 @@ pub fn compile_translations(src_path: &Path, out_path: &Path) -> Result<(), &'st
             let mut parsed_translations = HashMap::new();
             for (k, template) in raw_flat_translations {
                 let parser = MessageParser::new(&template);
-                let nodes = parser.parse().map_err(|_| "Failed to parse translation template")?;
+                let nodes = parser
+                    .parse()
+                    .map_err(|_| "Failed to parse translation template")?;
                 parsed_translations.insert(k, nodes);
             }
 
@@ -105,7 +111,8 @@ pub fn compile_translations(src_path: &Path, out_path: &Path) -> Result<(), &'st
 
             // Save as <locale>.pak
             let pak_file_path = out_path.join(format!("{}.pak", lang));
-            fs::write(pak_file_path, encrypted_bytes).map_err(|_| "Failed to write compiled pak file")?;
+            fs::write(pak_file_path, encrypted_bytes)
+                .map_err(|_| "Failed to write compiled pak file")?;
         }
     }
 
