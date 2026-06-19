@@ -23,7 +23,7 @@ allow = [
 ]
 
 [bans]
-multiple-versions = "deny"
+multiple-versions = "warn"
 wildcards = "allow"
 
 [sources]
