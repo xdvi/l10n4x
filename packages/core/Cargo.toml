@@ -1,0 +1,18 @@
+[package]
+name = "l10n4x-core"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = ["std"]
+std = ["alloc", "aes-gcm/std", "aes-gcm/getrandom"]
+alloc = ["aes-gcm/alloc"]
+
+[dependencies]
+aes-gcm = { version = "0.10.3", default-features = false, features = ["aes"] }
+miniz_oxide = { version = "0.7", default-features = false, features = ["with-alloc"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+
+

@@ -1,0 +1,9 @@
+[package]
+name = "l10n4x-compiler"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+serde_json = "1.0"
+l10n4x-core = { path = "../core" }
+miniz_oxide = "0.7"

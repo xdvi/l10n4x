@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "packages/compiler",
+    "packages/core",
+    "packages/ffi",
+    "packages/cli",
+    "packages/wasm"
+]

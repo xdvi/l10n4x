@@ -1,0 +1,12 @@
+[package]
+name = "l10n4c"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+l10n4x-core = { path = "../core" }
+l10n4x-compiler = { path = "../compiler" }
+serde_json = "1.0"
