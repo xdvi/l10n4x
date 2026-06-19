@@ -2,7 +2,10 @@
 
 [advisories]
 version = 2
-action-on-trigger = "deny"
+vulnerability = "deny"
+unmaintained = "deny"
+unsound = "deny"
+yanked = "warn"
 
 [licenses]
 version = 2
