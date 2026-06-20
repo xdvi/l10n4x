@@ -22,4 +22,4 @@ thiserror = "1"
 l10n4x-compiler = { path = "../compiler" }
 l10n4x-core = { path = "../core" }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.5", features = ["cors"] } # For browser cross-origin dev server requests
+tower-http = { version = "0.7", features = ["cors"] } # For browser cross-origin dev server requests
