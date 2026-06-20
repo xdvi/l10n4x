@@ -8,12 +8,15 @@ use alloc::vec::Vec;
 use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
 
+/// Manages loaded localization packages containing locales and their decrypted binary buffers.
 pub struct TranslationStore {
-    // List of (locale, decrypted binary buffer)
+    /// List of loaded locale-to-buffer mappings.
     pub locales: Vec<(String, Vec<u8>)>,
 }
 
 impl TranslationStore {
+    /// Looks up the decrypted translation package buffer for a given locale.
+    /// Returns `Some(&[u8])` if loaded, or `None` otherwise.
     pub fn lookup(&self, locale: &str) -> Option<&[u8]> {
         for (loc, buf) in &self.locales {
             if loc == locale {
@@ -222,4 +225,12 @@ pub fn translate_to_writer<W: core::fmt::Write>(
             .map_err(|_| "Failed to write key fallback")?;
         Ok(())
     }
+}
+
+/// Translates a key for a given locale, dynamically interpolating parameters,
+/// and returning an allocated String.
+pub fn translate(locale: &str, key: &str, params: &[(&str, &str)]) -> String {
+    let mut buf = String::new();
+    let _ = translate_to_writer(locale, key, params, &mut buf);
+    buf
 }

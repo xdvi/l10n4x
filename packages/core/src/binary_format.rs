@@ -1,10 +1,16 @@
+/// The current supported format version of the binary package format.
 pub const FORMAT_VERSION: u32 = 1;
 
+/// High-performance parser and reader for the custom binary `.pak` format.
+/// Performs O(log N) binary search lookups on alphabetical keys directly from
+/// read-only decrypted memory buffers, avoiding copies and allocations.
 pub struct BinaryFormatReader<'a> {
     data: &'a [u8],
 }
 
 impl<'a> BinaryFormatReader<'a> {
+    /// Instantiates a new reader from a raw byte slice.
+    /// Validates the buffer length, magic bytes `"L10N"`, and the format version.
     pub fn new(data: &'a [u8]) -> Result<Self, &'static str> {
         if data.len() < 16 {
             return Err("Invalid buffer length");
@@ -19,6 +25,8 @@ impl<'a> BinaryFormatReader<'a> {
         Ok(Self { data })
     }
 
+    /// Performs binary search lookup on the sorted index to locate the bytecode of a key.
+    /// Returns `Some(&[u8])` representing the bytecode slice if found, or `None` otherwise.
     pub fn lookup(&self, key: &str) -> Option<&'a [u8]> {
         let index_offset = u32::from_be_bytes(self.data[8..12].try_into().unwrap()) as usize;
         let index_count = u32::from_be_bytes(self.data[12..16].try_into().unwrap()) as usize;

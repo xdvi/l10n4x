@@ -18,3 +18,8 @@ miniz_oxide = { version = "0.8", default-features = false, features = ["with-all
 
 [dev-dependencies]
 serde_json = "1.0"
+criterion = "0.5"
+
+[[bench]]
+name = "lookup"
+harness = false

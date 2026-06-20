@@ -23,6 +23,8 @@ jobs:
         run: cargo clippy --workspace --all-features -- -D warnings
       - name: Format
         run: cargo fmt --all -- --check
+      - name: Format (apply if needed)
+        run: cargo fmt --all
 
   test:
     name: Tests

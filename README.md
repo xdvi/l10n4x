@@ -175,6 +175,23 @@ func main() {
 
 ---
 
+## Security and Key Management
+
+> **CRITICAL**: The 32-byte AES-GCM key is the only secret protecting your `.pak` files.
+
+- **Never hardcode** the key in your source code or repository (the Go example uses a placeholder key for demonstration purposes only).
+- Always use environment variables (`L10N4X_KEY` by default in the config) or a managed secret provider (e.g., HashiCorp Vault, AWS Secrets Manager, Doppler).
+- Generate secure random keys:
+  ```bash
+  openssl rand -base64 32 | tr -d '\n'   # 32 bytes base64
+  # or
+  head -c 32 /dev/urandom | base64
+  ```
+- Rotate the key periodically -> recompile all `.pak` files with the new key.
+- In production environments, load the key at startup and **never expose it** in logs or memory dumps.
+
+---
+
 ## License
 
 This project is licensed under the MIT License.

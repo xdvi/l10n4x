@@ -52,7 +52,7 @@ strip            = "symbols"  # explicit alias of `true`; easier to scope later
 debug            = false
 debug-assertions = false
 incremental      = false      # reproducible builds in CI
-overflow-checks  = false     # ← NEW: Rust enables this even in release by default!
+overflow-checks  = false
 rpath            = false
 
 # Also maximize all third-party dependencies in release

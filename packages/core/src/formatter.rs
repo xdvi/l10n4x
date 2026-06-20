@@ -1,12 +1,19 @@
 extern crate alloc;
 
+/// Represents standard CLDR plural categories used by plural rule selectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluralCategory {
+    /// Zero category (e.g. "=0" or special rules).
     Zero,
+    /// One category (e.g. "=1" or singular cases).
     One,
+    /// Two category (dual).
     Two,
+    /// Few category.
     Few,
+    /// Many category.
     Many,
+    /// Fallback default category.
     Other,
 }
 
@@ -46,6 +53,8 @@ impl PluralOperands {
     }
 }
 
+/// Resolves the CLDR plural category for a given locale and numeric value.
+/// Supports major languages like English, Spanish, French, German, Russian, etc.
 pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
     let ops = PluralOperands::new(value);
 
@@ -112,6 +121,8 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
     }
 }
 
+/// Formats a bytecode compiled message into the provided writer, dynamically
+/// interpolating variables and evaluating plural/select rules.
 pub fn format_message<W: core::fmt::Write>(
     bytecode: &[u8],
     locale: &str,

@@ -101,6 +101,44 @@ mod tests {
     }
 
     #[test]
+    fn test_translate_helper_and_macro() {
+        use crate::store::translate;
+        let mut bc = Vec::new();
+        bc.push(0x01);
+        bc.extend_from_slice(&6u32.to_be_bytes());
+        bc.extend_from_slice(b"Hello ");
+
+        bc.push(0x02);
+        bc.extend_from_slice(&4u32.to_be_bytes());
+        bc.extend_from_slice(b"name");
+
+        // mock build pak
+        let mut data = Vec::new();
+        data.extend_from_slice(b"L10N");
+        data.extend_from_slice(&1u32.to_be_bytes()); // version
+        data.extend_from_slice(&41u32.to_be_bytes()); // index offset (16 + 5 + 20)
+        data.extend_from_slice(&1u32.to_be_bytes()); // index count
+
+        // key data
+        data.extend_from_slice(b"hello"); // key
+        data.extend_from_slice(&bc); // value
+
+        // entry 1: key "hello" (16, 5), val (21, 15)
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(&5u32.to_be_bytes());
+        data.extend_from_slice(&21u32.to_be_bytes());
+        data.extend_from_slice(&(bc.len() as u32).to_be_bytes());
+
+        let store = TranslationStore {
+            locales: vec![("en".to_string(), data)],
+        };
+        swap_store(store);
+
+        let result = translate("en", "hello", crate::l10n_params! { "name" => "Diego" });
+        assert_eq!(result, "Hello Diego");
+    }
+
+    #[test]
     fn test_lock_free_concurrency_rcu() {
         // Initialize key and some translations
         assert!(set_encryption_key(b"concurrency-test-secret-key-32-b"));

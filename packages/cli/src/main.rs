@@ -419,6 +419,12 @@ async fn main() -> Result<(), anyhow::Error> {
             run_dev_server(port, flutter_web).await?;
         }
         Commands::Generate { target } => {
+            if !["go", "typescript", "python", "c", "flutter", "dart"].contains(&target.as_str()) {
+                anyhow::bail!(
+                    "Unsupported target '{}'. Supported targets are: go, typescript, python, c, flutter, dart.",
+                    target
+                );
+            }
             let config = load_config()?;
             let keys = validate_keys(&config.source_dir)?;
             let filtered: Vec<Target> = config
