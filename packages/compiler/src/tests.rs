@@ -119,6 +119,36 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_header_magic_and_version() {
+        let mut translations = HashMap::new();
+        translations.insert("test.key".to_string(), vec![MessageNode::Text("val".to_string())]);
+        let binary_bytes = write_binary_format(&translations);
+
+        // Header must be at least 16 bytes
+        assert!(binary_bytes.len() >= 16);
+        // Magic bytes "L10N" at bytes 0-3
+        assert_eq!(&binary_bytes[0..4], b"L10N");
+        // Version (big-endian) at bytes 4-7
+        let version = u32::from_be_bytes(binary_bytes[4..8].try_into().unwrap());
+        assert_eq!(version, l10n4x_core::binary_format::FORMAT_VERSION);
+    }
+
+    #[test]
+    fn test_array_flattening() {
+        use serde_json::json;
+        let val = json!({
+            "menu": {
+                "items": ["Home", "Settings", "Profile"]
+            }
+        });
+        let mut map = HashMap::new();
+        crate::flatten_value("config".to_string(), &val, &mut map);
+        assert_eq!(map.get("config.menu.items.0").unwrap(), "Home");
+        assert_eq!(map.get("config.menu.items.1").unwrap(), "Settings");
+        assert_eq!(map.get("config.menu.items.2").unwrap(), "Profile");
+    }
+
+    #[test]
     fn test_compression_ratio_estimate() {
         let mut translations = HashMap::new();
         // Generate 100 typical translations

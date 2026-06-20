@@ -1,3 +1,7 @@
+//! `l10n4c` is the C-FFI compatibility layer for `l10n4x`.
+//! It exposes stable C-compatible symbols for loading compiled `.pak` files
+//! and performing localization lookups using caller-allocated buffers.
+
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::ffi::CStr;

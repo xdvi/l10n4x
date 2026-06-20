@@ -1,3 +1,5 @@
+pub const FORMAT_VERSION: u32 = 1;
+
 pub struct BinaryFormatReader<'a> {
     data: &'a [u8],
 }
@@ -9,6 +11,10 @@ impl<'a> BinaryFormatReader<'a> {
         }
         if &data[0..4] != b"L10N" {
             return Err("Invalid magic bytes");
+        }
+        let version = u32::from_be_bytes(data[4..8].try_into().unwrap());
+        if version != FORMAT_VERSION {
+            return Err("Unsupported format version");
         }
         Ok(Self { data })
     }

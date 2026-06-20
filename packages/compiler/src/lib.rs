@@ -1,3 +1,7 @@
+//! `l10n4x-compiler` is the translation compilation toolkit component of `l10n4x`.
+//! It parses translation templates in JSON/ICU format, flattens hierarchical namespaces,
+//! and compiles them into compressed and encrypted `.pak` binary assets.
+
 pub mod binary_writer;
 pub mod icu_parser;
 
@@ -10,6 +14,7 @@ use std::fs;
 use std::path::Path;
 
 /// Recursively flattens a JSON Value into a flat string map.
+/// JSON arrays are flattened with dot-notation subscripts (e.g., `list.0`, `list.1`).
 pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, String>) {
     match value {
         Value::Object(obj) => {
@@ -18,6 +23,16 @@ pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, St
                     k.clone()
                 } else {
                     format!("{}.{}", prefix, k)
+                };
+                flatten_value(new_prefix, v, map);
+            }
+        }
+        Value::Array(arr) => {
+            for (i, v) in arr.iter().enumerate() {
+                let new_prefix = if prefix.is_empty() {
+                    i.to_string()
+                } else {
+                    format!("{}.{}", prefix, i)
                 };
                 flatten_value(new_prefix, v, map);
             }
@@ -34,7 +49,6 @@ pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, St
         Value::Null => {
             map.insert(prefix, String::new());
         }
-        _ => {} // Ignore arrays and other unsupported types
     }
 }
 

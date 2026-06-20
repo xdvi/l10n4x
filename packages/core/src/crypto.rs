@@ -27,7 +27,7 @@ pub fn get_encryption_key() -> Result<[u8; 32], &'static str> {
     let mut key = [0u8; 32];
     for i in 0..8 {
         let val = KEY_PARTS[i].load(Ordering::SeqCst);
-        key[i * 4..(i + 1) * 4].copy_from_slice(&val.to_ne_bytes());
+        key[i * 4..(i + 1) * 4].copy_from_slice(&val.to_be_bytes());
     }
     Ok(key)
 }
@@ -38,7 +38,7 @@ pub fn set_encryption_key(key_slice: &[u8]) -> bool {
         return false;
     }
     for i in 0..8 {
-        let val = u32::from_ne_bytes(key_slice[i * 4..(i + 1) * 4].try_into().unwrap());
+        let val = u32::from_be_bytes(key_slice[i * 4..(i + 1) * 4].try_into().unwrap());
         KEY_PARTS[i].store(val, Ordering::SeqCst);
     }
     KEY_SET.store(true, Ordering::SeqCst);
