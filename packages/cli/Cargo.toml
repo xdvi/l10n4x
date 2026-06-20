@@ -18,7 +18,7 @@ tokio = { version = "1", features = ["full"] }
 axum = "0.7"
 notify = "6"
 anyhow = "1"
-thiserror = "1"
+thiserror = "2"
 l10n4x-compiler = { path = "../compiler" }
 l10n4x-core = { path = "../core" }
 tokio-stream = { version = "0.1", features = ["sync"] }
