@@ -121,7 +121,10 @@ mod tests {
     #[test]
     fn test_binary_header_magic_and_version() {
         let mut translations = HashMap::new();
-        translations.insert("test.key".to_string(), vec![MessageNode::Text("val".to_string())]);
+        translations.insert(
+            "test.key".to_string(),
+            vec![MessageNode::Text("val".to_string())],
+        );
         let binary_bytes = write_binary_format(&translations);
 
         // Header must be at least 16 bytes
