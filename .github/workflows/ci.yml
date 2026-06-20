@@ -59,17 +59,6 @@ jobs:
       - name: Check core for wasm32
         run: cargo check -p l10n4x-core --no-default-features --features alloc --target wasm32-unknown-unknown
 
-  benchmarks:
-    name: Benchmarks (compile check)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: stable
-      - name: Check that benchmarks compile
-        run: cargo bench --no-run --workspace 2>&1 || echo "No benchmarks defined yet (this is expected)"
-
   security:
     name: Security Audit
     runs-on: ubuntu-latest

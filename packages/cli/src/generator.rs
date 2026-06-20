@@ -36,11 +36,11 @@ pub fn to_upper_snake_case(s: &str) -> String {
 
 pub fn to_lower_camel_case(s: &str) -> String {
     let pascal = to_pascal_case(s);
-    if pascal.is_empty() {
-        return pascal;
-    }
     let mut chars = pascal.chars();
-    let first = chars.next().unwrap().to_ascii_lowercase();
+    let first = match chars.next() {
+        Some(c) => c.to_ascii_lowercase(),
+        None => return String::new(),
+    };
     format!("{}{}", first, chars.collect::<String>())
 }
 

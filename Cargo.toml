@@ -17,6 +17,9 @@ edition      = "2021"
 license      = "MIT"
 repository   = "https://github.com/xdvi/l10n4x"
 rust-version = "1.82"  # MSRV — minimum that stably supports unsafe(no_mangle) and f64::abs in core
+description  = "Modern, Dynamic, and Type-Safe Localization (l10n) Engine and Toolkit in Rust"
+categories   = ["localization", "wasm", "no-std", "ffi"]
+keywords     = ["i18n", "l10n", "localization", "translate", "icu"]
 
 # Shared dependencies: always disable default features
 # and opt-in only to what each package actually needs.
@@ -96,3 +99,7 @@ inherits    = "release"
 debug       = 1        # line tables only — enough for perf/flamegraph
 strip       = "none"
 incremental = false
+
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

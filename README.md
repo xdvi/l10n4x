@@ -3,6 +3,8 @@
 [![Language](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
 [![C-FFI](https://img.shields.io/badge/C--FFI-Go%20%7C%20C%2B%2B%20%7C%20C%23%20%7C%20Dart-blue.svg)](#)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
+[![CI](https://github.com/xdvi/l10n4x/actions/workflows/ci.yml/badge.svg)](https://github.com/xdvi/l10n4x/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xdvi/l10n4x?sort=semver&label=release)](https://github.com/xdvi/l10n4x/releases)
 
 > *Modern, Dynamic, and Type-Safe Localization (l10n) Engine and Toolkit in Rust.*
 

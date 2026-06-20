@@ -25,7 +25,10 @@ pub struct Target {
 pub fn load_config() -> Result<Config, anyhow::Error> {
     let path = Path::new("l10n4x.config.json");
     if !path.exists() {
-        anyhow::bail!("l10n4x.config.json not found in the current directory. Run 'l10n4x init' to create one.");
+        anyhow::bail!(
+            "l10n4x.config.json not found in the current directory.\n\
+             Run `l10n4x init` to create one."
+        );
     }
     let data = fs::read_to_string(path)?;
     let config: Config = serde_json::from_str(&data)?;
