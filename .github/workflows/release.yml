@@ -57,7 +57,7 @@ jobs:
           cp target/release/l10n4c.lib dist-assets/l10n4c-windows.lib
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: assets-${{ matrix.os }}
           path: dist-assets/*
@@ -84,7 +84,7 @@ jobs:
           cp target/wasm32-unknown-unknown/release/l10n4x.wasm dist-wasm/l10n4x.wasm
 
       - name: Upload WASM artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: assets-wasm
           path: dist-wasm/*
