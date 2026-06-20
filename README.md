@@ -6,7 +6,7 @@
 
 > *Modern, Dynamic, and Type-Safe Localization (l10n) Engine and Toolkit in Rust.*
 
-`l10n4x` is a unified, full-lifecycle internationalization and localization (i18n/l10n) workspace. It compiles translation bundles into encrypted `.pak` files, loads them dynamically in any runtime with sub-nanosecond lookups, and automatically generates **type-safe bindings** for client targets (Go, TypeScript/React, C/C++, Python, Flutter/Dart).
+`l10n4x` is a unified, full-lifecycle internationalization and localization (i18n/l10n) workspace. It compiles translation bundles into encrypted `.pak` files, loads them dynamically in any runtime with sub-nanosecond lookups, and automatically generates **type-safe bindings** for client targets (Go, TypeScript/React, C/C++, Python, Flutter/Dart). It supports a high-performance subset of ICU MessageFormat-style messages (plurals, selects, variables) compiled to optimized bytecode.
 
 ---
 
@@ -24,8 +24,10 @@ l10n4x/
     │   └── src/lib.rs (key merging, flattening, and pak compilation)
     ├── ffi/ (l10n4c)
     │   └── src/lib.rs (public C FFI wrappers exporting l10n4c_*)
-    └── cli/ (l10n4x-toolkit)
-        └── src/main.rs (CLI toolkit with dev server, watcher, and generators)
+    ├── cli/ (l10n4x-toolkit)
+    │   └── src/main.rs (CLI toolkit with dev server, watcher, and generators)
+    └── wasm/ (l10n4x-wasm)
+        └── src/lib.rs (WebAssembly bindings exposing JS-compatible API)
 ```
 
 ---
@@ -67,10 +69,23 @@ Define your directories, fallback locale, target languages, and code generation 
 
 | Command | Description |
 |---------|-------------|
-| `l10n4x init` | Wizard interactivo. Detecta el tipo de proyecto y genera `l10n4x.config.json` inicial. |
-| `l10n4x validate` | Valida consistencia de claves de traducción entre todos los idiomas. |
-| `l10n4x build` | Valida claves, compila `.pak` encriptados y genera los bindings de código type-safe. |
-| `l10n4x dev` | Inicia un servidor de desarrollo local (Axum) y observador de archivos (Notify). Recompila y dispara recargas en caliente. |
+| `l10n4x init` | Interactive wizard that detects project type and generates initial `l10n4x.config.json`. |
+| `l10n4x validate` | Validates key consistency across all target locales. |
+| `l10n4x build` | Validates keys, compiles encrypted `.pak` files, and generates type-safe code bindings. |
+| `l10n4x dev` | Starts local dev server (Axum) with file watch triggers (Notify) for live hot-reloads. |
+
+### 4. JSON Structure & Array Flattening
+Nested JSON localization files are flattened automatically using dot-notated namespaces. JSON arrays are also flattened using their 0-indexed position as the key subscript:
+```json
+{
+  "menu": {
+    "items": ["Home", "Settings"]
+  }
+}
+```
+Flattens to the following translation lookup keys:
+- `menu.items.0` -> `Home`
+- `menu.items.1` -> `Settings`
 
 ---
 

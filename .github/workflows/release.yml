@@ -29,7 +29,7 @@ jobs:
           toolchain: stable
 
       - name: Build target
-        run: cargo build --release
+        run: cargo build --release --workspace
 
       - name: Package assets (Linux)
         if: matrix.os == 'ubuntu-latest'

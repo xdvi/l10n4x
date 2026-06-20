@@ -102,7 +102,7 @@ pub fn write_binary_format(
 
     let mut buffer = Vec::new();
     buffer.extend_from_slice(b"L10N");
-    buffer.extend_from_slice(&1u32.to_be_bytes());
+    buffer.extend_from_slice(&l10n4x_core::binary_format::FORMAT_VERSION.to_be_bytes());
     buffer.extend_from_slice(&index_offset.to_be_bytes());
     buffer.extend_from_slice(&index_count.to_be_bytes());
     buffer.extend_from_slice(&data_pool);
