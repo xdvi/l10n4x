@@ -64,6 +64,16 @@ enum Commands {
         #[arg(long)]
         target: String,
     },
+    /// Scan source files for translation key usages and add missing keys to locale JSON files.
+    Extract {
+        /// Glob pattern(s) for source files to scan (e.g. "src/**/*.ts").
+        /// If omitted, reads `extractPatterns` from l10n4x.config.json.
+        #[arg(long, value_name = "GLOB")]
+        src: Vec<String>,
+        /// Print what would change without writing any files.
+        #[arg(long)]
+        dry_run: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -509,6 +519,123 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
     Ok(())
 }
 
+/// Inserts a dot-separated key path into a nested JSON object.
+fn insert_nested_key(obj: &mut serde_json::Value, key_path: &str, value: &str) {
+    let parts: Vec<&str> = key_path.splitn(2, '.').collect();
+    if let serde_json::Value::Object(map) = obj {
+        if parts.len() == 1 {
+            map.entry(parts[0]).or_insert(serde_json::Value::String(value.to_string()));
+        } else {
+            let child = map
+                .entry(parts[0])
+                .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+            insert_nested_key(child, parts[1], value);
+        }
+    }
+}
+
+fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::Error> {
+    let config = load_config()?;
+
+    let globs = if src_globs.is_empty() {
+        vec!["src/**/*.ts".to_string(), "src/**/*.tsx".to_string(),
+             "src/**/*.js".to_string(), "lib/**/*.go".to_string(),
+             "lib/**/*.py".to_string()]
+    } else {
+        src_globs
+    };
+
+    let mut all_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for pattern in &globs {
+        for entry in glob::glob(pattern)
+            .map_err(|e| anyhow::anyhow!("Invalid glob '{}': {}", pattern, e))?
+            .flatten()
+        {
+            if let Ok(content) = std::fs::read_to_string(&entry) {
+                for key in extract_keys_from_source(&content) {
+                    all_keys.insert(key);
+                }
+            }
+        }
+    }
+
+    if all_keys.is_empty() {
+        println!("No translation keys found. Check your --src globs.");
+        return Ok(());
+    }
+
+    let src_path = std::path::Path::new(&config.source_dir);
+    let mut total_added = 0usize;
+
+    for lang_entry in std::fs::read_dir(src_path)? {
+        let lang_entry = lang_entry?;
+        if !lang_entry.path().is_dir() { continue; }
+        let lang = lang_entry.file_name().to_string_lossy().to_string();
+
+        let mut existing_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut namespaces: std::collections::HashMap<String, serde_json::Value> =
+            std::collections::HashMap::new();
+
+        for file_entry in std::fs::read_dir(lang_entry.path())? {
+            let file_entry = file_entry?;
+            let fpath = file_entry.path();
+            if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") { continue; }
+            let ns = fpath.file_stem().unwrap().to_string_lossy().to_string();
+            let content = std::fs::read_to_string(&fpath)?;
+            let obj: serde_json::Value = serde_json::from_str(&content)
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+            let mut flat: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            l10n4x_compiler::flatten_value(ns.clone(), &obj, &mut flat);
+            for k in flat.keys() { existing_keys.insert(k.clone()); }
+            namespaces.insert(ns, obj);
+        }
+
+        let missing: Vec<&str> = all_keys.iter()
+            .filter(|k| !existing_keys.contains(*k))
+            .map(|k| k.as_str())
+            .collect();
+
+        if missing.is_empty() { continue; }
+
+        let mut by_namespace: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for key in &missing {
+            let ns = key.split('.').next().unwrap_or("common").to_string();
+            by_namespace.entry(ns).or_default().push(key.to_string());
+        }
+
+        for (ns, keys) in by_namespace {
+            let file_path = lang_entry.path().join(format!("{}.json", ns));
+            let mut obj = namespaces.get(&ns).cloned()
+                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+
+            for key in &keys {
+                let rest = key.strip_prefix(&format!("{}.", ns)).unwrap_or(key);
+                insert_nested_key(&mut obj, rest, "");
+                total_added += 1;
+                if dry_run {
+                    println!("[DRY RUN] [{}] Would add key: {}", lang, key);
+                } else {
+                    println!("[{}] Added missing key: {}", lang, key);
+                }
+            }
+
+            if !dry_run {
+                let content = serde_json::to_string_pretty(&obj)?;
+                std::fs::write(&file_path, content)?;
+            }
+        }
+    }
+
+    if dry_run {
+        println!("Dry-run: {} key(s) would be added across all locales.", total_added);
+    } else {
+        println!("Extract complete: {} key(s) added.", total_added);
+    }
+    Ok(())
+}
+
 fn init_wizard() -> Result<(), anyhow::Error> {
     println!("Initializing l10n4x configuration...");
 
@@ -595,6 +722,78 @@ fn init_wizard() -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Extracts string-literal translation keys from source text.
+fn extract_keys_from_source(src: &str) -> Vec<String> {
+    use std::collections::HashSet;
+    let mut found: HashSet<String> = HashSet::new();
+
+    let patterns: &[&str] = &[r#"t\(["']([^"']+)["']\)"#, r#"\.T\(["']([^"']+)["']\)"#];
+    for pattern in patterns {
+        if let Ok(re) = regex_lite::Regex::new(pattern) {
+            for cap in re.captures_iter(src) {
+                if let Some(m) = cap.get(1) {
+                    found.insert(m.as_str().to_string());
+                }
+            }
+        }
+    }
+
+    if let Ok(re) = regex_lite::Regex::new(r"LocaleKey\.([A-Z0-9_]+)") {
+        for cap in re.captures_iter(src) {
+            if let Some(m) = cap.get(1) {
+                let key = m.as_str().to_lowercase().replace('_', ".");
+                found.insert(key);
+            }
+        }
+    }
+
+    let mut result: Vec<String> = found.into_iter().collect();
+    result.sort();
+    result
+}
+
+#[cfg(test)]
+mod extract_tests {
+    use super::extract_keys_from_source;
+
+    #[test]
+    fn finds_ts_double_quoted_keys() {
+        let src = r#"const a = t("welcome.message"); const b = t("user.name");"#;
+        let keys = extract_keys_from_source(src);
+        assert!(keys.iter().any(|k| k == "welcome.message"), "should find double-quoted key");
+        assert!(keys.iter().any(|k| k == "user.name"), "should find second key");
+    }
+
+    #[test]
+    fn finds_ts_single_quoted_keys() {
+        let src = r#"t('settings.title')"#;
+        let keys = extract_keys_from_source(src);
+        assert!(keys.iter().any(|k| k == "settings.title"));
+    }
+
+    #[test]
+    fn finds_go_t_keys() {
+        let src = r#"msg := i18n.T("errors.not_found")"#;
+        let keys = extract_keys_from_source(src);
+        assert!(keys.iter().any(|k| k == "errors.not_found"));
+    }
+
+    #[test]
+    fn deduplicates_keys() {
+        let src = r#"t("menu.home"); t("menu.home");"#;
+        let keys = extract_keys_from_source(src);
+        let count = keys.iter().filter(|k| *k == "menu.home").count();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn ignores_dynamic_keys() {
+        let src = r#"t(keyVar)"#;
+        let keys = extract_keys_from_source(src);
+        assert!(keys.is_empty());
+    }
+}
+
 #[cfg(test)]
 mod path_safety_tests {
     use super::sanitize_locale_filename;
@@ -648,6 +847,13 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Commands::Dev { flutter_web, port } => {
             run_dev_server(port, flutter_web).await?;
+        }
+        Commands::Extract { src, dry_run } => {
+            let result = extract_command(src, dry_run);
+            if let Err(e) = result {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
         }
         Commands::Generate { target } => {
             if !["go", "typescript", "python", "c", "flutter", "dart"].contains(&target.as_str()) {
