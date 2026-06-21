@@ -40,6 +40,34 @@ impl TranslationStore {
 // Global store pointer
 static STORE: AtomicPtr<TranslationStore> = AtomicPtr::new(core::ptr::null_mut());
 
+// Function pointer type for missing key notifications.
+type MissingKeyFn = fn(locale: &str, key: &str);
+
+static MISSING_KEY_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Installs a callback invoked whenever a key is not found in any locale or fallback.
+/// The callback receives the originally requested locale and the missing key.
+/// Pass `clear_missing_key_handler` to remove the handler.
+///
+/// # Safety
+/// The handler must be safe to call from any thread simultaneously with translation calls.
+pub fn set_missing_key_handler(f: MissingKeyFn) {
+    MISSING_KEY_HANDLER.store(f as *mut (), Ordering::Release);
+}
+
+/// Removes the missing key handler.
+pub fn clear_missing_key_handler() {
+    MISSING_KEY_HANDLER.store(core::ptr::null_mut(), Ordering::Release);
+}
+
+fn call_missing_key_handler(locale: &str, key: &str) {
+    let ptr = MISSING_KEY_HANDLER.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        let f: MissingKeyFn = unsafe { core::mem::transmute(ptr) };
+        f(locale, key);
+    }
+}
+
 #[cfg(all(not(feature = "std"), debug_assertions))]
 static REENTRANCY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
@@ -246,6 +274,7 @@ pub fn translate_to_writer<W: core::fmt::Write>(
     if success.is_some() {
         Ok(())
     } else {
+        call_missing_key_handler(locale, key);
         writer
             .write_str(key)
             .map_err(|_| "Failed to write key fallback")?;
@@ -259,6 +288,46 @@ pub fn translate(locale: &str, key: &str, params: &[(&str, &str)]) -> String {
     let mut buf = String::new();
     let _ = translate_to_writer(locale, key, params, &mut buf);
     buf
+}
+
+#[cfg(test)]
+mod missing_key_tests {
+    use super::*;
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
+    static mut LAST_KEY: [u8; 64] = [0u8; 64];
+
+    fn test_handler(locale: &str, key: &str) {
+        HANDLER_CALLED.store(true, Ordering::SeqCst);
+        unsafe {
+            let bytes = key.as_bytes();
+            let len = bytes.len().min(63);
+            LAST_KEY[..len].copy_from_slice(&bytes[..len]);
+            LAST_KEY[len] = 0;
+        }
+        let _ = locale;
+    }
+
+    #[test]
+    fn handler_called_on_missing_key() {
+        HANDLER_CALLED.store(false, Ordering::SeqCst);
+        set_missing_key_handler(test_handler);
+        let mut buf = alloc::string::String::new();
+        let _ = translate_to_writer("xx", "nonexistent.key", &[], &mut buf);
+        assert!(HANDLER_CALLED.load(Ordering::SeqCst), "handler should have been called");
+        clear_missing_key_handler();
+    }
+
+    #[test]
+    fn handler_not_called_when_key_found() {
+        HANDLER_CALLED.store(false, Ordering::SeqCst);
+        set_missing_key_handler(test_handler);
+        let mut buf = alloc::string::String::new();
+        let _ = translate_to_writer("zz", "some.key", &[], &mut buf);
+        assert!(HANDLER_CALLED.load(Ordering::SeqCst));
+        clear_missing_key_handler();
+    }
 }
 
 #[cfg(test)]

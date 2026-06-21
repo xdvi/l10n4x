@@ -69,6 +69,17 @@ char *l10n4c_translate_with_params_alloc(
     const char *locale, const char *key, const L10n4cParam *params, size_t param_count);
 void  l10n4c_free_string(char *ptr);
 
+/* ── Callbacks ─────────────────────────────────────────────────────────────── */
+
+/** Callback type for missing translation key events. */
+typedef void (*l10n4c_missing_key_fn)(const char *locale, const char *key);
+
+/**
+ * Registers a callback invoked when a key is not found in any locale or fallback.
+ * Pass NULL to unregister. Thread-safe for concurrent translate calls.
+ */
+void l10n4c_set_missing_key_handler(l10n4c_missing_key_fn handler);
+
 #ifdef __cplusplus
 }
 #endif

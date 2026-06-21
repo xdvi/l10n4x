@@ -32,6 +32,21 @@ use l10n4x_core::integrity;
 use l10n4x_core::loader::{load_pak_directory, load_pak_locale};
 use l10n4x_core::store::{clear_translations, get_fallback_locale, set_fallback_locale};
 
+/// C-compatible function pointer type for the missing key callback.
+pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key: *const c_char);
+
+static C_MISSING_KEY_HANDLER: core::sync::atomic::AtomicPtr<()> =
+    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+fn c_missing_key_bridge(locale: &str, key: &str) {
+    let ptr = C_MISSING_KEY_HANDLER.load(core::sync::atomic::Ordering::Acquire);
+    if ptr.is_null() { return; }
+    let f: L10n4cMissingKeyFn = unsafe { core::mem::transmute(ptr) };
+    if let (Ok(lc), Ok(kc)) = (CString::new(locale), CString::new(key)) {
+        unsafe { f(lc.as_ptr(), kc.as_ptr()); }
+    }
+}
+
 /// Typed key-value interpolation parameter for C callers.
 #[repr(C)]
 pub struct L10n4cParam {
@@ -398,6 +413,25 @@ pub extern "C" fn l10n4c_free_string(ptr: *mut c_char) {
     if !ptr.is_null() {
         unsafe {
             let _ = CString::from_raw(ptr);
+        }
+    }
+}
+
+/// Registers a C callback invoked when a translation key is not found.
+/// Pass NULL to remove the callback.
+///
+/// # Safety
+/// `handler` must remain valid for the lifetime of the program (or until replaced).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn l10n4c_set_missing_key_handler(handler: Option<L10n4cMissingKeyFn>) {
+    match handler {
+        Some(f) => {
+            C_MISSING_KEY_HANDLER.store(f as *mut (), core::sync::atomic::Ordering::Release);
+            l10n4x_core::store::set_missing_key_handler(c_missing_key_bridge);
+        }
+        None => {
+            C_MISSING_KEY_HANDLER.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+            l10n4x_core::store::clear_missing_key_handler();
         }
     }
 }
