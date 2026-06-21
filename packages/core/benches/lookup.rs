@@ -1,6 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use l10n4x_core::loader::load_raw_bytes;
 use l10n4x_core::store::{swap_store, translate_to_writer, TranslationStore};
+use std::collections::BTreeMap;
 
 fn build_pak_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut data = Vec::new();
@@ -109,9 +110,11 @@ fn bench_lookup(c: &mut Criterion) {
 
     c.bench_function("swap_store_reload", |b| {
         b.iter(|| {
+            let mut locales = BTreeMap::new();
+            locales.insert("es".to_string(), std::sync::Arc::new(vec![]));
             let store = TranslationStore {
-                locales: vec![("es".to_string(), std::sync::Arc::new(vec![]))],
-                fallback: "en".to_string(),
+                locales,
+                fallback: std::sync::Arc::from("en"),
             };
             swap_store(black_box(store));
         })

@@ -2,8 +2,8 @@ extern crate alloc;
 use crate::binary_format::BinaryFormatReader;
 use crate::formatter::format_message;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
-use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -11,33 +11,27 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 #[cfg(all(not(feature = "std"), debug_assertions))]
 use core::sync::atomic::AtomicUsize;
 
-/// Manages loaded localization packages containing locales and their decompressed binary buffers.
+/// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 pub struct TranslationStore {
-    /// List of loaded locale-to-buffer mappings.
-    pub locales: Vec<(String, Arc<Vec<u8>>)>,
-    /// Fallback locale (defaults to "en").
-    pub fallback: String,
+    /// Locale code → decompressed binary buffer (BTreeMap: O(log n) lookup, no_std compatible).
+    pub locales: BTreeMap<String, Arc<Vec<u8>>>,
+    /// Fallback locale. Arc<str> so clone is O(1) with no heap allocation.
+    pub fallback: Arc<str>,
 }
 
 impl Default for TranslationStore {
     fn default() -> Self {
         Self {
-            locales: Vec::new(),
-            fallback: "en".to_string(),
+            locales: BTreeMap::new(),
+            fallback: Arc::from("en"),
         }
     }
 }
 
 impl TranslationStore {
-    /// Looks up the decompressed translation package buffer for a given locale.
-    /// Returns `Some(&[u8])` if loaded, or `None` otherwise.
+    /// Looks up the decompressed translation buffer for a given locale. O(log n).
     pub fn lookup(&self, locale: &str) -> Option<&[u8]> {
-        for (loc, buf) in &self.locales {
-            if loc == locale {
-                return Some(buf.as_slice());
-            }
-        }
-        None
+        self.locales.get(locale).map(|b| b.as_slice())
     }
 }
 
@@ -133,17 +127,18 @@ pub fn swap_store(new_store: TranslationStore) {
 /// Reclaims memory for any retired stores (no-op, kept for API backwards compatibility)
 pub fn try_reclaim() {}
 
-/// Returns the currently configured fallback locale (defaults to "en").
-pub fn get_fallback_locale() -> String {
-    read_store(|store| store.fallback.clone())
+/// Returns the currently configured fallback locale as a cheap Arc<str> clone.
+pub fn get_fallback_locale() -> Arc<str> {
+    read_store(|store| Arc::clone(&store.fallback))
 }
 
 /// Sets the global fallback locale (defaults to "en").
 pub fn set_fallback_locale(locale_str: &str) {
     read_store(|store| {
+        let new_locales = store.locales.clone();
         let new_store = TranslationStore {
-            locales: store.locales.clone(),
-            fallback: locale_str.to_string(),
+            locales: new_locales,
+            fallback: Arc::from(locale_str),
         };
         swap_store(new_store);
     });
@@ -153,8 +148,8 @@ pub fn set_fallback_locale(locale_str: &str) {
 pub fn clear_translations() {
     read_store(|store| {
         swap_store(TranslationStore {
-            locales: Vec::new(),
-            fallback: store.fallback.clone(),
+            locales: BTreeMap::new(),
+            fallback: Arc::clone(&store.fallback),
         });
     });
 }
@@ -163,7 +158,7 @@ pub fn clear_translations() {
 pub fn key_exists(locale: &str, key: &str) -> bool {
     let fallback = get_fallback_locale();
     read_store(|store| {
-        for loc in [locale, fallback.as_str()] {
+        for loc in [locale, fallback.as_ref()] {
             if let Some(buf) = store.lookup(loc) {
                 if let Ok(reader) = BinaryFormatReader::new(buf) {
                     if reader.lookup(key).is_some() {
@@ -188,7 +183,7 @@ pub fn translate_to_writer<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> Result<(), &'static str> {
-    let fallback = get_fallback_locale();
+    let fallback: Arc<str> = get_fallback_locale();
 
     let success = read_store(|store| {
         if let Some(buf) = store.lookup(locale) {
@@ -200,11 +195,12 @@ pub fn translate_to_writer<W: core::fmt::Write>(
                 }
             }
         }
-        if locale != fallback {
-            if let Some(buf) = store.lookup(&fallback) {
+        let fb: &str = fallback.as_ref();
+        if locale != fb {
+            if let Some(buf) = store.lookup(fb) {
                 if let Ok(reader) = BinaryFormatReader::new(buf) {
                     if let Some(bytecode) = reader.lookup(key) {
-                        if format_message(bytecode, &fallback, params, writer).is_ok() {
+                        if format_message(bytecode, fb, params, writer).is_ok() {
                             return Some(());
                         }
                     }
@@ -230,4 +226,31 @@ pub fn translate(locale: &str, key: &str, params: &[(&str, &str)]) -> String {
     let mut buf = String::new();
     let _ = translate_to_writer(locale, key, params, &mut buf);
     buf
+}
+
+#[cfg(test)]
+mod store_perf_tests {
+    use super::*;
+
+    #[test]
+    fn lookup_returns_none_for_missing_locale() {
+        let store = TranslationStore::default();
+        assert!(store.lookup("fr").is_none());
+    }
+
+    #[test]
+    fn lookup_returns_buffer_for_loaded_locale() {
+        let mut store = TranslationStore::default();
+        let buf = Arc::new(vec![0x4c, 0x31, 0x30, 0x4e]);
+        store.locales.insert("en".to_string(), Arc::clone(&buf));
+        let found = store.lookup("en");
+        assert!(found.is_some());
+        assert_eq!(found.unwrap(), buf.as_slice());
+    }
+
+    #[test]
+    fn fallback_clone_is_arc_not_string() {
+        let locale: Arc<str> = get_fallback_locale();
+        assert_eq!(&*locale, "en");
+    }
 }

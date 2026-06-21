@@ -9,15 +9,10 @@ pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
     let mut success = false;
     read_store(|store| {
         let mut new_locales = store.locales.clone();
-        let new_bytes = Arc::new(bytes.to_vec());
-        if let Some(pos) = new_locales.iter().position(|(loc, _)| loc == locale_str) {
-            new_locales[pos] = (locale_str.to_string(), new_bytes);
-        } else {
-            new_locales.push((locale_str.to_string(), new_bytes));
-        }
+        new_locales.insert(locale_str.to_string(), Arc::new(bytes.to_vec()));
         swap_store(TranslationStore {
             locales: new_locales,
-            fallback: store.fallback.clone(),
+            fallback: alloc::sync::Arc::clone(&store.fallback),
         });
         success = true;
     });

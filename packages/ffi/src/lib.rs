@@ -116,7 +116,7 @@ fn translate_core(
 ) -> Result<TranslateOutcome, i32> {
     let key = cstr_to_str(key_ptr)?;
     let locale = if locale_ptr.is_null() {
-        get_fallback_locale()
+        get_fallback_locale().to_string()
     } else {
         cstr_to_str(locale_ptr)?.to_string()
     };
