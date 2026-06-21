@@ -36,6 +36,14 @@ int32_t l10n4c_set_verify_key(const uint8_t *key, size_t key_len);
 int32_t l10n4c_set_decrypt_key(const uint8_t *key, size_t key_len);
 int32_t l10n4c_set_fallback_locale(const char *locale);
 
+/**
+ * Sets the ordered fallback locale chain (first match wins).
+ * @param locales  Array of null-terminated locale strings.
+ * @param count    Number of entries in the array (capped at 16).
+ * @return L10N4C_OK or L10N4C_INVALID_PARAMS.
+ */
+int32_t l10n4c_set_fallback_chain(const char **locales, size_t count);
+
 /* ── Loading (runtime only — compile with `l10n4x build` CLI) ─────────── */
 
 int32_t l10n4c_load_pak_locale(const char *locale, const char *file_path);

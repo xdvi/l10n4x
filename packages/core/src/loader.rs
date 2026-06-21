@@ -12,7 +12,7 @@ pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
         new_locales.insert(locale_str.to_string(), Arc::new(bytes.to_vec()));
         swap_store(TranslationStore {
             locales: new_locales,
-            fallback: alloc::sync::Arc::clone(&store.fallback),
+            fallback_chain: alloc::sync::Arc::clone(&store.fallback_chain),
         });
         success = true;
     });

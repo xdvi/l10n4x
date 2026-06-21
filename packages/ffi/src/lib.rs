@@ -170,6 +170,33 @@ pub extern "C" fn l10n4c_set_fallback_locale(locale: *const c_char) -> i32 {
     }
 }
 
+/// Sets the ordered fallback locale chain (first match wins).
+/// `locales` is an array of `count` null-terminated UTF-8 locale strings.
+/// Returns `L10N4C_OK` on success or `L10N4C_INVALID_PARAMS` if `locales` is null.
+///
+/// # Safety
+/// `locales` must point to `count` valid, non-null, null-terminated UTF-8 C strings.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn l10n4c_set_fallback_chain(
+    locales: *const *const c_char,
+    count: usize,
+) -> i32 {
+    if locales.is_null() || count == 0 {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let mut chain: Vec<&str> = Vec::with_capacity(count.min(16));
+    for i in 0..count.min(16) {
+        // SAFETY: caller guarantees each pointer is a valid null-terminated UTF-8 string.
+        let ptr = unsafe { *locales.add(i) };
+        match cstr_to_str(ptr) {
+            Ok(s) => chain.push(s),
+            Err(e) => return e,
+        }
+    }
+    l10n4x_core::store::set_fallback_chain(&chain);
+    L10N4C_OK
+}
+
 /// Loads a single `.pak` file for a given locale.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *const c_char) -> i32 {

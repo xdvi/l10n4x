@@ -18,6 +18,12 @@ pub fn l10n4x_set_fallback_locale(locale: &str) {
 }
 
 #[wasm_bindgen]
+pub fn l10n4x_set_fallback_chain(locales: Vec<String>) {
+    let refs: Vec<&str> = locales.iter().map(|s| s.as_str()).collect();
+    l10n4x_core::store::set_fallback_chain(&refs);
+}
+
+#[wasm_bindgen]
 pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> {
     if !l10n4x_core::integrity::verify_key_configured() {
         return Err(JsValue::from_str(

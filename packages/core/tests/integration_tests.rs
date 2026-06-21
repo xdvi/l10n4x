@@ -136,7 +136,7 @@ fn test_translate_helper_and_macro() {
     locales.insert("en".to_string(), Arc::new(data));
     let store = TranslationStore {
         locales,
-        fallback: Arc::from("en"),
+        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
     };
     swap_store(store);
 
@@ -156,7 +156,7 @@ fn test_lock_free_concurrency_rcu() {
     locales.insert("en".to_string(), Arc::new(vec![]));
     let initial_store = TranslationStore {
         locales,
-        fallback: Arc::from("en"),
+        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
     };
     swap_store(initial_store);
 
@@ -176,7 +176,7 @@ fn test_lock_free_concurrency_rcu() {
             locales.insert("en".to_string(), Arc::new(mock_data));
             let store = TranslationStore {
                 locales,
-                fallback: Arc::from("en"),
+                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
             };
             swap_store(store);
             thread::yield_now();
@@ -218,7 +218,7 @@ fn test_ebr_stress() {
     locales.insert("en".to_string(), Arc::new(vec![]));
     let initial_store = TranslationStore {
         locales,
-        fallback: Arc::from("en"),
+        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
     };
     swap_store(initial_store);
 
@@ -240,7 +240,7 @@ fn test_ebr_stress() {
             locales.insert("es".to_string(), Arc::new(vec![count as u8]));
             let store = TranslationStore {
                 locales,
-                fallback: Arc::from("en"),
+                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
             };
             swap_store(store);
             count = count.wrapping_add(1);

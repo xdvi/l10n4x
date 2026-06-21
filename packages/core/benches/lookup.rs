@@ -114,7 +114,9 @@ fn bench_lookup(c: &mut Criterion) {
             locales.insert("es".to_string(), std::sync::Arc::new(vec![]));
             let store = TranslationStore {
                 locales,
-                fallback: std::sync::Arc::from("en"),
+                fallback_chain: std::sync::Arc::from(
+                    vec![std::sync::Arc::from("en") as std::sync::Arc<str>].into_boxed_slice()
+                ),
             };
             swap_store(black_box(store));
         })

@@ -15,15 +15,17 @@ use core::sync::atomic::AtomicUsize;
 pub struct TranslationStore {
     /// Locale code → decompressed binary buffer (BTreeMap: O(log n) lookup, no_std compatible).
     pub locales: BTreeMap<String, Arc<Vec<u8>>>,
-    /// Fallback locale. Arc<str> so clone is O(1) with no heap allocation.
-    pub fallback: Arc<str>,
+    /// Ordered chain of fallback locale codes. The first match wins.
+    pub fallback_chain: Arc<[Arc<str>]>,
 }
 
 impl Default for TranslationStore {
     fn default() -> Self {
         Self {
             locales: BTreeMap::new(),
-            fallback: Arc::from("en"),
+            fallback_chain: Arc::from(
+                alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice(),
+            ),
         }
     }
 }
@@ -127,21 +129,34 @@ pub fn swap_store(new_store: TranslationStore) {
 /// Reclaims memory for any retired stores (no-op, kept for API backwards compatibility)
 pub fn try_reclaim() {}
 
-/// Returns the currently configured fallback locale as a cheap Arc<str> clone.
-pub fn get_fallback_locale() -> Arc<str> {
-    read_store(|store| Arc::clone(&store.fallback))
+/// Sets the fallback locale chain. The first locale in the slice that has the key wins.
+/// An empty slice disables fallback entirely.
+pub fn set_fallback_chain(chain: &[&str]) {
+    let arcs: alloc::vec::Vec<Arc<str>> = chain.iter().map(|s| Arc::from(*s)).collect();
+    let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
+    read_store(|store| {
+        swap_store(TranslationStore {
+            locales: store.locales.clone(),
+            fallback_chain: new_chain.clone(),
+        });
+    });
 }
 
-/// Sets the global fallback locale (defaults to "en").
+/// Returns the current fallback chain as a cheap Arc clone.
+pub fn get_fallback_chain() -> Arc<[Arc<str>]> {
+    read_store(|store| Arc::clone(&store.fallback_chain))
+}
+
+/// Backward-compatible wrapper — sets the chain to a single locale.
 pub fn set_fallback_locale(locale_str: &str) {
+    set_fallback_chain(&[locale_str]);
+}
+
+/// Backward-compatible — returns the first element of the chain (or "en").
+pub fn get_fallback_locale() -> Arc<str> {
     read_store(|store| {
-        let new_locales = store.locales.clone();
-        let new_store = TranslationStore {
-            locales: new_locales,
-            fallback: Arc::from(locale_str),
-        };
-        swap_store(new_store);
-    });
+        store.fallback_chain.first().cloned().unwrap_or_else(|| Arc::from("en"))
+    })
 }
 
 /// Clears all loaded translations.
@@ -149,17 +164,30 @@ pub fn clear_translations() {
     read_store(|store| {
         swap_store(TranslationStore {
             locales: BTreeMap::new(),
-            fallback: Arc::clone(&store.fallback),
+            fallback_chain: Arc::clone(&store.fallback_chain),
         });
     });
 }
 
 /// Returns `true` if `key` exists in `locale` or the configured fallback locale.
 pub fn key_exists(locale: &str, key: &str) -> bool {
-    let fallback = get_fallback_locale();
+    let chain = get_fallback_chain();
     read_store(|store| {
-        for loc in [locale, fallback.as_ref()] {
-            if let Some(buf) = store.lookup(loc) {
+        // Try the requested locale first
+        if let Some(buf) = store.lookup(locale) {
+            if let Ok(reader) = BinaryFormatReader::new(buf) {
+                if reader.lookup(key).is_some() {
+                    return true;
+                }
+            }
+        }
+        // Walk the fallback chain
+        for fb in chain.iter() {
+            let fb_str: &str = fb.as_ref();
+            if fb_str == locale {
+                continue;
+            }
+            if let Some(buf) = store.lookup(fb_str) {
                 if let Ok(reader) = BinaryFormatReader::new(buf) {
                     if reader.lookup(key).is_some() {
                         return true;
@@ -183,9 +211,10 @@ pub fn translate_to_writer<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> Result<(), &'static str> {
-    let fallback: Arc<str> = get_fallback_locale();
+    let chain = get_fallback_chain();
 
     let success = read_store(|store| {
+        // Try the requested locale first
         if let Some(buf) = store.lookup(locale) {
             if let Ok(reader) = BinaryFormatReader::new(buf) {
                 if let Some(bytecode) = reader.lookup(key) {
@@ -195,12 +224,16 @@ pub fn translate_to_writer<W: core::fmt::Write>(
                 }
             }
         }
-        let fb: &str = fallback.as_ref();
-        if locale != fb {
-            if let Some(buf) = store.lookup(fb) {
+        // Walk the fallback chain
+        for fb in chain.iter() {
+            let fb_str: &str = fb.as_ref();
+            if fb_str == locale {
+                continue;
+            }
+            if let Some(buf) = store.lookup(fb_str) {
                 if let Ok(reader) = BinaryFormatReader::new(buf) {
                     if let Some(bytecode) = reader.lookup(key) {
-                        if format_message(bytecode, fb, params, writer).is_ok() {
+                        if format_message(bytecode, fb_str, params, writer).is_ok() {
                             return Some(());
                         }
                     }
@@ -226,6 +259,30 @@ pub fn translate(locale: &str, key: &str, params: &[(&str, &str)]) -> String {
     let mut buf = String::new();
     let _ = translate_to_writer(locale, key, params, &mut buf);
     buf
+}
+
+#[cfg(test)]
+mod fallback_chain_tests {
+    use super::*;
+
+    #[test]
+    fn single_fallback_chain_behaves_like_set_fallback_locale() {
+        set_fallback_chain(&["en"]);
+        let chain = get_fallback_chain();
+        assert_eq!(chain.len(), 1);
+        assert_eq!(&*chain[0], "en");
+    }
+
+    #[test]
+    fn multi_hop_chain_is_stored() {
+        set_fallback_chain(&["pt-BR", "pt", "en"]);
+        let chain = get_fallback_chain();
+        assert_eq!(chain.len(), 3);
+        assert_eq!(&*chain[0], "pt-BR");
+        assert_eq!(&*chain[1], "pt");
+        assert_eq!(&*chain[2], "en");
+        set_fallback_chain(&["en"]);
+    }
 }
 
 #[cfg(test)]
