@@ -1,5 +1,6 @@
 extern crate alloc;
 
+use crate::number_format::{format_number, NumberStyle};
 use crate::plural_rules::get_plural_category;
 
 /// Represents standard CLDR plural categories used by plural rule selectors.
@@ -250,6 +251,33 @@ pub fn format_message<W: core::fmt::Write>(
 
                 let sub_bytecode = &bytecode[selected_pos..selected_pos + selected_len];
                 format_message(sub_bytecode, locale, params, writer)?;
+            }
+            0x05 => {
+                // Number formatting
+                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
+                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                pos += 4;
+                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                    .map_err(|_| core::fmt::Error)?;
+                pos += var_len;
+                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                let style_byte = bytecode[pos];
+                pos += 1;
+
+                let style = match style_byte {
+                    0x01 => NumberStyle::Percent,
+                    0x02 => NumberStyle::Integer,
+                    _    => NumberStyle::Decimal,
+                };
+
+                let param_val: f64 = params.iter()
+                    .find(|(k, _)| *k == var_name)
+                    .map(|(_, v)| v.parse::<f64>().unwrap_or(0.0))
+                    .unwrap_or(0.0);
+
+                let formatted = format_number(param_val, locale, style);
+                writer.write_str(&formatted)?;
             }
             _ => return Err(core::fmt::Error),
         }

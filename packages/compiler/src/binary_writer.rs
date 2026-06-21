@@ -1,4 +1,4 @@
-use crate::icu_parser::{MessageNode, PluralCaseKey};
+use crate::icu_parser::{MessageNode, NumberStyle, PluralCaseKey};
 
 fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -54,6 +54,18 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                     buf.extend_from_slice(&(pattern_bytecode.len() as u32).to_be_bytes());
                     buf.extend_from_slice(&pattern_bytecode);
                 }
+            }
+            MessageNode::Number { var, style } => {
+                buf.push(0x05);
+                let var_bytes = var.as_bytes();
+                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
+                buf.extend_from_slice(var_bytes);
+                let style_byte: u8 = match style {
+                    NumberStyle::Decimal => 0x00,
+                    NumberStyle::Percent => 0x01,
+                    NumberStyle::Integer => 0x02,
+                };
+                buf.push(style_byte);
             }
         }
     }

@@ -36,3 +36,15 @@ The AES-GCM plaintext is the complete signed `L10P` pak (including its Ed25519 s
 | AES key (32 B) | `L10N4X_ENCRYPT_KEY` env (opt-in) | Encrypts/decrypts `L10E` envelope |
 
 The signing seed never ships in client binaries. The AES key is only required when `encrypt` is enabled; it does not replace signature verification.
+
+## Inner Binary Opcodes
+
+Inside the decompressed `L10N` block, the value of each key is a sequence of opcodes:
+
+| Opcode | Name | Encoding |
+|--------|------|----------|
+| `0x01` | Text | `[u32: len][len bytes: text]` |
+| `0x02` | Variable | `[u32: var_name_len][var_name_bytes]` |
+| `0x03` | Plural | `[u32: var_name_len][var_name_bytes][u16: case_count][cases...]` |
+| `0x04` | Select | `[u32: var_name_len][var_name_bytes][u16: case_count][cases...]` |
+| `0x05` | Number | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=decimal, `0x01`=percent, `0x02`=integer |

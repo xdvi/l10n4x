@@ -5,10 +5,12 @@
 //! - **Fallback Catch-all**: Wildcard `*` patterns in match bodies map to the default `other` case.
 //! - **Standard Variables**: Simple braced placeholders (e.g. `{name}`) are parsed as variable node interpolation.
 //!
-//! ### Unsupported MF2 Features:
-//! - **Multiple Selectors**: Multiple selector keys in a single match block are not supported.
-//! - **Local Declarations**: inline variable binding via `local` statements is not supported.
-//! - **Formatting Functions**: registry operations/functions like `.number` or `.datetime` are not implemented.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumberStyle {
+    Decimal,
+    Percent,
+    Integer,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageNode {
@@ -21,6 +23,10 @@ pub enum MessageNode {
     Select {
         var: String,
         cases: Vec<(String, Vec<MessageNode>)>,
+    },
+    Number {
+        var: String,
+        style: NumberStyle,
     },
 }
 
@@ -105,27 +111,56 @@ impl<'a> MessageParser<'a> {
         }
 
         let parts: Vec<&str> = expr_str.splitn(3, ',').collect();
-        if parts.len() == 3 {
+        if parts.len() >= 2 {
             let var_name = parts[0].trim().trim_start_matches('$').to_string();
             let expr_type = parts[1].trim();
-            let body = parts[2].trim();
 
-            if expr_type == "plural" {
+            if expr_type == "plural" && parts.len() == 3 {
+                let body = parts[2].trim();
                 let cases = parse_cases(body, &var_name)?;
                 return Ok(MessageNode::Plural {
                     var: var_name,
                     cases,
                 });
-            } else if expr_type == "select" {
+            } else if expr_type == "select" && parts.len() == 3 {
+                let body = parts[2].trim();
                 let cases = parse_select_cases(body)?;
                 return Ok(MessageNode::Select {
                     var: var_name,
                     cases,
                 });
+            } else if expr_type == "number" {
+                let style = if parts.len() == 3 {
+                    match parts[2].trim() {
+                        "percent" => NumberStyle::Percent,
+                        "integer" => NumberStyle::Integer,
+                        _ => NumberStyle::Decimal,
+                    }
+                } else {
+                    NumberStyle::Decimal
+                };
+                return Ok(MessageNode::Number { var: var_name, style });
             }
         }
 
         let var_name = expr_str.trim().trim_start_matches('$').to_string();
+
+        // Check for MF2 inline function syntax: {$var :number} or {$var :number style=percent}
+        if let Some(func_part) = var_name.split_once(':') {
+            let base_var = func_part.0.trim().to_string();
+            let func_spec = func_part.1.trim();
+            if func_spec.starts_with("number") || func_spec.starts_with("Number") {
+                let style = if func_spec.contains("style=percent") {
+                    NumberStyle::Percent
+                } else if func_spec.contains("style=integer") {
+                    NumberStyle::Integer
+                } else {
+                    NumberStyle::Decimal
+                };
+                return Ok(MessageNode::Number { var: base_var, style });
+            }
+        }
+
         Ok(MessageNode::Variable(var_name))
     }
 }
@@ -245,6 +280,28 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
         input = &input[end_idx + 1..];
     }
     Ok(cases)
+}
+
+#[cfg(test)]
+mod number_tests {
+    use super::*;
+
+    #[test]
+    fn parses_icu1_number_function() {
+        let parser = MessageParser::new("Price: {price, number}");
+        let nodes = parser.parse().unwrap();
+        assert_eq!(nodes.len(), 2);
+        assert!(matches!(&nodes[1], MessageNode::Number { var, style }
+            if var == "price" && *style == NumberStyle::Decimal));
+    }
+
+    #[test]
+    fn parses_mf2_number_function() {
+        let parser = MessageParser::new("{$amount :number style=percent}");
+        let nodes = parser.parse().unwrap();
+        assert!(matches!(&nodes[0], MessageNode::Number { var, style }
+            if var == "amount" && *style == NumberStyle::Percent));
+    }
 }
 
 fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {

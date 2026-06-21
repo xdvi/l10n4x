@@ -25,6 +25,8 @@ pub mod envelope;
 pub mod formatter;
 /// CLDR-accurate plural rule resolution for 120+ locales.
 pub mod plural_rules;
+/// Locale-aware number formatting (decimal, percent, integer styles).
+pub mod number_format;
 /// Ed25519 signing and verification for `.pak` integrity.
 pub mod integrity;
 /// Decompression and in-memory pak loading.
