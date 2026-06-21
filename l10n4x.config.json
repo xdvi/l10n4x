@@ -4,7 +4,7 @@
   "outputDir": "./examples/dist/locales",
   "fallback": "en",
   "signingKeyEnv": "L10N4X_SIGNING_KEY",
-  "verifyPublicKey": "23bc54912c1e6e92c4a86825c867e27ffdc555bffbd4244f17a26abfffee965d",
+  "verifyPublicKey": "48075a597e721a156e2e0799de5cc0c5324dc6e7eaf1cdd46250868ec53215dd",
   "encrypt": false,
   "encryptKeyEnv": "L10N4X_ENCRYPT_KEY",
   "corsOrigins": null,
