@@ -1,0 +1,105 @@
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# WORKSPACE
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[workspace]
+resolver = "2"
+members = [
+    "packages/compiler",
+    "packages/core",
+    "packages/ffi",
+    "packages/cli",
+    "packages/wasm",
+]
+
+[workspace.package]
+version      = "0.1.0"
+edition      = "2021"
+license      = "MIT"
+repository   = "https://github.com/xdvi/l10n4x"
+rust-version = "1.82"  # MSRV — minimum that stably supports unsafe(no_mangle) and f64::abs in core
+description  = "Modern, Dynamic, and Type-Safe Localization (l10n) Engine and Toolkit in Rust"
+categories   = ["localization", "wasm", "no-std", "ffi"]
+keywords     = ["i18n", "l10n", "localization", "translate", "icu"]
+
+# Shared dependencies: always disable default features
+# and opt-in only to what each package actually needs.
+[workspace.dependencies]
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PROFILE: dev — fast inner development loop
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[profile.dev]
+opt-level = 0
+debug     = true
+
+# Compile dependencies at O3 even in dev mode.
+# Removes the bottleneck of running heavy deps unoptimized.
+[profile.dev.package."*"]
+opt-level     = 3
+codegen-units = 16  # parallel units keep dev builds fast
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PROFILE: release — optimized production baseline
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[profile.release]
+opt-level        = 3          # maximum speed
+lto              = "fat"      # explicit form of `true`; full cross-crate LTO
+codegen-units    = 1          # single CGU → maximum inlining window
+panic            = "abort"    # removes unwinding tables (~5-10% binary size)
+strip            = "symbols"  # explicit alias of `true`; easier to scope later
+debug            = false
+debug-assertions = false
+incremental      = false      # reproducible builds in CI
+overflow-checks  = false
+rpath            = false
+
+# Also maximize all third-party dependencies in release
+[profile.release.package."*"]
+opt-level     = 3
+codegen-units = 1
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PROFILE: dist — final distribution artifacts
+# Inherits release; used by CI/CD pipelines only.
+# Usage: cargo build --profile dist
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[profile.dist]
+inherits        = "release"
+strip           = "symbols"
+overflow-checks = false
+debug           = false
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PROFILE: release-size — minimum binary weight
+# Ideal for packages/wasm and packages/ffi.
+# Trades raw speed for smaller output.
+# Usage: cargo build --profile release-size
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[profile.release-size]
+inherits        = "release"
+opt-level       = "z"        # prioritize size over speed
+lto             = "fat"
+codegen-units   = 1
+strip           = "symbols"
+panic           = "abort"
+overflow-checks = false
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+# PROFILE: profiling — release + debug info for flamegraphs
+# Usage: cargo build --profile profiling
+#        cargo flamegraph --profile profiling
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[profile.profiling]
+inherits    = "release"
+debug       = 1        # line tables only — enough for perf/flamegraph
+strip       = "none"
+incremental = false
+
+[workspace.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]

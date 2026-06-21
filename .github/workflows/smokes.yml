@@ -1,0 +1,245 @@
+name: Smoke tests (FFI bindings)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# ─── Shared signing seed (test-only, never a real key) ───────────────────────
+env:
+  L10N4X_SIGNING_KEY: "11111111111111111111111111111111"
+
+jobs:
+  # ── Build libl10n4c + CLI + WASM and compile fixture .pak files ──────────
+  build_artifacts:
+    name: Build l10n4c + WASM + fixtures
+    runs-on: ubuntu-latest
+    outputs:
+      verify_hex: ${{ steps.extract_key.outputs.verify_hex }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build l10n4c shared library + CLI
+        run: |
+          cargo build --release -p l10n4c -p l10n4x-toolkit
+          mkdir -p examples/lib
+          cp target/release/libl10n4c.so examples/lib/libl10n4c.so
+          cp target/release/l10n4x       examples/lib/l10n4x
+
+      - name: Build l10n4x-wasm (Node.js target)
+        run: |
+          cargo install wasm-pack --locked
+          wasm-pack build packages/wasm --target nodejs --out-dir ../../_wasm_pkg --out-name l10n4x
+          ls -la _wasm_pkg/
+
+      - name: Compile fixture .pak files
+        run: |
+          mkdir -p locales/en locales/es
+          printf '{"welcome":"Welcome!","greet":"Hello, {name}!"}' > locales/en/common.json
+          printf '{"welcome":"¡Bienvenido!","greet":"¡Hola, {name}!"}' > locales/es/common.json
+          ./examples/lib/l10n4x build
+          ls -la examples/dist/locales/
+
+      - name: Extract verifyPublicKey
+        id: extract_key
+        run: |
+          HEX=$(python3 -c "import json; print(json.load(open('l10n4x.config.json'))['verifyPublicKey'])")
+          echo "verify_hex=$HEX" >> "$GITHUB_OUTPUT"
+
+      - name: Upload native library + paks
+        uses: actions/upload-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: |
+            examples/lib/libl10n4c.so
+            examples/lib/l10n4x
+            examples/dist/locales/
+
+      - name: Upload WASM package
+        uses: actions/upload-artifact@v4
+        with:
+          name: l10n4x-wasm-node
+          path: _wasm_pkg/
+
+  # ── Python ──────────────────────────────────────────────────────────────────
+  smoke_python:
+    name: Smoke — Python
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: _native
+
+      - name: Prepare lib dir
+        run: |
+          mkdir -p examples/lib examples/dist/locales
+          find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
+          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+
+      - name: Run Python smoke test
+        env:
+          L10N4X_VERIFY_PUBLIC_KEY: ${{ needs.build_artifacts.outputs.verify_hex }}
+          L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
+        run: |
+          cd examples/python
+          python3 main.py
+
+  # ── Go ──────────────────────────────────────────────────────────────────────
+  smoke_go:
+    name: Smoke — Go
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.21"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: _native
+
+      - name: Prepare lib dir
+        run: |
+          mkdir -p examples/lib examples/dist/locales
+          find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
+          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+
+      - name: Run Go smoke test
+        env:
+          L10N4X_VERIFY_PUBLIC_KEY: ${{ needs.build_artifacts.outputs.verify_hex }}
+          L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
+          LD_LIBRARY_PATH: ${{ github.workspace }}/examples/lib
+          CGO_ENABLED: "1"
+        run: |
+          cd examples/go
+          go run . "${{ github.workspace }}/examples/dist/locales"
+
+  # ── C# ──────────────────────────────────────────────────────────────────────
+  smoke_csharp:
+    name: Smoke — C#
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: _native
+
+      - name: Prepare lib dir
+        run: |
+          mkdir -p examples/lib examples/dist/locales
+          find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
+          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+
+      - name: Run C# smoke test
+        env:
+          L10N4X_VERIFY_PUBLIC_KEY: ${{ needs.build_artifacts.outputs.verify_hex }}
+          L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
+        run: |
+          cd examples/csharp
+          dotnet run --nologo -v q
+
+  # ── Flutter ─────────────────────────────────────────────────────────────────
+  smoke_flutter:
+    name: Smoke — Flutter
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: _native
+
+      - name: Prepare lib and assets dir
+        run: |
+          mkdir -p examples/lib examples/dist/locales examples/flutter/assets/locales
+          find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
+          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.pak" -exec cp {} examples/flutter/assets/locales/ \;
+
+      - name: Install dependencies
+        run: |
+          cd examples/flutter
+          flutter pub get
+
+      - name: Run Flutter analyze
+        run: |
+          cd examples/flutter
+          flutter analyze
+
+      - name: Run Flutter smoke test
+        env:
+          L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
+        run: |
+          cd examples/flutter
+          flutter test --dart-define=L10N4X_VERIFY_PUBLIC_KEY=${{ needs.build_artifacts.outputs.verify_hex }}
+
+  # ── TypeScript (Node.js / SSR) ─────────────────────────────────────────────
+  smoke_typescript:
+    name: Smoke — TypeScript
+    runs-on: ubuntu-latest
+    needs: build_artifacts
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Download native artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4c-linux
+          path: _native
+
+      - name: Download WASM package
+        uses: actions/download-artifact@v4
+        with:
+          name: l10n4x-wasm-node
+          path: _wasm_pkg
+
+      - name: Prepare locales
+        run: |
+          mkdir -p examples/dist/locales
+          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+
+      - name: Install dependencies and WASM package
+        run: |
+          cd examples/typescript
+          npm install ../../_wasm_pkg
+
+      - name: Run TypeScript smoke test
+        env:
+          L10N4X_VERIFY_PUBLIC_KEY: ${{ needs.build_artifacts.outputs.verify_hex }}
+        run: |
+          cd examples/typescript
+          npx tsx demo-node.ts

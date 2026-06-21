@@ -1,0 +1,13 @@
+[package]
+name = "l10n4x-compiler"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+serde_json = "1.0"
+l10n4x-core = { path = "../core", default-features = false, features = ["alloc", "integrity", "std", "encryption"] }
+miniz_oxide = "0.8"
+thiserror = "1.0"

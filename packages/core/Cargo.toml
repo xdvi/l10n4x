@@ -1,0 +1,29 @@
+[package]
+name = "l10n4x-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "High-performance, no_std compatible l10n runtime for l10n4x"
+documentation = "https://docs.rs/l10n4x-core"
+
+[features]
+default = ["std"]
+alloc = ["integrity"]
+std = ["alloc", "encryption"]
+integrity = ["dep:ed25519-dalek"]
+encryption = ["dep:aes-gcm", "aes-gcm?/std", "aes-gcm?/getrandom"]
+
+[dependencies]
+miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
+ed25519-dalek = { version = "2.1", optional = true, default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.10.3", optional = true, default-features = false, features = ["aes"] }
+
+[dev-dependencies]
+serde_json = "1.0"
+criterion = "0.5"
+
+[[bench]]
+name = "lookup"
+harness = false

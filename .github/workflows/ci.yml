@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    name: Check + Clippy + Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Cargo check
+        run: cargo check --workspace --all-features
+      - name: Clippy
+        run: cargo clippy --workspace --all-features -- -D warnings
+      - name: Format
+        run: cargo fmt --all -- --check
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run tests
+        run: cargo test --workspace --all-features
+
+  ffi:
+    name: FFI integration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build l10n4c
+        run: cargo build -p l10n4c --release
+      - name: FFI tests
+        run: cargo test -p l10n4c --all-features
+
+  no_std:
+    name: no_std + alloc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Check core (no_std + alloc)
+        run: cargo check -p l10n4x-core --no-default-features --features alloc
+
+  wasm:
+    name: Wasm32
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - name: Check core for wasm32
+        run: cargo check -p l10n4x-core --no-default-features --features alloc --target wasm32-unknown-unknown
+
+  security:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check
+
+  msrv:
+    name: MSRV Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.82
+      - name: Check with MSRV
+        run: cargo check --workspace --all-features
+
+  sanitizer:
+    name: AddressSanitizer (FFI)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: ASan FFI tests
+        run: |
+          export RUSTFLAGS="-Zsanitizer=address"
+          export ASAN_OPTIONS="detect_leaks=1"
+          cargo +nightly test -p l10n4c -Z build-std --target x86_64-unknown-linux-gnu
+        continue-on-error: true

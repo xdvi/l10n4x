@@ -1,0 +1,35 @@
+# Rust compilation target
+/target/
+
+/locales_compiled/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# IDEs and editors configurations
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.env
+.env.local
+.env.*.local
+
+# Python cache files
+__pycache__/
+*.pyc
+
+# C# build artifacts
+examples/csharp/bin/
+examples/csharp/obj/
+
+# Local test outputs and configs
+/i18n/
+/locales/
+/examples/dist/
+
+
