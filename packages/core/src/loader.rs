@@ -8,10 +8,14 @@ use alloc::sync::Arc;
 pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
     let mut success = false;
     read_store(|store| {
-        let mut new_locales = store.locales.clone();
-        new_locales.insert(locale_str.to_string(), Arc::new(bytes.to_vec()));
+        let mut new_vec = (*store.locales).clone();
+        let entry = (locale_str.to_string(), Arc::new(bytes.to_vec()));
+        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+            Ok(pos) => new_vec[pos] = entry,
+            Err(pos) => new_vec.insert(pos, entry),
+        }
         swap_store(TranslationStore {
-            locales: new_locales,
+            locales: Arc::new(new_vec),
             fallback_chain: alloc::sync::Arc::clone(&store.fallback_chain),
         });
         success = true;

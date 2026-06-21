@@ -1,7 +1,7 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use l10n4x_core::loader::load_raw_bytes;
 use l10n4x_core::store::{swap_store, translate_to_writer, TranslationStore};
-use std::collections::BTreeMap;
+use std::sync::Arc;
 
 fn build_pak_bytes(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut data = Vec::new();
@@ -110,13 +110,22 @@ fn bench_lookup(c: &mut Criterion) {
 
     c.bench_function("swap_store_reload", |b| {
         b.iter(|| {
-            let mut locales = BTreeMap::new();
-            locales.insert("es".to_string(), std::sync::Arc::new(vec![]));
+            let mut store = TranslationStore::default();
+            let vec = Arc::make_mut(&mut store.locales);
+            vec.push(("es".to_string(), std::sync::Arc::new(vec![])));
+            swap_store(black_box(store));
+        })
+    });
+
+    // Pre-built data for pure swap benchmarking
+    let prebuilt_locales = std::sync::Arc::new(vec![("es".to_string(), std::sync::Arc::new(vec![]))]);
+    let prebuilt_chain = TranslationStore::default().fallback_chain; // cached singleton
+
+    c.bench_function("swap_store_pure", |b| {
+        b.iter(|| {
             let store = TranslationStore {
-                locales,
-                fallback_chain: std::sync::Arc::from(
-                    vec![std::sync::Arc::from("en") as std::sync::Arc<str>].into_boxed_slice()
-                ),
+                locales: std::sync::Arc::clone(&prebuilt_locales),
+                fallback_chain: std::sync::Arc::clone(&prebuilt_chain),
             };
             swap_store(black_box(store));
         })

@@ -2,7 +2,6 @@ extern crate alloc;
 use crate::binary_format::BinaryFormatReader;
 use crate::formatter::format_message;
 use alloc::boxed::Box;
-use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -11,10 +10,26 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 #[cfg(all(not(feature = "std"), debug_assertions))]
 use core::sync::atomic::AtomicUsize;
 
+#[cfg(feature = "std")]
+fn default_chain() -> Arc<[Arc<str>]> {
+    use std::sync::OnceLock;
+    static CHAIN: OnceLock<Arc<[Arc<str>]>> = OnceLock::new();
+    CHAIN.get_or_init(|| {
+        Arc::from(alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice())
+    }).clone()
+}
+
+#[cfg(not(feature = "std"))]
+fn default_chain() -> Arc<[Arc<str>]> {
+    Arc::from(alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice())
+}
+
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
+/// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
+/// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
 pub struct TranslationStore {
-    /// Locale code → decompressed binary buffer (BTreeMap: O(log n) lookup, no_std compatible).
-    pub locales: BTreeMap<String, Arc<Vec<u8>>>,
+    /// Sorted vector of locale-to-buffer mappings (Arc for O(1) clone). Binary-search for lookup.
+    pub locales: Arc<Vec<(String, Arc<Vec<u8>>)>>,
     /// Ordered chain of fallback locale codes. The first match wins.
     pub fallback_chain: Arc<[Arc<str>]>,
 }
@@ -22,18 +37,17 @@ pub struct TranslationStore {
 impl Default for TranslationStore {
     fn default() -> Self {
         Self {
-            locales: BTreeMap::new(),
-            fallback_chain: Arc::from(
-                alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice(),
-            ),
+            locales: Arc::new(Vec::new()),
+            fallback_chain: default_chain(),
         }
     }
 }
 
 impl TranslationStore {
-    /// Looks up the decompressed translation buffer for a given locale. O(log n).
+    /// Looks up the decompressed translation buffer for a given locale. O(log n) binary search.
     pub fn lookup(&self, locale: &str) -> Option<&[u8]> {
-        self.locales.get(locale).map(|b| b.as_slice())
+        let idx = self.locales.binary_search_by(|(loc, _)| loc.as_str().cmp(locale)).ok()?;
+        Some(self.locales[idx].1.as_slice())
     }
 }
 
@@ -172,7 +186,7 @@ pub fn set_fallback_chain(chain: &[&str]) {
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
     read_store(|store| {
         swap_store(TranslationStore {
-            locales: store.locales.clone(),
+            locales: Arc::clone(&store.locales),
             fallback_chain: new_chain.clone(),
         });
     });
@@ -199,7 +213,7 @@ pub fn get_fallback_locale() -> Arc<str> {
 pub fn clear_translations() {
     read_store(|store| {
         swap_store(TranslationStore {
-            locales: BTreeMap::new(),
+            locales: Arc::new(Vec::new()),
             fallback_chain: Arc::clone(&store.fallback_chain),
         });
     });
@@ -376,7 +390,7 @@ mod store_perf_tests {
     fn lookup_returns_buffer_for_loaded_locale() {
         let mut store = TranslationStore::default();
         let buf = Arc::new(vec![0x4c, 0x31, 0x30, 0x4e]);
-        store.locales.insert("en".to_string(), Arc::clone(&buf));
+        Arc::make_mut(&mut store.locales).push(("en".to_string(), Arc::clone(&buf)));
         let found = store.lookup("en");
         assert!(found.is_some());
         assert_eq!(found.unwrap(), buf.as_slice());
