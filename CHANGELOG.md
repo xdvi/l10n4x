@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.2.0] - 2026-06-21
+
+### Added
+- **Hardened FFI Layer**: Enforced UTF-8 encoding checks (`L10N4C_INVALID_ENCODING = 6`) and buffer overflow boundaries (`L10N4C_BUFFER_OVERFLOW = 12`) on all string parameters and raw pointer calculations.
+- **FFI bindgen Synchronization**: Integrated an automated test verifying numerical alignment between Rust FFI error constants and `l10n4c.h` C macros.
+
+### Changed
+- **Architectural Signing Key Removal**: Signing capabilities moved completely out of the runtime `core` package into the build-time `compiler` crate, preventing signing keys from being exposed in runtime client bundles.
+- **Epoch-Based Memory Reclamation (EBR)**: Replaced raw spinlock memory pooling in `TranslationStore` with standard `crossbeam-epoch` concurrent reclamation, and a panic-safe `AtomicUsize` re-entrancy guard for `no_std` environments.
+- **Dev Server Security**: Secured the dev server with customizable CORS origins validation (dynamic localhost fallback, rejecting `null` origins), SSE event and payload raw newline sanitization, and timing-attack resistant constant-time Axios authentication token checks under selective Axum sub-routers.
+
 ## [0.1.0] - 2026-06-20
 
 ### Added

@@ -13,8 +13,10 @@ use std::fs;
 use std::path::Path;
 
 use axum::{
-    extract::{Path as AxumPath, State},
-    http::{header, StatusCode},
+    body::Body,
+    extract::{Path as AxumPath, Query, State},
+    http::{header, Request, StatusCode},
+    middleware::{self, Next},
     response::{
         sse::{Event, Sse},
         IntoResponse,
@@ -22,6 +24,7 @@ use axum::{
     routing::get,
     Router,
 };
+use subtle::ConstantTimeEq;
 use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
@@ -29,7 +32,7 @@ use tower_http::cors::CorsLayer;
 
 #[derive(Parser)]
 #[command(name = "l10n4x")]
-#[command(about = "l10n4x localization toolkit dev toolchain", version = "0.1.0")]
+#[command(about = "l10n4x localization toolkit dev toolchain", version = env!("CARGO_PKG_VERSION"))]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -161,7 +164,7 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
     }
 
     let signing_seed = get_signing_key(&config)?;
-    if !l10n4x_core::integrity::set_signing_key(&signing_seed) {
+    if !l10n4x_compiler::signing::set_signing_key(&signing_seed) {
         anyhow::bail!("Failed to configure Ed25519 signing key.");
     }
 
@@ -179,7 +182,7 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
     )
     .map_err(|e| anyhow::anyhow!("Compilation failed: {}", e))?;
 
-    let public_key = l10n4x_core::integrity::signing_public_key()
+    let public_key = l10n4x_compiler::signing::signing_public_key()
         .map_err(|e| anyhow::anyhow!("Failed to derive public key: {}", e))?;
     let public_key_hex = format_verify_public_key(&public_key);
 
@@ -263,15 +266,73 @@ async fn serve_locale_file(
     }
 }
 
+#[derive(serde::Deserialize)]
+struct EventsQuery {
+    locale: Option<String>,
+}
+
 async fn handle_events(
+    Query(query): Query<EventsQuery>,
     State(state): State<ServerState>,
-) -> Sse<impl tokio_stream::Stream<Item = Result<Event, std::convert::Infallible>>> {
+) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
+    if let Some(locale) = &query.locale {
+        if locale.contains('\n') || locale.contains('\r') || locale.contains(':') {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+    }
     let rx = state.tx.subscribe();
     let stream = BroadcastStream::new(rx).map(|msg| {
-        let data = msg.unwrap_or_else(|_| "change".to_string());
+        let data = msg.map_err(axum::Error::new)?;
+        if data.contains('\n') || data.contains('\r') {
+            return Err(axum::Error::new("Payload contains invalid newlines"));
+        }
         Ok(Event::default().data(data))
     });
-    Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default())
+    Ok(Sse::new(stream).keep_alive(axum::response::sse::KeepAlive::default()))
+}
+
+fn extract_token(req: &Request<Body>) -> Option<String> {
+    if let Some(auth_header) = req.headers().get(axum::http::header::AUTHORIZATION) {
+        if let Ok(auth_str) = auth_header.to_str() {
+            if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                return Some(token.to_string());
+            }
+        }
+    }
+    if let Some(query) = req.uri().query() {
+        for pair in query.split('&') {
+            let mut parts = pair.splitn(2, '=');
+            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+                if k == "token" {
+                    return Some(v.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+async fn auth_middleware(req: Request<Body>, next: Next) -> Result<impl IntoResponse, StatusCode> {
+    let expected_token = match std::env::var("L10N4X_DEV_TOKEN") {
+        Ok(t) if !t.is_empty() => t,
+        _ => return Ok(next.run(req).await),
+    };
+
+    if let Some(token) = extract_token(&req) {
+        if token.len() <= 128 {
+            let expected = expected_token.as_bytes();
+            let incoming = token.as_bytes();
+            let match_choice = if expected.len() == incoming.len() {
+                expected.ct_eq(incoming)
+            } else {
+                expected.ct_eq(expected) & subtle::Choice::from(0)
+            };
+            if match_choice.unwrap_u8() == 1 {
+                return Ok(next.run(req).await);
+            }
+        }
+    }
+    Err(StatusCode::UNAUTHORIZED)
 }
 
 async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Error> {
@@ -324,6 +385,11 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
                         .iter()
                         .any(|p| p.extension().is_some_and(|ext| ext == "json"));
                     if has_json_changes {
+                        // 300ms trailing-edge debounce
+                        std::thread::sleep(std::time::Duration::from_millis(300));
+                        // Drain subsequent events
+                        while let Ok(Ok(_)) = event_rx.try_recv() {}
+
                         println!("Translation file changed. Rebuilding...");
                         match build_project(false) {
                             Ok(_) => {
@@ -334,6 +400,14 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
                                     .and_then(|p| p.file_name())
                                     .and_then(|s| s.to_str())
                                     .unwrap_or("unknown");
+                                if lang.contains('\n') || lang.contains('\r') || lang.contains(':')
+                                {
+                                    eprintln!(
+                                        "Skipping invalid locale code in change payload: {}",
+                                        lang
+                                    );
+                                    continue;
+                                }
                                 let sse_payload =
                                     format!("{{\"type\": \"change\", \"lang\": \"{}\"}}", lang);
                                 let _ = watcher_tx.send(sse_payload);
@@ -350,10 +424,58 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
         }
     });
 
-    let app = Router::new()
+    let cors_layer = if let Some(origins) = &config.cors_origins {
+        let mut parsed_origins = Vec::new();
+        for origin_str in origins {
+            let s = origin_str.as_str();
+            if (s.starts_with("http://") || s.starts_with("https://"))
+                && !s.contains('\n')
+                && !s.contains('\r')
+            {
+                if let Ok(origin_val) = axum::http::HeaderValue::from_str(origin_str) {
+                    parsed_origins.push(origin_val);
+                } else {
+                    anyhow::bail!("Invalid CORS origin configured: {}", origin_str);
+                }
+            } else {
+                anyhow::bail!("Invalid CORS origin configured: {}", origin_str);
+            }
+        }
+        CorsLayer::new()
+            .allow_origin(tower_http::cors::AllowOrigin::list(parsed_origins))
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    } else {
+        let allowed_origin = tower_http::cors::AllowOrigin::predicate(|origin, _parts| {
+            let bytes = origin.as_bytes();
+            if bytes == b"null" {
+                return false;
+            }
+            if let Ok(origin_str) = std::str::from_utf8(bytes) {
+                if origin_str.starts_with("http://localhost:")
+                    || origin_str.starts_with("http://127.0.0.1:")
+                    || origin_str == "http://localhost"
+                    || origin_str == "http://127.0.0.1"
+                {
+                    return true;
+                }
+            }
+            false
+        });
+        CorsLayer::new()
+            .allow_origin(allowed_origin)
+            .allow_methods(tower_http::cors::Any)
+            .allow_headers(tower_http::cors::Any)
+    };
+
+    let protected_routes = Router::new()
         .route("/locales/:lang_pak", get(serve_locale_file))
         .route("/events", get(handle_events))
-        .layer(CorsLayer::permissive())
+        .layer(middleware::from_fn(auth_middleware));
+
+    let app = Router::new()
+        .merge(protected_routes)
+        .layer(cors_layer)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
@@ -427,6 +549,7 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         verify_public_key: None,
         encrypt: false,
         encrypt_key_env: "L10N4X_ENCRYPT_KEY".to_string(),
+        cors_origins: None,
         targets,
     };
 

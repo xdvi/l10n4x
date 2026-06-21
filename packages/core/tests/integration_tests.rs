@@ -1,8 +1,11 @@
 use l10n4x_core::binary_format::BinaryFormatReader;
 
 use l10n4x_core::formatter::{format_message, get_plural_category, PluralCategory};
-use l10n4x_core::store::{read_store, swap_store, translate, TranslationStore};
+#[cfg(feature = "std")]
+use l10n4x_core::store::read_store;
+use l10n4x_core::store::{swap_store, translate, TranslationStore};
 use std::sync::Arc;
+#[cfg(feature = "std")]
 use std::thread;
 
 #[test]
@@ -142,6 +145,7 @@ fn test_translate_helper_and_macro() {
 }
 
 #[test]
+#[cfg(feature = "std")]
 fn test_lock_free_concurrency_rcu() {
     let _lock = TEST_MUTEX.lock().unwrap();
     let initial_store = TranslationStore {
@@ -190,6 +194,76 @@ fn test_lock_free_concurrency_rcu() {
     thread::sleep(std::time::Duration::from_millis(200));
 
     // Stop thread loops
+    active.store(false, core::sync::atomic::Ordering::Relaxed);
+
+    swapper.join().unwrap();
+    for reader in readers {
+        reader.join().unwrap();
+    }
+}
+
+#[test]
+#[cfg(feature = "std")]
+fn test_ebr_stress() {
+    let _lock = TEST_MUTEX.lock().unwrap();
+    let initial_store = TranslationStore {
+        locales: vec![("en".to_string(), Arc::new(vec![]))],
+        fallback: "en".to_string(),
+    };
+    swap_store(initial_store);
+
+    let active = Arc::new(core::sync::atomic::AtomicBool::new(true));
+    let active_clone = active.clone();
+
+    // Spawn swapper thread: swaps store every 10ms
+    let swapper = thread::spawn(move || {
+        let mut count: u32 = 0;
+        while active_clone.load(core::sync::atomic::Ordering::Relaxed) {
+            let mut mock_data = Vec::new();
+            mock_data.extend_from_slice(b"L10N");
+            mock_data.extend_from_slice(&1u32.to_be_bytes());
+            mock_data.extend_from_slice(&16u32.to_be_bytes());
+            mock_data.extend_from_slice(&0u32.to_be_bytes());
+
+            let store = TranslationStore {
+                locales: vec![
+                    ("en".to_string(), Arc::new(mock_data)),
+                    ("es".to_string(), Arc::new(vec![count as u8])),
+                ],
+                fallback: "en".to_string(),
+            };
+            swap_store(store);
+            count = count.wrapping_add(1);
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+    });
+
+    // Spawn 4 concurrent reader threads
+    let mut readers = Vec::new();
+    for i in 0..4 {
+        let active_reader = active.clone();
+        readers.push(thread::spawn(move || {
+            while active_reader.load(core::sync::atomic::Ordering::Relaxed) {
+                read_store(|store| {
+                    let _ = store.lookup("en");
+                    let _ = store.lookup("es");
+                    // Read something to stress memory access
+                    if let Some(buf) = store.lookup("es") {
+                        if !buf.is_empty() {
+                            let _val = buf[0];
+                        }
+                    }
+                });
+                if i % 2 == 0 {
+                    thread::yield_now();
+                }
+            }
+        }));
+    }
+
+    // Run for 5 seconds
+    thread::sleep(std::time::Duration::from_secs(5));
+
     active.store(false, core::sync::atomic::Ordering::Relaxed);
 
     swapper.join().unwrap();

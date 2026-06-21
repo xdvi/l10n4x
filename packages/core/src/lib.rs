@@ -29,8 +29,11 @@ pub mod integrity;
 pub mod loader;
 /// Outer `.pak` container format (DEFLATE + Ed25519).
 pub mod pak;
+pub(crate) mod reclaim;
 /// Thread-safe RCU store swap and lookup management.
 pub mod store;
+#[cfg(test)]
+pub(crate) mod test_fixtures;
 
 /// Macro helper to build a zero-cost stack-allocated slice of key-value parameters.
 /// Useful for passing variables to the translation function without heap allocations.

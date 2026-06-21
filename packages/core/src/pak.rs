@@ -98,13 +98,25 @@ mod tests {
     #[test]
     fn seal_parse_roundtrip() {
         let _lock = integrity::TEST_LOCK.lock().unwrap();
-        let seed = [3u8; 32];
-        assert!(integrity::set_signing_key(&seed));
-        let pubkey = integrity::signing_public_key().unwrap();
-        assert!(integrity::set_verify_key(&pubkey));
+
+        // Reset verify key first
+        use core::sync::atomic::Ordering;
+        let old_ptr = integrity::VERIFY_KEY.swap(core::ptr::null_mut(), Ordering::SeqCst);
+        if !old_ptr.is_null() {
+            crate::reclaim::schedule_drop(old_ptr);
+        }
+
+        assert!(integrity::set_verify_key(
+            &crate::test_fixtures::TEST_PUBLIC_KEY
+        ));
 
         let body = build_unsigned(b"deflate-bytes");
-        let sig = integrity::sign(&body).unwrap();
+        let sig: [u8; 64] = [
+            110, 242, 219, 153, 169, 87, 123, 32, 227, 229, 247, 40, 63, 6, 96, 22, 64, 231, 220,
+            117, 14, 137, 67, 158, 232, 94, 209, 29, 128, 215, 134, 152, 191, 233, 224, 8, 42, 27,
+            15, 102, 154, 4, 173, 98, 3, 188, 99, 177, 133, 251, 248, 38, 229, 151, 45, 253, 29,
+            30, 96, 58, 81, 130, 111, 10,
+        ];
         let pak = seal(&body, &sig);
 
         let (msg, payload, sig_slice) = parse_signed(&pak).unwrap();

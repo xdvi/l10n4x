@@ -21,6 +21,8 @@ pub struct Config {
     /// Env var holding the 32-byte AES key (build + runtime, only when `encrypt` is true).
     #[serde(default = "default_encrypt_key_env")]
     pub encrypt_key_env: String,
+    #[serde(default)]
+    pub cors_origins: Option<Vec<String>>,
     pub targets: Vec<Target>,
 }
 

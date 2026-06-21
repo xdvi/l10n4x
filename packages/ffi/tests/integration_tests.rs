@@ -13,8 +13,9 @@ use std::path::Path;
 use l10n4c::{
     l10n4c_clear, l10n4c_free_string, l10n4c_load_pak_directory, l10n4c_set_decrypt_key,
     l10n4c_set_fallback_locale, l10n4c_set_verify_key, l10n4c_translate, l10n4c_translate_alloc,
-    l10n4c_translate_required_size, l10n4c_translate_with_params_alloc, L10n4cParam,
-    L10N4C_KEY_NOT_FOUND, L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
+    l10n4c_translate_required_size, l10n4c_translate_with_params_alloc,
+    l10n4c_translate_with_params_required_size, L10n4cParam, L10N4C_KEY_NOT_FOUND,
+    L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
 };
 
 /// Install signing + verify keys for test fixtures.
@@ -22,8 +23,8 @@ use l10n4c::{
 /// directly — no FFI needed for signing.
 fn install_test_keys() {
     let seed = [11u8; 32];
-    assert!(l10n4x_core::integrity::set_signing_key(&seed));
-    let pubkey = l10n4x_core::integrity::signing_public_key().unwrap();
+    let _ = l10n4x_compiler::signing::set_signing_key(&seed);
+    let pubkey = l10n4x_compiler::signing::signing_public_key().unwrap();
     assert_eq!(
         l10n4c_set_verify_key(pubkey.as_ptr(), pubkey.len()),
         L10N4C_OK
@@ -320,6 +321,132 @@ fn test_alloc_api() {
     let _ = fs::remove_dir_all(temp_out);
 }
 
+// ─── Hardening & Synchronization Tests ──────────────────────────────────────
+
+#[test]
+fn test_error_constants_match_header() {
+    let bindings = bindgen::Builder::default()
+        .header("l10n4c.h")
+        .generate()
+        .expect("Unable to generate bindings")
+        .to_string();
+
+    let mut values = std::collections::HashMap::new();
+    for line in bindings.lines() {
+        if line.contains("pub const L10N4C_") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 6 {
+                let name = parts[2].trim_end_matches(':');
+                let value_str = parts[5].trim_end_matches(';');
+                if let Ok(val) = value_str.parse::<i32>() {
+                    values.insert(name.to_string(), val);
+                }
+            }
+        }
+    }
+
+    assert_eq!(
+        *values.get("L10N4C_OK").expect("L10N4C_OK"),
+        l10n4c::L10N4C_OK
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_KEY_NOT_FOUND")
+            .expect("L10N4C_KEY_NOT_FOUND"),
+        l10n4c::L10N4C_KEY_NOT_FOUND
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_LOCALE_NOT_LOADED")
+            .expect("L10N4C_LOCALE_NOT_LOADED"),
+        l10n4c::L10N4C_LOCALE_NOT_LOADED
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_BUFFER_TOO_SMALL")
+            .expect("L10N4C_BUFFER_TOO_SMALL"),
+        l10n4c::L10N4C_BUFFER_TOO_SMALL
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_INVALID_PARAMS")
+            .expect("L10N4C_INVALID_PARAMS"),
+        l10n4c::L10N4C_INVALID_PARAMS
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_INTERNAL_ERROR")
+            .expect("L10N4C_INTERNAL_ERROR"),
+        l10n4c::L10N4C_INTERNAL_ERROR
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_INVALID_ENCODING")
+            .expect("L10N4C_INVALID_ENCODING"),
+        l10n4c::L10N4C_INVALID_ENCODING
+    );
+    assert_eq!(
+        *values.get("L10N4C_IO_ERROR").expect("L10N4C_IO_ERROR"),
+        l10n4c::L10N4C_IO_ERROR
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_SIGNATURE_INVALID")
+            .expect("L10N4C_SIGNATURE_INVALID"),
+        l10n4c::L10N4C_SIGNATURE_INVALID
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_VERIFY_KEY_NOT_SET")
+            .expect("L10N4C_VERIFY_KEY_NOT_SET"),
+        l10n4c::L10N4C_VERIFY_KEY_NOT_SET
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_DECRYPT_KEY_NOT_SET")
+            .expect("L10N4C_DECRYPT_KEY_NOT_SET"),
+        l10n4c::L10N4C_DECRYPT_KEY_NOT_SET
+    );
+    assert_eq!(
+        *values
+            .get("L10N4C_BUFFER_OVERFLOW")
+            .expect("L10N4C_BUFFER_OVERFLOW"),
+        l10n4c::L10N4C_BUFFER_OVERFLOW
+    );
+}
+
+fn test_ffi_invalid_utf8() {
+    l10n4c_clear();
+    // Pass invalid UTF-8 sequence to fallback locale setting
+    let invalid_utf8 = b"en_\xff\xff\x00";
+    let code = l10n4c_set_fallback_locale(invalid_utf8.as_ptr() as *const std::os::raw::c_char);
+    assert_eq!(code, l10n4c::L10N4C_INVALID_ENCODING);
+}
+
+fn test_ffi_buffer_overflow() {
+    l10n4c_clear();
+    let locale = CString::new("en").unwrap();
+    let key = CString::new("common.greet").unwrap();
+    let dummy_param = L10n4cParam {
+        key: std::ptr::null(),
+        value: std::ptr::null(),
+    };
+    // Pass maximum usize to cause checked multiplication overflow
+    let code =
+        l10n4c_translate_with_params_alloc(locale.as_ptr(), key.as_ptr(), &dummy_param, usize::MAX);
+    assert!(code.is_null());
+
+    let mut out_size = 0usize;
+    let size_code = l10n4c_translate_with_params_required_size(
+        locale.as_ptr(),
+        key.as_ptr(),
+        &dummy_param,
+        usize::MAX,
+        &mut out_size,
+    );
+    assert_eq!(size_code, l10n4c::L10N4C_BUFFER_OVERFLOW);
+}
+
 // ─── Single test entry point (avoid global state races) ─────────────────────
 
 #[test]
@@ -329,4 +456,6 @@ fn run_all_ffi_integration_tests() {
     test_variable_interpolation_and_plurals();
     test_encrypted_pak_compile_and_load();
     test_alloc_api();
+    test_ffi_invalid_utf8();
+    test_ffi_buffer_overflow();
 }

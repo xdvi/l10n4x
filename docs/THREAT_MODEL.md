@@ -21,9 +21,10 @@ AES-256-GCM (`L10E` envelope) is **opt-in** for teams that need confidentiality 
 
 Use encryption only when you understand its limitations. Signature verification remains mandatory regardless.
 
-## Key handling
+## Key handling & Architecture Secrecy
 
-- **Build:** `L10N4X_SIGNING_KEY` = 32-byte Ed25519 seed (never in repo or client).
+- **Architecture Separation:** To minimize the attack surface, only the `compiler` crate and the `cli` tool have access to the signing seed. The runtime `core` package is entirely signature-verification only and has no capability to perform signing operations under any configuration.
+- **Build:** `L10N4X_SIGNING_KEY` = 32-byte Ed25519 seed (never in repo, client, or the runtime core crate).
 - **Runtime:** `verifyPublicKey` (hex) embedded in generated bindings — public by design.
 - **Optional encrypt:** `L10N4X_ENCRYPT_KEY` = 32-byte AES key (build + runtime, only when `encrypt` is true).
 - Re-sign all `.pak` files when rotating the signing seed; update `verifyPublicKey` via `l10n4x build`.

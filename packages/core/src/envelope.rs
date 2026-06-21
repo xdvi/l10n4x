@@ -72,23 +72,19 @@ pub fn open_outer(data: &[u8]) -> Result<Vec<u8>, &'static str> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "encryption"))]
 mod tests {
     use super::*;
-    use crate::integrity;
     use crate::pak::{build_unsigned, seal};
 
     #[test]
-    #[cfg(feature = "encryption")]
     fn l10e_roundtrip() {
         use crate::encryption;
-        let seed = [5u8; 32];
-        assert!(integrity::set_signing_key(&seed));
         let enc_key = [9u8; 32];
         assert!(encryption::set_decrypt_key(&enc_key));
 
         let body = build_unsigned(b"payload");
-        let sig = integrity::sign(&body).unwrap();
+        let sig = [0u8; 64];
         let signed = seal(&body, &sig);
         let wrapped = wrap_encrypted(&signed).unwrap();
         let opened = unwrap_encrypted(&wrapped).unwrap();

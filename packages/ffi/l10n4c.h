@@ -16,10 +16,12 @@ extern "C" {
 #define L10N4C_BUFFER_TOO_SMALL    3  /* Buffer too small — call _required_size      */
 #define L10N4C_INVALID_PARAMS      4  /* Null pointer or invalid UTF-8               */
 #define L10N4C_INTERNAL_ERROR      5  /* Unexpected internal error                   */
+#define L10N4C_INVALID_ENCODING    6  /* Parameter contains invalid UTF-8 encoding   */
 #define L10N4C_IO_ERROR            7  /* File/directory I/O failure                  */
 #define L10N4C_SIGNATURE_INVALID   8  /* Ed25519 signature mismatch (tampered pak)   */
 #define L10N4C_VERIFY_KEY_NOT_SET  9  /* Call l10n4c_set_verify_key first            */
 #define L10N4C_DECRYPT_KEY_NOT_SET 11 /* Call l10n4c_set_decrypt_key first (L10E)    */
+#define L10N4C_BUFFER_OVERFLOW     12 /* Operation resulted in buffer overflow        */
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
 

@@ -13,10 +13,12 @@ pub const L10N4C_LOCALE_NOT_LOADED: i32 = 2;
 /// Caller-provided buffer is too small. Call the `_required_size` variant first,
 /// allocate at least that many bytes, then retry.
 pub const L10N4C_BUFFER_TOO_SMALL: i32 = 3;
-/// One or more parameters are null or contain invalid UTF-8.
+/// One or more parameters are null.
 pub const L10N4C_INVALID_PARAMS: i32 = 4;
 /// An internal runtime error occurred (should not happen in normal use).
 pub const L10N4C_INTERNAL_ERROR: i32 = 5;
+/// Parameter contains invalid UTF-8 encoding.
+pub const L10N4C_INVALID_ENCODING: i32 = 6;
 /// File or directory I/O failed. Check that the path exists and is readable.
 pub const L10N4C_IO_ERROR: i32 = 7;
 /// Ed25519 signature verification failed — the `.pak` file may have been tampered with.
@@ -28,3 +30,19 @@ pub const L10N4C_VERIFY_KEY_NOT_SET: i32 = 9;
 /// AES decrypt key has not been configured. Required only for `L10E`-encrypted paks.
 /// Call `l10n4c_set_decrypt_key` before loading encrypted `.pak` files.
 pub const L10N4C_DECRYPT_KEY_NOT_SET: i32 = 11;
+/// Operation resulted in an integer buffer overflow.
+pub const L10N4C_BUFFER_OVERFLOW: i32 = 12;
+
+// Compile-time static assertions to verify existing error codes are not modified.
+const _: () = assert!(L10N4C_OK == 0);
+const _: () = assert!(L10N4C_KEY_NOT_FOUND == 1);
+const _: () = assert!(L10N4C_LOCALE_NOT_LOADED == 2);
+const _: () = assert!(L10N4C_BUFFER_TOO_SMALL == 3);
+const _: () = assert!(L10N4C_INVALID_PARAMS == 4);
+const _: () = assert!(L10N4C_INTERNAL_ERROR == 5);
+const _: () = assert!(L10N4C_INVALID_ENCODING == 6);
+const _: () = assert!(L10N4C_IO_ERROR == 7);
+const _: () = assert!(L10N4C_SIGNATURE_INVALID == 8);
+const _: () = assert!(L10N4C_VERIFY_KEY_NOT_SET == 9);
+const _: () = assert!(L10N4C_DECRYPT_KEY_NOT_SET == 11);
+const _: () = assert!(L10N4C_BUFFER_OVERFLOW == 12);

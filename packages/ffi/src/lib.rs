@@ -53,7 +53,7 @@ fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
     }
     unsafe { CStr::from_ptr(ptr) }
         .to_str()
-        .map_err(|_| L10N4C_INVALID_PARAMS)
+        .map_err(|_| L10N4C_INVALID_ENCODING)
 }
 
 fn resolve_translation(locale: &str, key: &str, params: &[(&str, &str)]) -> TranslateOutcome {
@@ -68,12 +68,12 @@ fn resolve_translation(locale: &str, key: &str, params: &[(&str, &str)]) -> Tran
     }
 }
 
-fn required_size(text: &str) -> usize {
-    text.len() + 1
+fn required_size(text: &str) -> Option<usize> {
+    text.len().checked_add(1)
 }
 
 fn write_to_c_buffer(s: &str, buf: *mut u8, max_len: usize) -> Result<usize, i32> {
-    let needed = required_size(s);
+    let needed = required_size(s).ok_or(L10N4C_BUFFER_OVERFLOW)?;
     if buf.is_null() || max_len < needed {
         return Err(L10N4C_BUFFER_TOO_SMALL);
     }
@@ -94,6 +94,11 @@ fn parse_typed_params_owned(
     if params.is_null() {
         return Err(L10N4C_INVALID_PARAMS);
     }
+    let size_of_param = std::mem::size_of::<L10n4cParam>();
+    let _total_size = size_of_param
+        .checked_mul(param_count)
+        .ok_or(L10N4C_BUFFER_OVERFLOW)?;
+
     let slice = unsafe { std::slice::from_raw_parts(params, param_count) };
     let mut out = Vec::with_capacity(param_count);
     for p in slice {
@@ -211,8 +216,12 @@ pub extern "C" fn l10n4c_translate_required_size(
         Ok(o) => o,
         Err(e) => return e,
     };
+    let needed = match required_size(&outcome.text) {
+        Some(sz) => sz,
+        None => return L10N4C_BUFFER_OVERFLOW,
+    };
     unsafe {
-        *out_size = required_size(&outcome.text);
+        *out_size = needed;
     }
     if outcome.key_found {
         L10N4C_OK
@@ -274,8 +283,12 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
         Ok(o) => o,
         Err(e) => return e,
     };
+    let needed = match required_size(&outcome.text) {
+        Some(sz) => sz,
+        None => return L10N4C_BUFFER_OVERFLOW,
+    };
     unsafe {
-        *out_size = required_size(&outcome.text);
+        *out_size = needed;
     }
     if outcome.key_found {
         L10N4C_OK

@@ -8,6 +8,21 @@ abstract final class L10nKeys {
 {{KEY_DEFINITIONS}}
 }
 
+abstract final class L10nErrors {
+  static const int ok = 0;
+  static const int keyNotFound = 1;
+  static const int localeNotLoaded = 2;
+  static const int bufferTooSmall = 3;
+  static const int invalidParams = 4;
+  static const int internalError = 5;
+  static const int invalidEncoding = 6;
+  static const int ioError = 7;
+  static const int signatureInvalid = 8;
+  static const int verifyKeyNotSet = 9;
+  static const int decryptKeyNotSet = 11;
+  static const int bufferOverflow = 12;
+}
+
 final class L10n4cParam extends ffi.Struct {
   external ffi.Pointer<Utf8> key;
   external ffi.Pointer<Utf8> value;

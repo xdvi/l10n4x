@@ -17,6 +17,21 @@ import (
 	"unsafe"
 )
 
+const (
+	L10N4C_OK                  = 0
+	L10N4C_KEY_NOT_FOUND       = 1
+	L10N4C_LOCALE_NOT_LOADED   = 2
+	L10N4C_BUFFER_TOO_SMALL    = 3
+	L10N4C_INVALID_PARAMS      = 4
+	L10N4C_INTERNAL_ERROR      = 5
+	L10N4C_INVALID_ENCODING    = 6
+	L10N4C_IO_ERROR            = 7
+	L10N4C_SIGNATURE_INVALID   = 8
+	L10N4C_VERIFY_KEY_NOT_SET  = 9
+	L10N4C_DECRYPT_KEY_NOT_SET = 11
+	L10N4C_BUFFER_OVERFLOW     = 12
+)
+
 var (
 	loadedLocales = make(map[string]bool)
 	mu            sync.RWMutex

@@ -6,8 +6,10 @@ use alloc::string::String;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::cell::UnsafeCell;
-use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
+
+#[cfg(all(not(feature = "std"), debug_assertions))]
+use core::sync::atomic::AtomicUsize;
 
 /// Manages loaded localization packages containing locales and their decompressed binary buffers.
 pub struct TranslationStore {
@@ -39,124 +41,97 @@ impl TranslationStore {
     }
 }
 
-// Global active readers count for quiescent state detection
-static READERS: AtomicUsize = AtomicUsize::new(0);
-
 // Global store pointer
 static STORE: AtomicPtr<TranslationStore> = AtomicPtr::new(core::ptr::null_mut());
 
-// A simple spin-lock protected vector for retired pointers to be cleaned up
-struct SpinMutex<T> {
-    lock: AtomicBool,
-    data: UnsafeCell<T>,
-}
+#[cfg(all(not(feature = "std"), debug_assertions))]
+static REENTRANCY_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-unsafe impl<T: Send> Sync for SpinMutex<T> {}
-unsafe impl<T: Send> Send for SpinMutex<T> {}
+#[cfg(all(not(feature = "std"), debug_assertions))]
+struct ReentrancyGuard;
 
-impl<T> SpinMutex<T> {
-    const fn new(val: T) -> Self {
-        Self {
-            lock: AtomicBool::new(false),
-            data: UnsafeCell::new(val),
-        }
-    }
-
-    fn lock(&self) -> SpinMutexGuard<'_, T> {
-        while self
-            .lock
-            .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
-            core::hint::spin_loop();
-        }
-        SpinMutexGuard { mutex: self }
+#[cfg(all(not(feature = "std"), debug_assertions))]
+impl ReentrancyGuard {
+    fn new() -> Self {
+        REENTRANCY_COUNTER.fetch_add(1, Ordering::SeqCst);
+        ReentrancyGuard
     }
 }
 
-struct SpinMutexGuard<'a, T> {
-    mutex: &'a SpinMutex<T>,
-}
-
-impl<'a, T> core::ops::Deref for SpinMutexGuard<'a, T> {
-    type Target = T;
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.mutex.data.get() }
-    }
-}
-
-impl<'a, T> core::ops::DerefMut for SpinMutexGuard<'a, T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.mutex.data.get() }
-    }
-}
-
-impl<'a, T> Drop for SpinMutexGuard<'a, T> {
+#[cfg(all(not(feature = "std"), debug_assertions))]
+impl Drop for ReentrancyGuard {
     fn drop(&mut self) {
-        self.mutex.lock.store(false, Ordering::Release);
+        REENTRANCY_COUNTER.fetch_sub(1, Ordering::SeqCst);
     }
 }
-
-struct RetiredStore(*mut TranslationStore);
-unsafe impl Send for RetiredStore {}
-unsafe impl Sync for RetiredStore {}
-
-static RETIRED_STORES: SpinMutex<Vec<RetiredStore>> = SpinMutex::new(Vec::new());
 
 /// Safely executes a function with a reference to the current TranslationStore
+#[cfg(feature = "std")]
 pub fn read_store<F, R>(f: F) -> R
 where
     F: FnOnce(&TranslationStore) -> R,
 {
-    READERS.fetch_add(1, Ordering::SeqCst);
-    let ptr = STORE.load(Ordering::SeqCst);
-    let res = if !ptr.is_null() {
-        unsafe { f(&*ptr) }
-    } else {
+    let _guard = crossbeam_epoch::pin();
+    let ptr = STORE.load(Ordering::Acquire);
+    if ptr.is_null() {
         let empty = TranslationStore::default();
         f(&empty)
-    };
-    READERS.fetch_sub(1, Ordering::SeqCst);
-    res
+    } else {
+        // SAFETY: Pointer is loaded within the epoch guard, which guarantees that the
+        // memory pointed to by `ptr` will not be reclaimed until the guard is dropped.
+        unsafe { f(&*ptr) }
+    }
 }
 
-/// Swaps the current store with a new one and queues the old store for deletion
+/// Safely executes a function with a reference to the current TranslationStore
+#[cfg(not(feature = "std"))]
+pub fn read_store<F, R>(f: F) -> R
+where
+    F: FnOnce(&TranslationStore) -> R,
+{
+    #[cfg(debug_assertions)]
+    let _guard = ReentrancyGuard::new();
+
+    let ptr = STORE.load(Ordering::Acquire);
+    if ptr.is_null() {
+        let empty = TranslationStore::default();
+        f(&empty)
+    } else {
+        // SAFETY: In a single-threaded environment, there are no concurrent mutations
+        // or preemption, so referencing the store is safe.
+        unsafe { f(&*ptr) }
+    }
+}
+
+/// Swaps the current store with a new one and schedules the old store for reclamation
+#[cfg(feature = "std")]
 pub fn swap_store(new_store: TranslationStore) {
     let new_ptr = Box::into_raw(Box::new(new_store));
     let old_ptr = STORE.swap(new_ptr, Ordering::SeqCst);
     if !old_ptr.is_null() {
-        let mut retired = RETIRED_STORES.lock();
-        retired.push(RetiredStore(old_ptr));
-    }
-    // Attempt to reclaim retired stores if there are no active readers
-    try_reclaim();
-}
-
-/// Reclaims memory for any retired stores if the reader count is 0
-pub fn try_reclaim() {
-    if READERS.load(Ordering::SeqCst) == 0 {
-        if let Some(retired) = RETIRED_STORES.take_retired() {
-            for item in retired {
-                unsafe {
-                    let _ = Box::from_raw(item.0);
-                }
-            }
-        }
+        crate::reclaim::schedule_drop(old_ptr);
     }
 }
 
-// Extends RETIRED_STORES with a helper to extract vector under lock
-impl SpinMutex<Vec<RetiredStore>> {
-    fn take_retired(&self) -> Option<Vec<RetiredStore>> {
-        let _guard = self.lock();
-        let vec_ref = unsafe { &mut *self.data.get() };
-        if vec_ref.is_empty() {
-            None
-        } else {
-            Some(core::mem::take(vec_ref))
-        }
+/// Swaps the current store with a new one and schedules the old store for reclamation
+#[cfg(not(feature = "std"))]
+pub fn swap_store(new_store: TranslationStore) {
+    #[cfg(debug_assertions)]
+    assert_eq!(
+        REENTRANCY_COUNTER.load(Ordering::Acquire),
+        0,
+        "Reentrancy detected: swap_store called within read_store"
+    );
+
+    let new_ptr = Box::into_raw(Box::new(new_store));
+    let old_ptr = STORE.swap(new_ptr, Ordering::SeqCst);
+    if !old_ptr.is_null() {
+        crate::reclaim::schedule_drop(old_ptr);
     }
 }
+
+/// Reclaims memory for any retired stores (no-op, kept for API backwards compatibility)
+pub fn try_reclaim() {}
 
 /// Returns the currently configured fallback locale (defaults to "en").
 pub fn get_fallback_locale() -> String {

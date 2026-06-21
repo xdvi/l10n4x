@@ -4,11 +4,11 @@
 
 pub mod binary_writer;
 pub mod icu_parser;
+pub mod signing;
 
 use binary_writer::write_binary_format;
 use icu_parser::MessageParser;
 use l10n4x_core::envelope;
-use l10n4x_core::integrity;
 use l10n4x_core::pak::{build_unsigned, seal};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -159,7 +159,7 @@ pub fn compile_translations(
             let compressed_bytes = miniz_oxide::deflate::compress_to_vec(&binary_bytes, 6);
 
             let unsigned = build_unsigned(&compressed_bytes);
-            let signature = integrity::sign(&unsigned)
+            let signature = signing::sign(&unsigned)
                 .map_err(|e| CompileError::CoreIntegrityError(e.to_string()))?;
             let signed = seal(&unsigned, &signature);
             let pak_bytes = if encrypt {

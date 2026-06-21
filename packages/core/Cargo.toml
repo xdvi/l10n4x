@@ -10,19 +10,20 @@ documentation = "https://docs.rs/l10n4x-core"
 
 [features]
 default = ["std"]
-alloc = ["integrity"]
-std = ["alloc", "encryption"]
-integrity = ["dep:ed25519-dalek"]
+alloc = ["dep:ed25519-dalek"]
+std = ["alloc", "encryption", "dep:crossbeam-epoch"]
 encryption = ["dep:aes-gcm", "aes-gcm?/std", "aes-gcm?/getrandom"]
 
 [dependencies]
 miniz_oxide = { version = "0.8", default-features = false, features = ["with-alloc"] }
 ed25519-dalek = { version = "2.1", optional = true, default-features = false, features = ["alloc"] }
 aes-gcm = { version = "0.10.3", optional = true, default-features = false, features = ["aes"] }
+crossbeam-epoch = { version = "0.9.18", optional = true, default-features = false, features = ["std"] }
 
 [dev-dependencies]
 serde_json = "1.0"
 criterion = "0.5"
+trybuild = "1"
 
 [[bench]]
 name = "lookup"
