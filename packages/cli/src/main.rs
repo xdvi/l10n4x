@@ -213,12 +213,30 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
     Ok(())
 }
 
+/// Returns `Some(s)` only if `s` is a safe single-component filename with no directory
+/// traversal, no path separators, no null bytes, and no absolute path prefix.
+fn sanitize_locale_filename(s: &str) -> Option<&str> {
+    if s.is_empty()
+        || s.contains('/')
+        || s.contains('\\')
+        || s.contains("..")
+        || s.contains('\0')
+        || s.starts_with('.')
+    {
+        return None;
+    }
+    Some(s)
+}
+
 async fn serve_locale_file(
     AxumPath(lang_pak): AxumPath<String>,
     State(state): State<ServerState>,
 ) -> impl IntoResponse {
     if lang_pak.ends_with(".json") {
         let locale = lang_pak.trim_end_matches(".json");
+        if sanitize_locale_filename(&lang_pak).is_none() {
+            return (StatusCode::BAD_REQUEST, "Invalid locale filename").into_response();
+        }
         let pak_path = Path::new(&state.output_dir).join(format!("{}.pak", locale));
         if !pak_path.exists() {
             return (StatusCode::NOT_FOUND, "Locale JSON not found").into_response();
@@ -244,6 +262,9 @@ async fn serve_locale_file(
                 .into_response(),
         }
     } else if lang_pak.ends_with(".pak") {
+        if sanitize_locale_filename(&lang_pak).is_none() {
+            return (StatusCode::BAD_REQUEST, "Invalid locale filename").into_response();
+        }
         let pak_path = Path::new(&state.output_dir).join(&lang_pak);
         if !pak_path.exists() {
             return (StatusCode::NOT_FOUND, "Locale PAK not found").into_response();
@@ -571,6 +592,42 @@ fn init_wizard() -> Result<(), anyhow::Error> {
     println!("Set L10N4X_SIGNING_KEY to a 32-byte seed, then run `l10n4x build`.");
     println!("Generate a seed: head -c 32 /dev/urandom | base64");
     Ok(())
+}
+
+#[cfg(test)]
+mod path_safety_tests {
+    use super::sanitize_locale_filename;
+
+    #[test]
+    fn accepts_simple_locale_pak() {
+        assert!(sanitize_locale_filename("en.pak").is_some());
+        assert!(sanitize_locale_filename("zh-CN.pak").is_some());
+        assert!(sanitize_locale_filename("pt_BR.json").is_some());
+    }
+
+    #[test]
+    fn rejects_path_traversal() {
+        assert!(sanitize_locale_filename("../../etc/passwd").is_none());
+        assert!(sanitize_locale_filename("../en.pak").is_none());
+        assert!(sanitize_locale_filename("..\\en.pak").is_none());
+    }
+
+    #[test]
+    fn rejects_absolute_paths() {
+        assert!(sanitize_locale_filename("/etc/passwd").is_none());
+        assert!(sanitize_locale_filename("\\windows\\system.pak").is_none());
+    }
+
+    #[test]
+    fn rejects_directory_separators() {
+        assert!(sanitize_locale_filename("sub/dir/en.pak").is_none());
+        assert!(sanitize_locale_filename("sub\\en.pak").is_none());
+    }
+
+    #[test]
+    fn rejects_null_bytes() {
+        assert!(sanitize_locale_filename("en\0.pak").is_none());
+    }
 }
 
 #[tokio::main]
