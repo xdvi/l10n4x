@@ -154,8 +154,16 @@ pub fn swap_store(new_store: TranslationStore) {
     }
 }
 
-/// Reclaims memory for any retired stores (no-op, kept for API backwards compatibility)
-pub fn try_reclaim() {}
+/// Reclaims memory for any retired stores.
+/// Under `std`, pins an epoch guard and flushes deferred drops.
+/// Under `no_std` (single-threaded), old stores are dropped immediately in `schedule_drop`.
+pub fn try_reclaim() {
+    #[cfg(feature = "std")]
+    {
+        let guard = crossbeam_epoch::pin();
+        guard.flush();
+    }
+}
 
 /// Sets the fallback locale chain. The first locale in the slice that has the key wins.
 /// An empty slice disables fallback entirely.
