@@ -93,10 +93,12 @@ pub fn decompress_signed_pak(data: &[u8]) -> Result<Vec<u8>, &'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::integrity;
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn seal_parse_roundtrip() {
+        use crate::integrity;
+
         let _lock = integrity::TEST_LOCK.lock().unwrap();
 
         // Reset verify key first

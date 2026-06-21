@@ -4,6 +4,9 @@
 struct SendPtr<T>(*mut T);
 
 #[cfg(feature = "std")]
+// SAFETY: `SendPtr` wraps a raw pointer that is only accessed inside the deferred closure
+// passed to `guard.defer_unchecked`, which runs after the current epoch ends and only once.
+// The `*mut T` is obtained from `Box::into_raw`, and the closure is the exclusive owner.
 unsafe impl<T> Send for SendPtr<T> {}
 
 /// # Safety

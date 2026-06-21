@@ -1,5 +1,5 @@
 //! CLDR plural rules — covers 12 language families and ~120 locales.
-//! Source: https://unicode.org/cldr/charts/latest/supplemental/language_plural_rules.html
+//! Source: <https://unicode.org/cldr/charts/latest/supplemental/language_plural_rules.html>
 extern crate alloc;
 
 pub use crate::formatter::PluralCategory;

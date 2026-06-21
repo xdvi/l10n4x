@@ -86,10 +86,10 @@ pub fn verify(message: &[u8], signature: &[u8]) -> Result<(), &'static str> {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 extern crate std;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "alloc"))]
 pub(crate) static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
@@ -97,6 +97,7 @@ mod tests {
     use super::*;
     use crate::test_fixtures::*;
 
+    #[cfg(feature = "alloc")]
     #[test]
     fn verify_precomputed_signature() {
         let _lock = TEST_LOCK.lock().unwrap();

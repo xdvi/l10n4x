@@ -43,10 +43,12 @@ pub fn format_number(value: f64, locale: &str, style: NumberStyle) -> String {
         NumberStyle::Decimal | NumberStyle::Integer => (value, ""),
     };
 
-    let abs_n = if n < 0.0 { -n } else { n };
     let sign = if n < 0.0 { "-" } else { "" };
-    let int_part = abs_n as u64;
-    let frac = abs_n - (int_part as f64);
+
+    // Round to 2 decimal places using integer arithmetic (works in no_std)
+    let total_hundredths = ((n.abs() * 100.0) + 0.5) as u64;
+    let int_part = total_hundredths / 100;
+    let frac_part = total_hundredths % 100;
 
     // Format integer part with grouping separator (every 3 digits)
     let int_str = {
@@ -62,17 +64,12 @@ pub fn format_number(value: f64, locale: &str, style: NumberStyle) -> String {
     };
 
     // Format fractional part (max 2 decimal places, strip trailing zeros)
-    let frac_str = if matches!(style, NumberStyle::Integer) || frac < 1e-9 {
+    let frac_str = if matches!(style, NumberStyle::Integer) || frac_part == 0 {
         String::new()
+    } else if frac_part % 10 == 0 {
+        alloc::format!("{}{}", decimal_sep, frac_part / 10)
     } else {
-        let rounded = (frac * 100.0).round() as u64;
-        if rounded == 0 {
-            String::new()
-        } else if rounded % 10 == 0 {
-            alloc::format!("{}{}", decimal_sep, rounded / 10)
-        } else {
-            alloc::format!("{}{:02}", decimal_sep, rounded)
-        }
+        alloc::format!("{}{:02}", decimal_sep, frac_part)
     };
 
     alloc::format!("{}{}{}{}", sign, int_str, frac_str, suffix)

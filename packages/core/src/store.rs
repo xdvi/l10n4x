@@ -184,11 +184,10 @@ pub fn try_reclaim() {
 pub fn set_fallback_chain(chain: &[&str]) {
     let arcs: alloc::vec::Vec<Arc<str>> = chain.iter().map(|s| Arc::from(*s)).collect();
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
-    read_store(|store| {
-        swap_store(TranslationStore {
-            locales: Arc::clone(&store.locales),
-            fallback_chain: new_chain.clone(),
-        });
+    let locales = read_store(|store| Arc::clone(&store.locales));
+    swap_store(TranslationStore {
+        locales,
+        fallback_chain: new_chain,
     });
 }
 
@@ -211,11 +210,10 @@ pub fn get_fallback_locale() -> Arc<str> {
 
 /// Clears all loaded translations.
 pub fn clear_translations() {
-    read_store(|store| {
-        swap_store(TranslationStore {
-            locales: Arc::new(Vec::new()),
-            fallback_chain: Arc::clone(&store.fallback_chain),
-        });
+    let chain = read_store(|store| Arc::clone(&store.fallback_chain));
+    swap_store(TranslationStore {
+        locales: Arc::new(Vec::new()),
+        fallback_chain: chain,
     });
 }
 
@@ -318,17 +316,10 @@ mod missing_key_tests {
     use core::sync::atomic::{AtomicBool, Ordering};
 
     static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
-    static mut LAST_KEY: [u8; 64] = [0u8; 64];
 
     fn test_handler(locale: &str, key: &str) {
         HANDLER_CALLED.store(true, Ordering::SeqCst);
-        unsafe {
-            let bytes = key.as_bytes();
-            let len = bytes.len().min(63);
-            LAST_KEY[..len].copy_from_slice(&bytes[..len]);
-            LAST_KEY[len] = 0;
-        }
-        let _ = locale;
+        let _ = (locale, key);
     }
 
     #[test]
@@ -389,8 +380,8 @@ mod store_perf_tests {
     #[test]
     fn lookup_returns_buffer_for_loaded_locale() {
         let mut store = TranslationStore::default();
-        let buf = Arc::new(vec![0x4c, 0x31, 0x30, 0x4e]);
-        Arc::make_mut(&mut store.locales).push(("en".to_string(), Arc::clone(&buf)));
+        let buf = Arc::new(alloc::vec![0x4c, 0x31, 0x30, 0x4e]);
+        Arc::make_mut(&mut store.locales).push((String::from("en"), Arc::clone(&buf)));
         let found = store.lookup("en");
         assert!(found.is_some());
         assert_eq!(found.unwrap(), buf.as_slice());
