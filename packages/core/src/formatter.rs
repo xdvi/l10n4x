@@ -1,5 +1,7 @@
 extern crate alloc;
 
+use crate::plural_rules::get_plural_category;
+
 /// Represents standard CLDR plural categories used by plural rule selectors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PluralCategory {
@@ -17,109 +19,7 @@ pub enum PluralCategory {
     Other,
 }
 
-/// Parse operands for plural rules:
-/// n: absolute value
-/// i: integer part
-/// v: visible fraction digit count
-#[derive(Debug, Clone)]
-struct PluralOperands {
-    n: f64,
-    i: u64,
-    v: usize,
-}
 
-impl PluralOperands {
-    fn new(val: f64) -> Self {
-        let n = if val < 0.0 { -val } else { val };
-        let i = n as u64;
-
-        let fraction = n - (i as f64);
-        if fraction < 1e-9 {
-            PluralOperands { n, i, v: 0 }
-        } else {
-            // Check up to 6 decimal places
-            let mut v = 0;
-            let mut temp = fraction;
-            for _ in 1..=6 {
-                temp *= 10.0;
-                v += 1;
-                temp = temp - ((temp as u64) as f64);
-                if temp < 1e-9 {
-                    break;
-                }
-            }
-            PluralOperands { n, i, v }
-        }
-    }
-}
-
-/// Resolves the CLDR plural category for a given locale and numeric value.
-/// Supports major languages like English, Spanish, French, German, Russian, etc.
-pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
-    let ops = PluralOperands::new(value);
-
-    // Normalize locale to lowercase two-letter code
-    let lang = if locale.len() >= 2 {
-        &locale[0..2]
-    } else {
-        locale
-    };
-
-    match lang {
-        "en" => {
-            // one: i = 1 and v = 0
-            if ops.i == 1 && ops.v == 0 {
-                PluralCategory::One
-            } else {
-                PluralCategory::Other
-            }
-        }
-        "es" | "it" | "pt" | "de" | "nl" | "sv" | "da" | "no" | "fi" => {
-            // one: n = 1
-            if (ops.n - 1.0).abs() < 1e-9 {
-                PluralCategory::One
-            } else {
-                PluralCategory::Other
-            }
-        }
-        "fr" => {
-            // one: i = 0, 1 and v = 0
-            if (ops.i == 0 || ops.i == 1) && ops.v == 0 {
-                PluralCategory::One
-            } else {
-                PluralCategory::Other
-            }
-        }
-        "ru" | "uk" | "be" => {
-            // one: v = 0 and i % 10 = 1 and i % 100 != 11
-            // few: v = 0 and i % 10 in 2..4 and i % 100 not in 12..14
-            // many: v = 0 and (i % 10 = 0 or i % 10 in 5..9 or i % 100 in 11..14)
-            if ops.v == 0 {
-                let i10 = ops.i % 10;
-                let i100 = ops.i % 100;
-                if i10 == 1 && i100 != 11 {
-                    PluralCategory::One
-                } else if (2..=4).contains(&i10) && !(12..=14).contains(&i100) {
-                    PluralCategory::Few
-                } else if i10 == 0 || (5..=9).contains(&i10) || (11..=14).contains(&i100) {
-                    PluralCategory::Many
-                } else {
-                    PluralCategory::Other
-                }
-            } else {
-                PluralCategory::Other
-            }
-        }
-        _ => {
-            // Default generic fallback: if n == 1, One, else Other
-            if (ops.n - 1.0).abs() < 1e-9 {
-                PluralCategory::One
-            } else {
-                PluralCategory::Other
-            }
-        }
-    }
-}
 
 /// Formats a bytecode compiled message into the provided writer, dynamically
 /// interpolating variables and evaluating plural/select rules.

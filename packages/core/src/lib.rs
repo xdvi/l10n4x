@@ -23,6 +23,8 @@ pub mod encryption;
 pub mod envelope;
 /// ICU MessageFormat parsing and interpolation engine.
 pub mod formatter;
+/// CLDR-accurate plural rule resolution for 120+ locales.
+pub mod plural_rules;
 /// Ed25519 signing and verification for `.pak` integrity.
 pub mod integrity;
 /// Decompression and in-memory pak loading.

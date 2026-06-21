@@ -1,6 +1,7 @@
 use l10n4x_core::binary_format::BinaryFormatReader;
 
-use l10n4x_core::formatter::{format_message, get_plural_category, PluralCategory};
+use l10n4x_core::formatter::{format_message, PluralCategory};
+use l10n4x_core::plural_rules::get_plural_category;
 #[cfg(feature = "std")]
 use l10n4x_core::store::read_store;
 use l10n4x_core::store::{swap_store, translate, TranslationStore};
