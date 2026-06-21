@@ -177,6 +177,53 @@ pub fn compile_translations(
     Ok(())
 }
 
+/// Parses all JSON locale files in `src_path` and returns a map of
+/// key → sorted list of interpolation variable names extracted from that key's message.
+/// Uses only the first locale directory found (all locales share the same keys).
+pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>>, CompileError> {
+    if !src_path.is_dir() {
+        return Err(CompileError::SourceNotADirectory);
+    }
+    let first_lang_dir = std::fs::read_dir(src_path)?
+        .filter_map(|e| e.ok())
+        .find(|e| e.path().is_dir());
+
+    let lang_path = match first_lang_dir {
+        Some(e) => e.path(),
+        None => return Ok(HashMap::new()),
+    };
+
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+
+    for file_entry in std::fs::read_dir(&lang_path)? {
+        let file_entry = file_entry?;
+        let file_path = file_entry.path();
+        if !file_path.is_file() || file_path.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
+        let file_name = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or(CompileError::InvalidFileName)?
+            .to_string();
+        let content = std::fs::read_to_string(&file_path)?;
+        let parsed_json: serde_json::Value = serde_json::from_str(&content)?;
+        let mut flat: HashMap<String, String> = HashMap::new();
+        flatten_value(file_name, &parsed_json, &mut flat);
+
+        for (key, template) in flat {
+            let parser = MessageParser::new(&template);
+            let nodes = parser.parse().map_err(CompileError::TemplateParseError)?;
+            let mut params = icu_parser::extract_params(&nodes);
+            params.sort();
+            if !params.is_empty() {
+                result.insert(key, params);
+            }
+        }
+    }
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -282,6 +282,92 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
     Ok(cases)
 }
 
+/// Extracts all unique interpolation variable names from a parsed message AST.
+/// Returns a deduplicated, unsorted Vec of parameter names.
+pub fn extract_params(nodes: &[MessageNode]) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut out = Vec::new();
+    collect_params(nodes, &mut seen, &mut out);
+    out
+}
+
+fn collect_params(nodes: &[MessageNode], seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+    for node in nodes {
+        match node {
+            MessageNode::Variable(v) | MessageNode::Number { var: v, .. } => {
+                if seen.insert(v.clone()) {
+                    out.push(v.clone());
+                }
+            }
+            MessageNode::Plural { var, cases } => {
+                if seen.insert(var.clone()) {
+                    out.push(var.clone());
+                }
+                for (_, body) in cases {
+                    collect_params(body, seen, out);
+                }
+            }
+            MessageNode::Select { var, cases } => {
+                if seen.insert(var.clone()) {
+                    out.push(var.clone());
+                }
+                for (_, body) in cases {
+                    collect_params(body, seen, out);
+                }
+            }
+            MessageNode::Text(_) => {}
+        }
+    }
+}
+
+#[cfg(test)]
+mod param_extraction_tests {
+    use super::*;
+
+    #[test]
+    fn extracts_variable_params() {
+        let nodes = MessageParser::new("Hello {name}, you have {count} messages")
+            .parse()
+            .unwrap();
+        let mut params = extract_params(&nodes);
+        params.sort();
+        assert_eq!(params, vec!["count", "name"]);
+    }
+
+    #[test]
+    fn extracts_plural_variable() {
+        let nodes = MessageParser::new("{count, plural, one {# item} other {# items}}")
+            .parse()
+            .unwrap();
+        let params = extract_params(&nodes);
+        assert!(params.contains(&"count".to_string()));
+    }
+
+    #[test]
+    fn extracts_select_variable() {
+        let nodes = MessageParser::new("{gender, select, male {He} female {She} other {They}}")
+            .parse()
+            .unwrap();
+        let params = extract_params(&nodes);
+        assert!(params.contains(&"gender".to_string()));
+    }
+
+    #[test]
+    fn no_params_for_static_text() {
+        let nodes = MessageParser::new("Hello world").parse().unwrap();
+        let params = extract_params(&nodes);
+        assert!(params.is_empty());
+    }
+
+    #[test]
+    fn deduplicates_repeated_vars() {
+        let nodes = MessageParser::new("{name} and {name} again").parse().unwrap();
+        let params = extract_params(&nodes);
+        let count = params.iter().filter(|s| *s == "name").count();
+        assert_eq!(count, 1, "duplicate params should be deduplicated");
+    }
+}
+
 #[cfg(test)]
 mod number_tests {
     use super::*;

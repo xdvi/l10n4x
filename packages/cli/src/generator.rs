@@ -44,10 +44,12 @@ pub fn to_lower_camel_case(s: &str) -> String {
     format!("{}{}", first, chars.collect::<String>())
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_bindings(
     targets: &[Target],
     keys: &HashSet<String>,
     fallback: &str,
+    source_dir: &str,
     output_dir: &str,
     verify_public_key_hex: &str,
     encrypt: bool,
@@ -57,6 +59,7 @@ pub fn generate_bindings(
     let ctx = GenerateContext {
         fallback,
         output_dir,
+        source_dir,
         verify_key_bytes: &verify_key_bytes,
         verify_public_key_hex,
         encrypt,
@@ -80,7 +83,10 @@ pub fn generate_bindings(
                 )?;
             }
             "typescript" => {
-                targets::typescript::generate(out_dir, &sorted_keys, &target.options, &ctx)?;
+                let params_map = l10n4x_compiler::extract_params_map(
+                    std::path::Path::new(ctx.source_dir)
+                ).unwrap_or_default();
+                targets::typescript::generate(out_dir, &sorted_keys, &target.options, &ctx, &params_map)?;
             }
             "flutter" => {
                 targets::flutter::generate(

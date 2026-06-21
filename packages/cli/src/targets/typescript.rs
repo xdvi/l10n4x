@@ -52,6 +52,7 @@ pub fn generate(
     sorted_keys: &[String],
     _options: &Value,
     ctx: &GenerateContext<'_>,
+    params_map: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     let mut key_definitions = String::new();
     for k in sorted_keys {
@@ -63,6 +64,25 @@ pub fn generate(
         key_definitions = key_definitions.trim_end().to_string();
     }
 
+    // Build typed t() overloads for keys that have parameters
+    let mut typed_overloads = String::new();
+    for k in sorted_keys {
+        if let Some(param_names) = params_map.get(k) {
+            if !param_names.is_empty() {
+                let params_type: String = param_names
+                    .iter()
+                    .map(|p| format!("  {}: string | number", p))
+                    .collect::<Vec<_>>()
+                    .join(";\n");
+                typed_overloads.push_str(&format!(
+                    "export function t(locale: string, key: \"{key}\", params: {{\n{params}\n}}): string;\n",
+                    key = k,
+                    params = params_type
+                ));
+            }
+        }
+    }
+
     let i18n_content = TS_TEMPLATE
         .replace("{{KEY_DEFINITIONS}}", &key_definitions)
         .replace("{{FALLBACK_LOCALE}}", ctx.fallback)
@@ -71,6 +91,15 @@ pub fn generate(
         .replace("{{ENCRYPT_BLOCK}}", &ts_encrypt_block(ctx))
         .replace("{{DECRYPT_KEY_IMPORT}}", ts_decrypt_key_import(ctx.encrypt))
         .replace("{{DECRYPT_KEY_INIT}}", &ts_decrypt_key_init(ctx.encrypt));
+
+    let i18n_content = if !typed_overloads.is_empty() {
+        i18n_content.replace(
+            "export function t(",
+            &format!("{}\nexport function t(", typed_overloads.trim_end()),
+        )
+    } else {
+        i18n_content
+    };
 
     let file_path = out_dir.join("generated.ts");
     fs::write(&file_path, i18n_content)?;
