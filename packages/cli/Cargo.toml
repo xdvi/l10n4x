@@ -25,3 +25,6 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors"] } # For browser cross-origin dev server requests
 subtle = "2.5"
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+tempfile = "3"
