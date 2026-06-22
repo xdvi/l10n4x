@@ -1127,4 +1127,38 @@ mod store_extra_tests {
         assert!(locale_loaded("en"));
         assert!(locale_loaded("fr"));
     }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn translate_cache_hit_returns_same_value() {
+        let _lock = lock_extra();
+        clear_translations();
+        // Load empty L10N block so translate() finds the locale but misses the key
+        let buf = vec![
+            b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        assert!(crate::loader::load_raw_bytes("en", buf));
+        // First call: cache miss, returns hex hash
+        let r1 = translate("en", hash("cache_test"), None, &[]);
+        // Second call: should hit cache
+        let r2 = translate("en", hash("cache_test"), None, &[]);
+        assert_eq!(r1, r2);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn translate_cache_skipped_when_params_provided() {
+        let _lock = lock_extra();
+        clear_translations();
+        let buf = vec![
+            b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+            0x00, 0x00,
+        ];
+        assert!(crate::loader::load_raw_bytes("en", buf));
+        // With params, cache should be bypassed
+        let r1 = translate("en", hash("greeting"), None, &[("name", "World")]);
+        let r2 = translate("en", hash("greeting"), None, &[("name", "World")]);
+        assert_eq!(r1, r2);
+    }
 }

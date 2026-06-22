@@ -39,7 +39,9 @@ The signing seed never ships in client binaries. The AES key is only required wh
 
 ## Inner Binary Opcodes
 
-Inside the decompressed `L10N` block, the value of each key is a sequence of opcodes:
+Inside the decompressed `L10N` block, the value of each key is a sequence of opcodes.
+
+**Optimization:** When a value is a single text node (no variables, plurals, etc.), it is stored as raw UTF-8 bytes without the `[0x01][len]` prefix. The runtime detects this at format time: any first byte `0x00` or `> 0x0D` is treated as raw text rather than an opcode.
 
 | Opcode | Name | Encoding |
 |--------|------|----------|

@@ -2070,6 +2070,43 @@ mod custom_formatter_tests {
     }
 
     #[test]
+    fn raw_text_is_written_directly() {
+        let mut out = String::new();
+        format_message(b"Save", "en", &[], &mut out).unwrap();
+        assert_eq!(out, "Save");
+    }
+
+    #[test]
+    fn raw_text_with_newlines() {
+        let mut out = String::new();
+        format_message(b"Line1\nLine2", "en", &[], &mut out).unwrap();
+        assert_eq!(out, "Line1\nLine2");
+    }
+
+    #[test]
+    fn raw_text_empty_returns_ok_no_output() {
+        let mut out = String::new();
+        assert!(format_message(b"", "en", &[], &mut out).is_ok());
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn opcode_text_still_works_after_optimization() {
+        let mut out = String::new();
+        let bytes = b"\x01\x00\x00\x00\x05Hello";
+        format_message(bytes, "en", &[], &mut out).unwrap();
+        assert_eq!(out, "Hello");
+    }
+
+    #[test]
+    fn opcode_with_params_unchanged_by_optimization() {
+        let mut out = String::new();
+        let bytes = b"\x0B\x00\x00\x00\x04name\x00";
+        format_message(bytes, "en", &[("name", "World")], &mut out).unwrap();
+        assert_eq!(out, "World");
+    }
+
+    #[test]
     fn formatter_receives_options() {
         register_formatter(
             "wrap",
