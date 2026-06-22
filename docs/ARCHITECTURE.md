@@ -262,7 +262,8 @@ translate("es-MX", "key")
 The global `TranslationStore` uses RCU (Read-Copy-Update) for lock-free concurrent access:
 
 - **Readers** (`translate`, `key_exists`, `locale_loaded`): Call `read_store()` which pins an epoch guard via `crossbeam-epoch`, then loads the store pointer atomically. Multiple readers proceed in parallel with no contention.
-- **Writers** (`load_raw_bytes`, `swap_store`, `clear_translations`): Allocate a new `TranslationStore`, atomically swap the global pointer with `AtomicPtr::swap`, and schedule the old store for deferred reclamation.
+- **Writers** (`load_raw_bytes`, `load_namespace`, `swap_store`, `clear_translations`): Clone the current snapshot, apply mutations, then publish via `swap_store`. Writers are serialized with `STORE_WRITE_MUTEX` so concurrent reloads cannot tear state; readers still proceed lock-free.
+- **Modular bundles** (opt-in): `build` with `"bundles": { "mode": "modular" }` emits `{locale}/{namespace}.pak` plus `namespaces.json`. `load_namespace` merges namespace paks into a locale buffer; `init_modular` preloads namespaces listed in the manifest.
 - **Reclamation**: `schedule_drop()` defers the `Box::from_raw` drop until the current epoch ends (under `std` with `crossbeam-epoch`). Under `no_std` (single-threaded), drops happen immediately.
 
 This design provides:

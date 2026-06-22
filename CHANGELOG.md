@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [Unreleased]
+
+### Added
+- **P0 thread-safe reload**: `load`/`clear`/`swap_store` writers serialized via mutex; readers remain lock-free RCU.
+- **P0 modular bundles**: opt-in `"bundles": { "mode": "modular" }` emits `{locale}/{namespace}.pak` plus `namespaces.json`; runtime `load_namespace` / `init_modular` APIs (core + FFI).
+- **P0 debug keys**: optional `debug-keys` feature embeds `DBGK` hash→name table; CLI `validate --report-misses` shows expected source file paths.
+- **P0 L10N v2**: `min_runtime_version` header field; `RuntimeTooOld` error (`L10N4C_RUNTIME_TOO_OLD = 13`).
+
+### Changed
+- Compiler emits L10N format v2 by default; v1 paks remain readable.
+
 ## [0.2.0] - 2026-06-21
 
 ### Added
