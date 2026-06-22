@@ -8,6 +8,7 @@ use l10n4x_core::store::{swap_store, translate, StoreData, TranslationStore};
 use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::thread;
+use std::collections::HashMap;
 
 #[test]
 fn test_binary_format_reader_mock() {
@@ -137,6 +138,8 @@ fn test_translate_helper_and_macro() {
     let store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+        lazy_cache: HashMap::new(),
+        offset_maps: HashMap::new(),
     };
     swap_store(store);
 
@@ -158,6 +161,8 @@ fn test_lock_free_concurrency_rcu() {
     let initial_store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+        lazy_cache: HashMap::new(),
+        offset_maps: HashMap::new(),
     };
     swap_store(initial_store);
 
@@ -175,12 +180,14 @@ fn test_lock_free_concurrency_rcu() {
 
             let mut locales = Vec::new();
             locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
-            let store = TranslationStore {
-                locales: Arc::new(locales),
-                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-            };
-            swap_store(store);
-            thread::yield_now();
+    let store = TranslationStore {
+        locales: Arc::new(locales),
+        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+        lazy_cache: HashMap::new(),
+        offset_maps: HashMap::new(),
+    };
+    swap_store(store);
+    thread::yield_now();
         }
     });
 
@@ -220,6 +227,8 @@ fn test_ebr_stress() {
     let initial_store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+        lazy_cache: HashMap::new(),
+        offset_maps: HashMap::new(),
     };
     swap_store(initial_store);
 
@@ -242,11 +251,13 @@ fn test_ebr_stress() {
                 "es".to_string(),
                 StoreData::Owned(Arc::new(vec![count as u8])),
             ));
-            let store = TranslationStore {
-                locales: Arc::new(locales),
-                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-            };
-            swap_store(store);
+    let store = TranslationStore {
+        locales: Arc::new(locales),
+        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+        lazy_cache: HashMap::new(),
+        offset_maps: HashMap::new(),
+    };
+    swap_store(store);
             count = count.wrapping_add(1);
             thread::sleep(std::time::Duration::from_millis(10));
         }

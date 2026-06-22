@@ -5,28 +5,73 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
+
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
 /// Takes ownership of `bytes` to avoid an extra allocation (caller typically has a `Vec<u8>`
 /// from `decompress_pak`).
 pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     crate::metrics::inc_locale_loads();
-    let (mut new_vec, fallback_chain) = read_store(|store| {
-        (
-            (*store.locales).clone(),
-            alloc::sync::Arc::clone(&store.fallback_chain),
-        )
-    });
-    let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
-    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-        Ok(pos) => new_vec[pos] = entry,
-        Err(pos) => new_vec.insert(pos, entry),
+    #[cfg(feature = "std")]
+    {
+        let (mut new_vec, fallback_chain, mut _lazy_cache, mut offset_maps) = read_store(|store| {
+            (
+                (*store.locales).clone(),
+                Arc::clone(&store.fallback_chain),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
+            )
+        });
+        let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+        let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(&bytes) {
+            Arc::new(reader.to_offsets())
+        } else {
+            Arc::new(HashMap::new())
+        };
+        let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
+        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+            Ok(pos) => {
+                _lazy_cache.remove(&locale_hash);
+                offset_maps.insert(locale_hash, offset_arc);
+                new_vec[pos] = entry;
+            }
+            Err(pos) => {
+                offset_maps.insert(locale_hash, offset_arc);
+                new_vec.insert(pos, entry);
+            }
+        }
+        swap_store(TranslationStore {
+            locales: Arc::new(new_vec),
+            fallback_chain,
+            lazy_cache: _lazy_cache,
+            offset_maps,
+        });
+        emit_locale_changed(locale_str);
+        true
     }
-    swap_store(TranslationStore {
-        locales: Arc::new(new_vec),
-        fallback_chain,
-    });
-    emit_locale_changed(locale_str);
-    true
+    #[cfg(not(feature = "std"))]
+    {
+        let (mut new_vec, fallback_chain) = read_store(|store| {
+            (
+                (*store.locales).clone(),
+                Arc::clone(&store.fallback_chain),
+            )
+        });
+        let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
+        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+            Ok(pos) => new_vec[pos] = entry,
+            Err(pos) => new_vec.insert(pos, entry),
+        }
+        swap_store(TranslationStore {
+            locales: Arc::new(new_vec),
+            fallback_chain,
+        });
+        emit_locale_changed(locale_str);
+        true
+    }
 }
 
 /// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
@@ -35,6 +80,57 @@ pub fn load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> bool {
         Ok(decompressed) => load_raw_bytes(locale_str, decompressed),
         Err(_) => false,
     }
+}
+
+/// Verifies signature and stores raw compressed `.pak` bytes without decomppressing.
+/// Decompression is deferred until the first `translate` call for the locale.
+/// Only available under `feature = "std"`.
+#[cfg(feature = "std")]
+pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
+    crate::metrics::inc_locale_loads();
+    let signed = match crate::envelope::open_outer(pak_bytes) {
+        Ok(s) => s,
+        Err(_) => return false,
+    };
+    let (message, _compressed, signature) = match crate::pak::parse_signed(&signed) {
+        Ok(p) => p,
+        Err(_) => return false,
+    };
+    if crate::integrity::verify(message, signature).is_err() {
+        return false;
+    }
+    let (mut new_vec, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
+        (
+            (*store.locales).clone(),
+            Arc::clone(&store.fallback_chain),
+            store.lazy_cache.clone(),
+            store.offset_maps.clone(),
+        )
+    });
+    let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+    let entry = (locale_str.to_string(), StoreData::Lazy(Arc::new(pak_bytes.to_vec())));
+    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+        Ok(pos) => {
+            lazy_cache.remove(&locale_hash);
+            offset_maps.remove(&locale_hash);
+            lazy_cache.insert(locale_hash, Arc::new(OnceLock::new()));
+            offset_maps.insert(locale_hash, Arc::new(HashMap::new()));
+            new_vec[pos] = entry;
+        }
+        Err(pos) => {
+            lazy_cache.entry(locale_hash).or_insert_with(|| Arc::new(OnceLock::new()));
+            offset_maps.entry(locale_hash).or_insert_with(|| Arc::new(HashMap::new()));
+            new_vec.insert(pos, entry);
+        }
+    }
+    swap_store(TranslationStore {
+        locales: Arc::new(new_vec),
+        fallback_chain,
+        lazy_cache,
+        offset_maps,
+    });
+    emit_locale_changed(locale_str);
+    true
 }
 
 /// Decompresses and loads a single `.pak` file for a given locale (requires std).

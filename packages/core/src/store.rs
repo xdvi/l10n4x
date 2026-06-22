@@ -13,9 +13,14 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use core::sync::atomic::AtomicUsize;
 
 #[cfg(feature = "std")]
+use ruzstd::io::Read;
+
+#[cfg(feature = "std")]
 use std::cell::RefCell;
 #[cfg(feature = "std")]
 use std::collections::HashMap;
+#[cfg(feature = "std")]
+use std::sync::OnceLock;
 
 #[cfg(feature = "std")]
 const TRANSLATE_CACHE_CAPACITY: usize = 128;
@@ -80,18 +85,34 @@ fn default_chain() -> Arc<[Arc<str>]> {
 /// - `Static` — compile-time embedded via `include_bytes!` or similar.
 ///   The `bool` is the `already_verified` flag passed at load time, stored
 ///   as-is and returned directly by `is_verified()`.
+/// - `Lazy` — raw compressed `.pak` bytes deferred for decompression on first access.
+///   Only available under `feature = "std"`.
 ///
 /// # no_std compatibility
 ///
 /// - `StoreData::Static(&'static [u8], bool)` requires only `core` (no alloc).
 /// - `StoreData::Owned(Arc<Vec<u8>>)` requires `alloc` (for `Arc` and `Vec`).
-#[derive(Clone)]
+/// - `StoreData::Lazy(Arc<Vec<u8>>)` requires `alloc` + `std` (for OnceLock cache).
 pub enum StoreData {
     /// Runtime-loaded from a `.pak` file. Verification happens at runtime (if configured).
     Owned(Arc<Vec<u8>>),
     /// Compile-time embedded data. The `bool` is the `already_verified` flag
     /// passed via `load_static_bytes`. If `true`, build-time verification was performed.
     Static(&'static [u8], bool),
+    /// Raw compressed `.pak` bytes. Decompressed on first lookup via lazy_cache.
+    #[cfg(feature = "std")]
+    Lazy(Arc<Vec<u8>>),
+}
+
+impl Clone for StoreData {
+    fn clone(&self) -> Self {
+        match self {
+            StoreData::Owned(v) => StoreData::Owned(v.clone()),
+            StoreData::Static(v, f) => StoreData::Static(v, *f),
+            #[cfg(feature = "std")]
+            StoreData::Lazy(v) => StoreData::Lazy(v.clone()),
+        }
+    }
 }
 
 impl StoreData {
@@ -100,6 +121,8 @@ impl StoreData {
         match self {
             StoreData::Owned(v) => v.as_slice(),
             StoreData::Static(s, _) => s,
+            #[cfg(feature = "std")]
+            StoreData::Lazy(v) => v.as_slice(),
         }
     }
 
@@ -109,10 +132,13 @@ impl StoreData {
     ///   (build-time verification is assumed).
     /// - `Owned` data: returns `false`. Runtime verification depends on whether
     ///   `integrity::set_verify_key` was configured; this method does not check that.
+    /// - `Lazy` data: returns `false` (no decompression-level verification yet).
     pub fn is_verified(&self) -> bool {
         match self {
             StoreData::Owned(_) => false,
             StoreData::Static(_, verified) => *verified,
+            #[cfg(feature = "std")]
+            StoreData::Lazy(_) => false,
         }
     }
 
@@ -122,6 +148,13 @@ impl StoreData {
     }
 }
 
+/// Per-locale lazy decompression cache: maps locale_hash to a one-time decompression lock.
+#[cfg(feature = "std")]
+type LazyDecompressCache = HashMap<u64, Arc<OnceLock<Vec<u8>>>>;
+/// Per-locale O(1) offset cache: maps locale_hash to key-hash-based (offset, length) pairs.
+#[cfg(feature = "std")]
+type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
+
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 /// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
 /// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
@@ -130,6 +163,12 @@ pub struct TranslationStore {
     pub locales: Arc<Vec<(String, StoreData)>>,
     /// Ordered chain of fallback locale codes. The first match wins.
     pub fallback_chain: Arc<[Arc<str>]>,
+    /// Per-locale lazy decompression cache. Key: locale_hash.
+    #[cfg(feature = "std")]
+    pub lazy_cache: LazyDecompressCache,
+    /// Per-locale O(1) offset maps. Key: locale_hash. Value: Arc<HashMap<key_hash -> (offset, len)>>.
+    #[cfg(feature = "std")]
+    pub offset_maps: HashMap<u64, OffsetMap>,
 }
 
 impl Default for TranslationStore {
@@ -137,18 +176,57 @@ impl Default for TranslationStore {
         Self {
             locales: Arc::new(Vec::new()),
             fallback_chain: default_chain(),
+            #[cfg(feature = "std")]
+            lazy_cache: HashMap::new(),
+            #[cfg(feature = "std")]
+            offset_maps: HashMap::new(),
         }
     }
 }
 
 impl TranslationStore {
     /// Looks up the decompressed translation buffer for a given locale. O(log n) binary search.
+    /// For Lazy entries, decompresses on first access via lazy_cache.
     pub fn lookup(&self, locale: &str) -> Option<&[u8]> {
         let idx = self
             .locales
             .binary_search_by(|(loc, _)| loc.as_str().cmp(locale))
             .ok()?;
-        Some(self.locales[idx].1.as_slice())
+        match &self.locales[idx].1 {
+            StoreData::Owned(v) => Some(v.as_slice()),
+            StoreData::Static(v, _) => Some(v),
+            #[cfg(feature = "std")]
+            StoreData::Lazy(compressed) => {
+                let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+                let entry = self
+                    .lazy_cache
+                    .get(&locale_hash)
+                    .expect("lazy_cache entry must exist for StoreData::Lazy locale");
+                let decompressed = entry.get_or_init(|| {
+                    let mut decoder = ruzstd::FrameDecoder::new();
+                    let mut reader = compressed.as_slice();
+                    decoder
+                        .reset(&mut reader)
+                        .expect("zstd decompression: init failed");
+                    decoder
+                        .decode_blocks(&mut reader, ruzstd::frame_decoder::BlockDecodingStrategy::All)
+                        .expect("zstd decompression: decode failed");
+                    let mut output = Vec::new();
+                    let mut buf = [0u8; 4096];
+                    loop {
+                        let n = decoder
+                            .read(&mut buf)
+                            .expect("zstd decompression: read failed");
+                        if n == 0 {
+                            break;
+                        }
+                        output.extend_from_slice(&buf[..n]);
+                    }
+                    output
+                });
+                Some(decompressed.as_slice())
+            }
+        }
     }
 }
 
@@ -285,11 +363,31 @@ pub fn try_reclaim() {
 pub fn set_fallback_chain(chain: &[&str]) {
     let arcs: alloc::vec::Vec<Arc<str>> = chain.iter().map(|s| Arc::from(*s)).collect();
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
-    let locales = read_store(|store| Arc::clone(&store.locales));
-    swap_store(TranslationStore {
-        locales,
-        fallback_chain: new_chain,
-    });
+    #[cfg(feature = "std")]
+    {
+        let (locales, _fallback, lazy_cache, offset_maps) = read_store(|store| {
+            (
+                Arc::clone(&store.locales),
+                Arc::clone(&store.fallback_chain),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
+            )
+        });
+        swap_store(TranslationStore {
+            locales,
+            fallback_chain: new_chain,
+            lazy_cache,
+            offset_maps,
+        });
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let locales = read_store(|store| Arc::clone(&store.locales));
+        swap_store(TranslationStore {
+            locales,
+            fallback_chain: new_chain,
+        });
+    }
 }
 
 /// Returns the current fallback chain as a cheap Arc clone.
@@ -316,10 +414,22 @@ pub fn get_fallback_locale() -> Arc<str> {
 /// Clears all loaded translations.
 pub fn clear_translations() {
     let chain = read_store(|store| Arc::clone(&store.fallback_chain));
-    swap_store(TranslationStore {
-        locales: Arc::new(Vec::new()),
-        fallback_chain: chain,
-    });
+    #[cfg(feature = "std")]
+    {
+        swap_store(TranslationStore {
+            locales: Arc::new(Vec::new()),
+            fallback_chain: chain,
+            lazy_cache: HashMap::new(),
+            offset_maps: HashMap::new(),
+        });
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        swap_store(TranslationStore {
+            locales: Arc::new(Vec::new()),
+            fallback_chain: chain,
+        });
+    }
     emit_locale_changed("*");
 }
 
@@ -376,26 +486,63 @@ pub fn locale_loaded(locale: &str) -> bool {
 /// Compatible with `no_std + alloc` (no filesystem I/O required).
 pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
     crate::metrics::inc_locale_loads();
-    let (mut new_vec, fallback_chain) = read_store(|store| {
-        (
-            (*store.locales).clone(),
-            alloc::sync::Arc::clone(&store.fallback_chain),
-        )
-    });
-    let entry = (
-        locale_str.to_string(),
-        StoreData::Static(data, already_verified),
-    );
-    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-        Ok(pos) => new_vec[pos] = entry,
-        Err(pos) => new_vec.insert(pos, entry),
+    #[cfg(feature = "std")]
+    {
+        let (mut new_vec, fallback_chain, _lazy_cache, mut offset_maps) = read_store(|store| {
+            (
+                (*store.locales).clone(),
+                Arc::clone(&store.fallback_chain),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
+            )
+        });
+        let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+        let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
+            Arc::new(reader.to_offsets())
+        } else {
+            Arc::new(HashMap::new())
+        };
+        offset_maps.insert(locale_hash, offset_arc);
+        let entry = (
+            locale_str.to_string(),
+            StoreData::Static(data, already_verified),
+        );
+        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+            Ok(pos) => new_vec[pos] = entry,
+            Err(pos) => new_vec.insert(pos, entry),
+        }
+        swap_store(TranslationStore {
+            locales: Arc::new(new_vec),
+            fallback_chain,
+            lazy_cache: _lazy_cache,
+            offset_maps,
+        });
+        emit_locale_changed(locale_str);
+        true
     }
-    swap_store(TranslationStore {
-        locales: Arc::new(new_vec),
-        fallback_chain,
-    });
-    emit_locale_changed(locale_str);
-    true
+    #[cfg(not(feature = "std"))]
+    {
+        let (mut new_vec, fallback_chain) = read_store(|store| {
+            (
+                (*store.locales).clone(),
+                Arc::clone(&store.fallback_chain),
+            )
+        });
+        let entry = (
+            locale_str.to_string(),
+            StoreData::Static(data, already_verified),
+        );
+        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+            Ok(pos) => new_vec[pos] = entry,
+            Err(pos) => new_vec.insert(pos, entry),
+        }
+        swap_store(TranslationStore {
+            locales: Arc::new(new_vec),
+            fallback_chain,
+        });
+        emit_locale_changed(locale_str);
+        true
+    }
 }
 
 /// Batch-initializes the store with multiple static (compile-time embedded) locales.
@@ -493,10 +640,38 @@ fn try_locale<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> bool {
-    // Try context suffix first: key_male → key
-    if let Some(ctx_hash) = context_hash {
-        if let Some(buf) = store.lookup(locale) {
-            if let Ok(reader) = BinaryFormatReader::new(buf) {
+    if let Some(buf) = store.lookup(locale) {
+        #[cfg(feature = "std")]
+        {
+            let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+            if let Some(map) = store.offset_maps.get(&locale_hash) {
+                if let Some(ctx_hash) = context_hash {
+                    if let Some(&(off, len)) = map.get(&ctx_hash) {
+                        let start = off as usize;
+                        let end = start + (len as usize);
+                        if end <= buf.len()
+                            && format_message(&buf[start..end], locale, params, writer).is_ok()
+                        {
+                            return true;
+                        }
+                        crate::metrics::inc_format_errors();
+                    }
+                }
+                if let Some(&(off, len)) = map.get(&key_hash) {
+                    let start = off as usize;
+                    let end = start + (len as usize);
+                    if end <= buf.len()
+                        && format_message(&buf[start..end], locale, params, writer).is_ok()
+                    {
+                        return true;
+                    }
+                    crate::metrics::inc_format_errors();
+                }
+            }
+        }
+        // Fallback: BinaryFormatReader on already-decompressed buf
+        if let Ok(reader) = BinaryFormatReader::new(buf) {
+            if let Some(ctx_hash) = context_hash {
                 if let Some(bytecode) = reader.lookup(ctx_hash) {
                     if format_message(bytecode, locale, params, writer).is_ok() {
                         return true;
@@ -504,10 +679,6 @@ fn try_locale<W: core::fmt::Write>(
                     crate::metrics::inc_format_errors();
                 }
             }
-        }
-    }
-    if let Some(buf) = store.lookup(locale) {
-        if let Ok(reader) = BinaryFormatReader::new(buf) {
             if let Some(bytecode) = reader.lookup(key_hash) {
                 if format_message(bytecode, locale, params, writer).is_ok() {
                     return true;
@@ -858,10 +1029,22 @@ mod store_extra_tests {
             StoreData::Owned(Arc::new(make_binary_with_key(key, val))),
         )]);
         let chain = get_fallback_chain();
-        swap_store(TranslationStore {
-            locales,
-            fallback_chain: chain,
-        });
+        #[cfg(feature = "std")]
+        {
+            swap_store(TranslationStore {
+                locales,
+                fallback_chain: chain,
+                lazy_cache: HashMap::new(),
+                offset_maps: HashMap::new(),
+            });
+        }
+        #[cfg(not(feature = "std"))]
+        {
+            swap_store(TranslationStore {
+                locales,
+                fallback_chain: chain,
+            });
+        }
     }
 
     use std::sync::Mutex;

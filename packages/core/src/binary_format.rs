@@ -13,6 +13,9 @@ pub fn fnv1a_64(data: &[u8]) -> u64 {
 
 use crate::error::CoreResult;
 
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
 /// High-performance parser and reader for the custom binary `.pak` format.
 /// Performs O(log N) binary search lookups on u64 FNV-1a hashed keys directly from
 /// read-only decompressed memory buffers, avoiding copies and allocations.
@@ -81,6 +84,33 @@ impl<'a> BinaryFormatReader<'a> {
             }
         }
         None
+    }
+
+    /// Builds a HashMap from the sorted index.
+    /// Key: u64 hash. Value: (val_offset, val_len).
+    #[cfg(feature = "std")]
+    pub fn to_offsets(&self) -> HashMap<u64, (u32, u32)> {
+        let index_offset = u32::from_be_bytes(self.data[8..12].try_into().unwrap()) as usize;
+        let index_count = u32::from_be_bytes(self.data[12..16].try_into().unwrap()) as usize;
+        let entry_size = 16usize;
+        let mut map = HashMap::with_capacity(index_count);
+        for i in 0..index_count {
+            let entry_offset = index_offset + i * entry_size;
+            if entry_offset + entry_size > self.data.len() { break; }
+            let hash = u64::from_be_bytes(
+                self.data[entry_offset..entry_offset + 8].try_into().unwrap(),
+            );
+            let val_offset = u32::from_be_bytes(
+                self.data[entry_offset + 8..entry_offset + 12].try_into().unwrap(),
+            );
+            let val_len = u32::from_be_bytes(
+                self.data[entry_offset + 12..entry_offset + 16].try_into().unwrap(),
+            );
+            if (val_offset as usize) + (val_len as usize) <= self.data.len() {
+                map.insert(hash, (val_offset, val_len));
+            }
+        }
+        map
     }
 }
 
