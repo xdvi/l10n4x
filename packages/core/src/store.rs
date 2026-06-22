@@ -286,7 +286,7 @@ pub fn key_exists(locale: &str, key: &str, context: Option<&str>) -> bool {
             let check_key = |k: &str| -> bool {
                 if let Some(buf) = store.lookup(loc) {
                     if let Ok(reader) = BinaryFormatReader::new(buf) {
-                        if reader.lookup(k).is_some() { return true; }
+                        if reader.lookup(crate::binary_format::fnv1a_64(k.as_bytes())).is_some() { return true; }
                     }
                 }
                 false
@@ -424,7 +424,7 @@ fn try_locale<W: core::fmt::Write>(
         let ctx_key = alloc::format!("{}_{}", key, ctx);
         if let Some(buf) = store.lookup(locale) {
             if let Ok(reader) = BinaryFormatReader::new(buf) {
-                if let Some(bytecode) = reader.lookup(&ctx_key) {
+                if let Some(bytecode) = reader.lookup(crate::binary_format::fnv1a_64(ctx_key.as_bytes())) {
                     if format_message(bytecode, locale, params, writer).is_ok() {
                         return true;
                     }
@@ -435,7 +435,7 @@ fn try_locale<W: core::fmt::Write>(
     }
     if let Some(buf) = store.lookup(locale) {
         if let Ok(reader) = BinaryFormatReader::new(buf) {
-            if let Some(bytecode) = reader.lookup(key) {
+            if let Some(bytecode) = reader.lookup(crate::binary_format::fnv1a_64(key.as_bytes())) {
                 if format_message(bytecode, locale, params, writer).is_ok() {
                     return true;
                 }
@@ -721,18 +721,16 @@ mod store_extra_tests {
         let mut buf = Vec::new();
         buf.extend_from_slice(b"L10N");
         buf.extend_from_slice(&1u32.to_be_bytes());
-        let index_offset: u32 = 16;
+        let val_offset: u32 = 16;
+        let index_offset: u32 = val_offset + val.len() as u32;
         buf.extend_from_slice(&index_offset.to_be_bytes());
         let index_count: u32 = 1;
         buf.extend_from_slice(&index_count.to_be_bytes());
-        let key_off = 16 + 16;
-        let val_off = key_off + key.len() as u32;
-        buf.extend_from_slice(&key_off.to_be_bytes());
-        buf.extend_from_slice(&(key.len() as u32).to_be_bytes());
-        buf.extend_from_slice(&val_off.to_be_bytes());
-        buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
-        buf.extend_from_slice(key.as_bytes());
         buf.extend_from_slice(val);
+        let hash = crate::binary_format::fnv1a_64(key.as_bytes());
+        buf.extend_from_slice(&hash.to_be_bytes());
+        buf.extend_from_slice(&val_offset.to_be_bytes());
+        buf.extend_from_slice(&(val.len() as u32).to_be_bytes());
         buf
     }
 
@@ -909,25 +907,23 @@ mod store_extra_tests {
         let _lock = lock_extra();
         clear_translations();
 
-        let key = b"greeting";
         let val: &[u8] = &[
             0x01, 0x00, 0x00, 0x00, 0x05,
             b'H', b'e', b'l', b'l', b'o',
         ];
-        let key_off: u32 = 16 + 16;
-        let val_off: u32 = key_off + key.len() as u32;
+        let val_offset: u32 = 16;
+        let index_offset: u32 = val_offset + val.len() as u32;
 
-        let mut data = Vec::with_capacity((val_off + val.len() as u32) as usize);
+        let mut data = Vec::new();
         data.extend_from_slice(b"L10N");
         data.extend_from_slice(&1u32.to_be_bytes());
-        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(&index_offset.to_be_bytes());
         data.extend_from_slice(&1u32.to_be_bytes());
-        data.extend_from_slice(&key_off.to_be_bytes());
-        data.extend_from_slice(&(key.len() as u32).to_be_bytes());
-        data.extend_from_slice(&val_off.to_be_bytes());
-        data.extend_from_slice(&(val.len() as u32).to_be_bytes());
-        data.extend_from_slice(key);
         data.extend_from_slice(val);
+        let hash = crate::binary_format::fnv1a_64(b"greeting");
+        data.extend_from_slice(&hash.to_be_bytes());
+        data.extend_from_slice(&val_offset.to_be_bytes());
+        data.extend_from_slice(&(val.len() as u32).to_be_bytes());
 
         let static_data: &'static [u8] = Box::leak(data.into_boxed_slice());
         assert!(load_static_bytes("en", static_data, true));

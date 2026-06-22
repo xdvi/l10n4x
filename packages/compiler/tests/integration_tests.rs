@@ -1,4 +1,5 @@
 use l10n4x_compiler::binary_writer::write_binary_format;
+use l10n4x_compiler::fnv1a_64;
 use l10n4x_compiler::icu_parser::{DateStyle, ListStyle, MessageNode, MessageParser, NumberStyle, PluralCaseKey, RelTimeStyle};
 use l10n4x_compiler::icu_parser::parse_interval_plural;
 use l10n4x_core::binary_format::BinaryFormatReader;
@@ -16,13 +17,13 @@ fn test_compiler_core_integration_zero_alloc() {
     let parser =
         MessageParser::new("{count, plural, =0 {no messages} =1 {one message} other {# messages}}");
     let nodes = parser.parse().unwrap();
-    translations.insert("msg.key".to_string(), nodes);
+    translations.insert(fnv1a_64(b"msg.key"), nodes);
 
     let binary_bytes = write_binary_format(&translations);
 
     // Reader lookup (zero-copy)
     let reader = BinaryFormatReader::new(&binary_bytes).unwrap();
-    let bytecode = reader.lookup("msg.key").unwrap();
+    let bytecode = reader.lookup(fnv1a_64(b"msg.key")).unwrap();
 
     // Format without allocation using a preallocated writer buffer (represented by String in tests)
     let mut output = String::new();
@@ -35,7 +36,7 @@ fn test_compiler_core_integration_zero_alloc() {
 fn test_binary_header_magic_and_version() {
     let mut translations = HashMap::new();
     translations.insert(
-        "test.key".to_string(),
+        fnv1a_64(b"test.key"),
         vec![MessageNode::Text("val".to_string())],
     );
     let binary_bytes = write_binary_format(&translations);
@@ -74,7 +75,7 @@ fn test_compression_ratio_estimate() {
         let template = format!("An error occurred during operation {} in module. Please try again or contact support with reference ID: {{ref_id}}.", i);
         let parser = MessageParser::new(&template);
         let nodes = parser.parse().unwrap();
-        translations.insert(key, nodes);
+        translations.insert(fnv1a_64(key.as_bytes()), nodes);
     }
 
     let uncompressed = write_binary_format(&translations);

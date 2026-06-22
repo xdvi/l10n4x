@@ -168,25 +168,17 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
 }
 
 pub fn write_binary_format(
-    translations: &std::collections::HashMap<String, Vec<MessageNode>>,
+    translations: &std::collections::HashMap<u64, Vec<MessageNode>>,
 ) -> Vec<u8> {
-    let mut sorted_keys: Vec<&String> = translations.keys().collect();
-    sorted_keys.sort();
+    let mut sorted_hashes: Vec<u64> = translations.keys().copied().collect();
+    sorted_hashes.sort();
 
     let mut data_pool = Vec::new();
     let mut index_entries = Vec::new();
-
     let mut current_offset = 16u32;
 
-    for key in sorted_keys {
-        let key_bytes = key.as_bytes();
-        let key_offset = current_offset;
-        let key_len = key_bytes.len() as u32;
-
-        data_pool.extend_from_slice(key_bytes);
-        current_offset += key_len;
-
-        let val_nodes = translations.get(key).unwrap();
+    for hash in sorted_hashes {
+        let val_nodes = translations.get(&hash).unwrap();
         let val_bytes = serialize_nodes(val_nodes);
         let val_offset = current_offset;
         let val_len = val_bytes.len() as u32;
@@ -194,15 +186,14 @@ pub fn write_binary_format(
         data_pool.extend_from_slice(&val_bytes);
         current_offset += val_len;
 
-        index_entries.push((key_offset, key_len, val_offset, val_len));
+        index_entries.push((hash, val_offset, val_len));
     }
 
     let index_offset = current_offset;
     let index_count = index_entries.len() as u32;
 
-    for (k_off, k_len, v_off, v_len) in index_entries {
-        data_pool.extend_from_slice(&k_off.to_be_bytes());
-        data_pool.extend_from_slice(&k_len.to_be_bytes());
+    for (hash, v_off, v_len) in index_entries {
+        data_pool.extend_from_slice(&hash.to_be_bytes());
         data_pool.extend_from_slice(&v_off.to_be_bytes());
         data_pool.extend_from_slice(&v_len.to_be_bytes());
     }
@@ -220,6 +211,7 @@ pub fn write_binary_format(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fnv1a_64;
     use crate::icu_parser::{CustomFormat, DateStyle, ListStyle, NumberStyle, PluralCaseKey, RelTimeStyle};
     use std::collections::HashMap;
 
@@ -477,30 +469,30 @@ mod tests {
     #[test]
     fn test_write_binary_format_single() {
         let mut translations = HashMap::new();
-        translations.insert("key1".to_string(), vec![MessageNode::Text("Hello".to_string())]);
+        translations.insert(fnv1a_64(b"key1"), vec![MessageNode::Text("Hello".to_string())]);
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
         let index_count = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
         assert_eq!(index_count, 1);
         // Verify we can read it back
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
-        let val = reader.lookup("key1").unwrap();
+        let val = reader.lookup(fnv1a_64(b"key1")).unwrap();
         assert_eq!(val, b"\x01\x00\x00\x00\x05Hello");
     }
 
     #[test]
     fn test_write_binary_format_multiple_sorted() {
         let mut translations = HashMap::new();
-        translations.insert("b".to_string(), vec![MessageNode::Text("second".to_string())]);
-        translations.insert("a".to_string(), vec![MessageNode::Text("first".to_string())]);
+        translations.insert(fnv1a_64(b"b"), vec![MessageNode::Text("second".to_string())]);
+        translations.insert(fnv1a_64(b"a"), vec![MessageNode::Text("first".to_string())]);
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
         // keys should be sorted
-        assert!(reader.lookup("a").is_some());
-        assert!(reader.lookup("b").is_some());
+        assert!(reader.lookup(fnv1a_64(b"a")).is_some());
+        assert!(reader.lookup(fnv1a_64(b"b")).is_some());
         // Verify the bytecode values are correct
-        let val_a = reader.lookup("a").unwrap();
-        let val_b = reader.lookup("b").unwrap();
+        let val_a = reader.lookup(fnv1a_64(b"a")).unwrap();
+        let val_b = reader.lookup(fnv1a_64(b"b")).unwrap();
         let text_len_a = u32::from_be_bytes(val_a[1..5].try_into().unwrap()) as usize;
         assert_eq!(&val_a[5..5+text_len_a], b"first");
         let text_len_b = u32::from_be_bytes(val_b[1..5].try_into().unwrap()) as usize;
@@ -510,14 +502,14 @@ mod tests {
     #[test]
     fn test_roundtrip_via_reader_and_formatter() {
         let mut translations = HashMap::new();
-        translations.insert("greeting".to_string(), vec![
+        translations.insert(fnv1a_64(b"greeting"), vec![
             MessageNode::Text("Hello ".to_string()),
             MessageNode::Variable("name".to_string()),
             MessageNode::Text("!".to_string()),
         ]);
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
-        let bc = reader.lookup("greeting").unwrap();
+        let bc = reader.lookup(fnv1a_64(b"greeting")).unwrap();
         let mut out = String::new();
         l10n4x_core::formatter::format_message(bc, "en", &[("name", "World")], &mut out).unwrap();
         assert_eq!(out, "Hello World!");

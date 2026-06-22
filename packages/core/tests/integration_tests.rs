@@ -112,22 +112,25 @@ fn test_translate_helper_and_macro() {
     bc.extend_from_slice(&4u32.to_be_bytes());
     bc.extend_from_slice(b"name");
 
-    // mock build pak
+    let val_len = bc.len() as u32;
+    let val_offset: u32 = 16;
+    let index_offset: u32 = val_offset + val_len;
+
+    // mock build pak with new format: [hash:8B][val_offset:4B][val_len:4B]
     let mut data = Vec::new();
     data.extend_from_slice(b"L10N");
     data.extend_from_slice(&1u32.to_be_bytes()); // version
-    data.extend_from_slice(&41u32.to_be_bytes()); // index offset (16 + 5 + 20)
+    data.extend_from_slice(&index_offset.to_be_bytes()); // index offset
     data.extend_from_slice(&1u32.to_be_bytes()); // index count
 
-    // key data
-    data.extend_from_slice(b"hello"); // key
-    data.extend_from_slice(&bc); // value
+    // value data only (no key strings in data pool)
+    data.extend_from_slice(&bc);
 
-    // entry 1: key "hello" (16, 5), val (21, 15)
-    data.extend_from_slice(&16u32.to_be_bytes());
-    data.extend_from_slice(&5u32.to_be_bytes());
-    data.extend_from_slice(&21u32.to_be_bytes());
-    data.extend_from_slice(&(bc.len() as u32).to_be_bytes());
+    // entry 1: hash("hello"), val_offset, val_len
+    let hash = l10n4x_core::binary_format::fnv1a_64(b"hello");
+    data.extend_from_slice(&hash.to_be_bytes());
+    data.extend_from_slice(&val_offset.to_be_bytes());
+    data.extend_from_slice(&val_len.to_be_bytes());
 
     let mut locales = Vec::new();
     locales.push(("en".to_string(), StoreData::Owned(Arc::new(data))));

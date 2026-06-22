@@ -2,6 +2,7 @@ extern crate alloc;
 use crate::pak::decompress_pak;
 use crate::store::{emit_locale_changed, read_store, swap_store, StoreData, TranslationStore};
 use alloc::string::ToString;
+use alloc::vec::Vec;
 use alloc::sync::Arc;
 
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
