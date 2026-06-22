@@ -159,6 +159,14 @@ fn resolve_single(
     resolving.remove(&key);
 }
 
+/// Extracts the BCP-47 parent locale by stripping the last subtag.
+fn bcp47_parent(locale: &str) -> Option<&str> {
+    locale
+        .rfind(|c: char| c == '-' || c == '_')
+        .filter(|&pos| pos > 0)
+        .map(|pos| &locale[..pos])
+}
+
 /// Compiles directories of JSON localization files into signed `.pak` files.
 /// When `encrypt` is true, wraps each pak in an optional `L10E` AES-GCM envelope.
 pub fn compile_translations(
@@ -173,13 +181,27 @@ pub fn compile_translations(
         fs::create_dir_all(out_path)?;
     }
 
-    for (locale, nodes) in &compiled {
-        let binary_bytes = write_binary_format(nodes);
+    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
+    sorted_locales.sort();
+    for locale in sorted_locales {
+        let nodes = &compiled[locale];
+        let parent = bcp47_parent(locale);
+        let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> = match parent.and_then(|p| compiled.get(p)) {
+            Some(parent_map) => nodes
+                .iter()
+                .filter(|(hash, v)| parent_map.get(hash) != Some(v))
+                .map(|(k, v)| (*k, v.clone()))
+                .collect(),
+            None => nodes.clone(),
+        };
+        let effective_parent = parent.filter(|p| compiled.contains_key(*p));
+
+        let binary_bytes = write_binary_format(&to_write);
 
         let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
             .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
 
-        let unsigned = build_unsigned(&compressed_bytes);
+        let unsigned = build_unsigned(&compressed_bytes, effective_parent);
         let signature = signing::sign(&unsigned)
             .map_err(|e| CompileError::CoreIntegrityError(e.to_string()))?;
         let signed = seal(&unsigned, &signature);
