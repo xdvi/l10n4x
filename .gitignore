@@ -36,4 +36,5 @@ examples/csharp/obj/
 /docs/reports/
 /docs/superpowers/
 
-
+# Worktrees
+/.worktrees/
