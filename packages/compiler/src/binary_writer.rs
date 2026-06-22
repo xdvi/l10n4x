@@ -190,42 +190,38 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
 pub fn write_binary_format(
     translations: &std::collections::HashMap<u64, Vec<MessageNode>>,
 ) -> Vec<u8> {
-    let mut sorted_hashes: Vec<u64> = translations.keys().copied().collect();
-    sorted_hashes.sort();
+    write_binary_format_with_keys(translations, None)
+}
 
-    let mut data_pool = Vec::new();
-    let mut index_entries = Vec::new();
-    let mut current_offset = 16u32;
-
-    for hash in sorted_hashes {
-        let val_nodes = translations.get(&hash).unwrap();
-        let val_bytes = serialize_nodes(val_nodes);
-        let val_offset = current_offset;
-        let val_len = val_bytes.len() as u32;
-
-        data_pool.extend_from_slice(&val_bytes);
-        current_offset += val_len;
-
-        index_entries.push((hash, val_offset, val_len));
+pub fn write_binary_format_with_keys(
+    translations: &std::collections::HashMap<u64, Vec<MessageNode>>,
+    key_names: Option<&std::collections::HashMap<u64, String>>,
+) -> Vec<u8> {
+    use std::collections::BTreeMap;
+    let mut entries = BTreeMap::new();
+    for (&hash, nodes) in translations {
+        entries.insert(hash, serialize_nodes(nodes));
     }
-
-    let index_offset = current_offset;
-    let index_count = index_entries.len() as u32;
-
-    for (hash, v_off, v_len) in index_entries {
-        data_pool.extend_from_slice(&hash.to_be_bytes());
-        data_pool.extend_from_slice(&v_off.to_be_bytes());
-        data_pool.extend_from_slice(&v_len.to_be_bytes());
-    }
-
-    let mut buffer = Vec::new();
-    buffer.extend_from_slice(b"L10N");
-    buffer.extend_from_slice(&l10n4x_core::binary_format::FORMAT_VERSION.to_be_bytes());
-    buffer.extend_from_slice(&index_offset.to_be_bytes());
-    buffer.extend_from_slice(&index_count.to_be_bytes());
-    buffer.extend_from_slice(&data_pool);
-
-    buffer
+    #[cfg(feature = "debug-keys")]
+    let debug = key_names.map(|m| {
+        let mut out = BTreeMap::new();
+        for (&hash, name) in m {
+            out.insert(hash, name.clone());
+        }
+        out
+    });
+    #[cfg(feature = "debug-keys")]
+    let debug_ref = debug.as_ref();
+    #[cfg(not(feature = "debug-keys"))]
+    let _ = key_names;
+    l10n4x_core::binary_format::pack_l10n(
+        &entries,
+        l10n4x_core::binary_format::RUNTIME_VERSION,
+        #[cfg(feature = "debug-keys")]
+        debug_ref,
+        #[cfg(not(feature = "debug-keys"))]
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -508,7 +504,7 @@ mod tests {
         let translations = HashMap::new();
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
-        let index_count = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
+        let index_count = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
         assert_eq!(index_count, 0);
     }
 
@@ -521,7 +517,7 @@ mod tests {
         );
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
-        let index_count = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
+        let index_count = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
         assert_eq!(index_count, 1);
         // Verify we can read it back
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();

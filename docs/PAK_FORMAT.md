@@ -77,14 +77,44 @@ Inside the decompressed `L10N` block, the value of each key is a sequence of opc
 
 The inner `L10N` block uses a sorted u64 hash index for O(log N) binary search lookup:
 
+### L10N v1 header (legacy, still accepted)
+
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 4 | Magic `L10N` |
-| 4 | 4 | Version `1` |
+| 4 | 4 | Format version `1` |
 | 8 | 4 | Index offset (byte offset of index from block start) |
 | 12 | 4 | Index count (number of entries) |
 | 16 | * | Data pool (bytecode values only) |
 | index_offset | count * 16 | Index entries |
+
+### L10N v2 header (current compiler output)
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | Magic `L10N` |
+| 4 | 4 | Format version `2` |
+| 8 | 4 | `min_runtime_version` — runtime rejects if `RUNTIME_VERSION < min_runtime_version` |
+| 12 | 4 | Index offset |
+| 16 | 4 | Index count |
+| 20 | * | Data pool |
+| index_offset | count * 16 | Index entries |
+
+Optional trailing `DBGK` section (dev builds with `debug-keys` feature): hash → UTF-8 key name table for debugging misses.
+
+### Modular bundle layout
+
+When `"bundles": { "mode": "modular" }` in `l10n4x.config.json`, the CLI emits:
+
+```
+outputDir/
+  namespaces.json
+  en/
+    common.pak
+    auth.pak
+```
+
+`namespaces.json` lists available namespaces per locale and optional `preload` list for `init_modular()`.
 
 Each index entry (16 bytes):
 

@@ -16,8 +16,16 @@ pub enum CoreError {
     BufferTooShort(&'static str),
     /// Invalid magic bytes.
     InvalidMagic(&'static str),
-    /// Unsupported version number.
+    /// Unsupported format version number.
     UnsupportedVersion(u32),
+    /// Pak requires a newer runtime than this build.
+    /// Pak requires a newer runtime than the one linked into this binary.
+    RuntimeTooOld {
+        /// Minimum `RUNTIME_VERSION` required by the pak.
+        required: u32,
+        /// Current runtime version.
+        current: u32,
+    },
     /// Signature verification failed.
     SignatureInvalid(&'static str),
     /// Key not configured (verify key, decrypt key, etc).
@@ -44,6 +52,13 @@ impl core::fmt::Display for CoreError {
             CoreError::BufferTooShort(msg) => f.write_str(msg),
             CoreError::InvalidMagic(msg) => f.write_str(msg),
             CoreError::UnsupportedVersion(v) => write!(f, "Unsupported version {}", v),
+            CoreError::RuntimeTooOld { required, current } => {
+                write!(
+                    f,
+                    "Pak requires runtime version {} but current runtime is {}",
+                    required, current
+                )
+            }
             CoreError::SignatureInvalid(msg) => f.write_str(msg),
             CoreError::KeyNotConfigured(msg) => f.write_str(msg),
             CoreError::IoError(msg) => f.write_str(msg),
