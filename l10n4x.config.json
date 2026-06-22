@@ -9,6 +9,12 @@
   "compressionLevel": 8,
   "encryptKeyEnv": "L10N4X_ENCRYPT_KEY",
   "corsOrigins": null,
+  "debugKeys": false,
+  "bundles": {
+    "mode": "",
+    "splitBy": "",
+    "preload": []
+  },
   "targets": [
     {
       "type": "go",

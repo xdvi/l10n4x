@@ -994,6 +994,7 @@ dependencies = [
  "l10n4x-compiler",
  "log",
  "ruzstd",
+ "serde",
  "serde_json",
  "trybuild",
  "zstd",

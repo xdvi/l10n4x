@@ -230,9 +230,11 @@ fn bench_lookup(c: &mut Criterion) {
                 locales: Arc::clone(&prebuilt_locales),
                 fallback_chain: Arc::clone(&prebuilt_chain),
                 #[cfg(feature = "std")]
-                lazy_cache: Default::default(),
+                lazy_cache: None,
                 #[cfg(feature = "std")]
-                offset_maps: Default::default(),
+                offset_maps: None,
+                #[cfg(feature = "std")]
+                loaded_namespaces: None,
             };
             swap_store(black_box(store));
         });
