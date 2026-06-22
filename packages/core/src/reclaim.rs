@@ -43,3 +43,15 @@ pub(crate) fn schedule_drop<T>(ptr: *mut T) {
         let _ = alloc::boxed::Box::from_raw(ptr);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::boxed::Box;
+
+    #[test]
+    fn schedule_drop_box() {
+        let ptr = Box::into_raw(Box::new(42u32));
+        schedule_drop(ptr);
+    }
+}

@@ -977,7 +977,7 @@ mod store_extra_tests {
             0x00, 0x00, 0x00, 0x10,
             0x00, 0x00, 0x00, 0x00,
         ];
-        assert!(crate::loader::load_raw_bytes("fr", &buf));
+        assert!(crate::loader::load_raw_bytes("fr", buf));
 
         assert!(locale_loaded("en"));
         assert!(locale_loaded("fr"));

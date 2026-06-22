@@ -36,6 +36,65 @@ impl Ops {
     }
 }
 
+/// Returns the CLDR **ordinal** plural category for a given locale tag and integer value.
+/// Supports ordinals like "1st", "2nd", "3rd" in English.
+pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
+    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
+
+    match lang.to_lowercase().as_str() {
+        // ── English ordinal: special 1st, 2nd, 3rd, 11th-13th ─────────────────
+        "en" => {
+            let mod100 = value % 100;
+            let mod10 = value % 10;
+            if mod10 == 1 && mod100 != 11 {
+                PluralCategory::One   // 1st, 21st, 101st
+            } else if mod10 == 2 && mod100 != 12 {
+                PluralCategory::Two   // 2nd, 22nd, 102nd
+            } else if mod10 == 3 && mod100 != 13 {
+                PluralCategory::Few   // 3rd, 23rd, 103rd
+            } else {
+                PluralCategory::Other // 4th, 11th-13th, etc.
+            }
+        }
+        // ── French: 1er, 2e ────────────────────────────────────────────────────
+        "fr" | "ff" | "kab" => {
+            if value == 1 { PluralCategory::One } else { PluralCategory::Other }
+        }
+        // ── Spanish, Italian, Portuguese: default ordinal ─────────────────────
+        "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "ro" | "mo" => {
+            PluralCategory::Other
+        }
+        // ── German, Dutch, Swedish: always other ──────────────────────────────
+        "de" | "nl" | "sv" | "da" | "nb" | "fi" | "et" | "lv" | "lt" | "hu"
+        | "af" | "sq" | "sw" | "tr" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" => {
+            PluralCategory::Other
+        }
+        // ── Russian ordinals: one for 1, 2, 3, 4? Actually Russian ordinals
+        //    follow same pattern as cardinals (1→One, 2-4→Few, 5+→Many, 11-14→Many)
+        "ru" | "uk" | "be" => {
+            let mod100 = value % 100;
+            let mod10 = value % 10;
+            if mod10 == 1 && mod100 != 11 {
+                PluralCategory::One
+            } else if (2..=4).contains(&mod10) && !(12..=14).contains(&mod100) {
+                PluralCategory::Few
+            } else {
+                PluralCategory::Other
+            }
+        }
+        // ── Arabic ordinals: always other ─────────────────────────────────────
+        "ar" | "ckb" => PluralCategory::Other,
+        // ── Chinese, Japanese, Korean, Vietnamese: always other ───────────────
+        "zh" | "ja" | "ko" | "vi" | "th" | "my" | "id" | "km" | "ms" | "lo" => {
+            PluralCategory::Other
+        }
+        // ── Default: n=1 → One, else Other ────────────────────────────────────
+        _ => {
+            if value == 1 { PluralCategory::One } else { PluralCategory::Other }
+        }
+    }
+}
+
 /// Returns the CLDR plural category for a given locale tag and numeric value.
 /// Locale matching is done on the first two characters (language subtag) in lowercase.
 pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
@@ -281,6 +340,46 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
 }
 
 #[cfg(test)]
+mod ordinal_tests {
+    use super::*;
+
+    #[test]
+    fn english_ordinal_one() {
+        assert_eq!(get_ordinal_category("en", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("en", 21), PluralCategory::One);
+        assert_eq!(get_ordinal_category("en", 101), PluralCategory::One);
+    }
+
+    #[test]
+    fn english_ordinal_two() {
+        assert_eq!(get_ordinal_category("en", 2), PluralCategory::Two);
+        assert_eq!(get_ordinal_category("en", 22), PluralCategory::Two);
+        assert_eq!(get_ordinal_category("en", 102), PluralCategory::Two);
+    }
+
+    #[test]
+    fn english_ordinal_few() {
+        assert_eq!(get_ordinal_category("en", 3), PluralCategory::Few);
+        assert_eq!(get_ordinal_category("en", 23), PluralCategory::Few);
+    }
+
+    #[test]
+    fn english_ordinal_other() {
+        assert_eq!(get_ordinal_category("en", 4), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("en", 11), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("en", 12), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("en", 13), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("en", 100), PluralCategory::Other);
+    }
+
+    #[test]
+    fn french_ordinal() {
+        assert_eq!(get_ordinal_category("fr", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("fr", 2), PluralCategory::Other);
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -360,5 +459,224 @@ mod tests {
         assert_eq!(get_plural_category("en", 1.0), PluralCategory::One);
         assert_eq!(get_plural_category("en", 2.0), PluralCategory::Other);
         assert_eq!(get_plural_category("en-US", 1.0), PluralCategory::One);
+    }
+
+    #[test]
+    fn negative_value() {
+        assert_eq!(get_plural_category("en", -1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("en", -5.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn large_number() {
+        assert_eq!(get_plural_category("en", 9999999.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn german_plural() {
+        assert_eq!(get_plural_category("de", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("de", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn ukrainian_plural() {
+        assert_eq!(get_plural_category("uk", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("uk", 2.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("uk", 5.0), PluralCategory::Many);
+    }
+
+    #[test]
+    fn unknown_locale_defaults_to_one_other() {
+        assert_eq!(get_plural_category("zz", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("zz", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn ordinal_negative_falls_to_other() {
+        assert_eq!(get_ordinal_category("en", -1), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("en", -3), PluralCategory::Other);
+    }
+
+    #[test]
+    fn ordinal_spanish() {
+        assert_eq!(get_ordinal_category("es", 1), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("es", 2), PluralCategory::Other);
+    }
+
+    #[test]
+    fn ordinal_unknown_locale_defaults_to_one() {
+        assert_eq!(get_ordinal_category("zz", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("zz", 2), PluralCategory::Other);
+    }
+
+    #[test]
+    fn plural_fractional_values() {
+        assert_eq!(get_plural_category("en", 1.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("pl", 0.5), PluralCategory::Other);
+    }
+
+    #[test]
+    fn hebrew_plural() {
+        assert_eq!(get_plural_category("he", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("he", 2.0), PluralCategory::Two);
+        assert_eq!(get_plural_category("he", 10.0), PluralCategory::Many);
+        assert_eq!(get_plural_category("he", 20.0), PluralCategory::Many);
+        assert_eq!(get_plural_category("he", 3.0), PluralCategory::Other);
+        assert_eq!(get_plural_category("he", 1.5), PluralCategory::Other);
+    }
+
+    #[test]
+    fn macedonian_plural() {
+        assert_eq!(get_plural_category("mk", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("mk", 11.0), PluralCategory::One);
+        assert_eq!(get_plural_category("mk", 2.0), PluralCategory::Other);
+        assert_eq!(get_plural_category("mk", 12.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn lithuanian_plural() {
+        assert_eq!(get_plural_category("lt", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("lt", 2.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("lt", 9.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("lt", 10.0), PluralCategory::Other);
+        assert_eq!(get_plural_category("lt", 20.0), PluralCategory::Other);
+        assert_eq!(get_plural_category("lt", 21.0), PluralCategory::One);
+        assert_eq!(get_plural_category("lt", 1.5), PluralCategory::Many);
+    }
+
+    #[test]
+    fn south_slavic_plural() {
+        assert_eq!(get_plural_category("hr", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("hr", 2.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("hr", 5.0), PluralCategory::Other);
+        assert_eq!(get_plural_category("hr", 21.0), PluralCategory::One);
+        assert_eq!(get_plural_category("sr", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("bs", 1.0), PluralCategory::One);
+    }
+
+    #[test]
+    fn south_slavic_fractional() {
+        // v != 0 path uses fractional digits
+        assert_eq!(get_plural_category("hr", 0.1), PluralCategory::One);
+        assert_eq!(get_plural_category("hr", 0.2), PluralCategory::Few);
+        assert_eq!(get_plural_category("hr", 0.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("hr", 1.2), PluralCategory::Few);
+    }
+
+    #[test]
+    fn arabic_fractional_returns_other() {
+        // ar with v != 0 always returns Other
+        assert_eq!(get_plural_category("ar", 1.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("ar", 0.5), PluralCategory::Other);
+    }
+
+    #[test]
+    fn romanian_fractional_always_few() {
+        assert_eq!(get_plural_category("ro", 1.5), PluralCategory::Few);
+        assert_eq!(get_plural_category("ro", 2.5), PluralCategory::Few);
+    }
+
+    #[test]
+    fn polish_v_not_zero_path() {
+        // pl with v != 0 -> Other (1.5%1 != 0 => v != 0 => Other)
+        assert_eq!(get_plural_category("pl", 1.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("pl", 2.5), PluralCategory::Other);
+    }
+
+    #[test]
+    fn portuguese_plural() {
+        assert_eq!(get_plural_category("pt", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("pt", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn extra_east_asian_locales_always_other() {
+        for lang in &["bo", "dz", "ig", "ii", "jv", "kde", "kea", "nqo", "ses", "sg", "wo", "yo", "yue"] {
+            assert_eq!(get_plural_category(lang, 1.0), PluralCategory::Other);
+            assert_eq!(get_plural_category(lang, 5.0), PluralCategory::Other);
+        }
+    }
+
+    #[test]
+    fn ordinal_russian() {
+        assert_eq!(get_ordinal_category("ru", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("ru", 2), PluralCategory::Few);
+        assert_eq!(get_ordinal_category("ru", 3), PluralCategory::Few);
+        assert_eq!(get_ordinal_category("ru", 4), PluralCategory::Few);
+        assert_eq!(get_ordinal_category("ru", 5), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("ru", 11), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("ru", 12), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("ru", 21), PluralCategory::One);
+    }
+
+    #[test]
+    fn ordinal_germanic() {
+        for lang in &["de", "nl", "sv", "da", "nb", "fi", "et", "lv", "lt", "hu"] {
+            assert_eq!(get_ordinal_category(lang, 1), PluralCategory::Other);
+            assert_eq!(get_ordinal_category(lang, 2), PluralCategory::Other);
+        }
+    }
+
+    #[test]
+    fn ordinal_arabic() {
+        assert_eq!(get_ordinal_category("ar", 1), PluralCategory::Other);
+        assert_eq!(get_ordinal_category("ckb", 1), PluralCategory::Other);
+    }
+
+    #[test]
+    fn ordinal_east_asian() {
+        for lang in &["zh", "ja", "ko", "vi", "th", "id"] {
+            assert_eq!(get_ordinal_category(lang, 1), PluralCategory::Other);
+        }
+    }
+
+    #[test]
+    fn ordinal_french_ff_kab() {
+        assert_eq!(get_ordinal_category("fr", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("ff", 1), PluralCategory::One);
+        assert_eq!(get_ordinal_category("kab", 1), PluralCategory::One);
+    }
+
+    #[test]
+    fn czech_range_few() {
+        assert_eq!(get_plural_category("cs", 2.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("cs", 3.0), PluralCategory::Few);
+        assert_eq!(get_plural_category("cs", 4.0), PluralCategory::Few);
+    }
+
+    #[test]
+    fn latvian_fractional_other() {
+        // lv with v != 0 -> Other
+        assert_eq!(get_plural_category("lv", 1.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("lv", 2.5), PluralCategory::Other);
+        assert_eq!(get_plural_category("lv", 11.5), PluralCategory::Other);
+    }
+
+    #[test]
+    fn slovenian_default_one_other() {
+        // sl falls to default: n=1 -> One, else Other
+        assert_eq!(get_plural_category("sl", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("sl", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn welsh_default_one_other() {
+        // cy falls to default: n=1 -> One, else Other
+        assert_eq!(get_plural_category("cy", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("cy", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn maltese_default_one_other() {
+        // mt falls to default: n=1 -> One, else Other
+        assert_eq!(get_plural_category("mt", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("mt", 2.0), PluralCategory::Other);
+    }
+
+    #[test]
+    fn scottish_gaelic_default_one_other() {
+        // gd falls to default: n=1 -> One, else Other
+        assert_eq!(get_plural_category("gd", 1.0), PluralCategory::One);
+        assert_eq!(get_plural_category("gd", 2.0), PluralCategory::Other);
     }
 }

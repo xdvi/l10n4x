@@ -4,6 +4,8 @@ extern crate alloc;
 
 use core::sync::atomic::{AtomicPtr, Ordering};
 
+use crate::error::CoreResult;
+
 #[cfg(feature = "alloc")]
 use ed25519_dalek::Verifier;
 
@@ -39,9 +41,9 @@ pub fn verify_key_configured() -> bool {
 }
 
 /// Verifies an Ed25519 signature over `message`.
-pub fn verify(message: &[u8], signature: &[u8]) -> Result<(), &'static str> {
+pub fn verify(message: &[u8], signature: &[u8]) -> CoreResult<()> {
     if signature.len() != SIG_LEN {
-        return Err("Invalid signature length");
+        return Err(crate::CoreError::SignatureInvalid("Invalid signature length"));
     }
     #[cfg(feature = "alloc")]
     {
@@ -51,7 +53,7 @@ pub fn verify(message: &[u8], signature: &[u8]) -> Result<(), &'static str> {
                 let _guard = crossbeam_epoch::pin();
                 let loaded_ptr = VERIFY_KEY.load(Ordering::Acquire);
                 if loaded_ptr.is_null() {
-                    return Err("Verify key not configured");
+                    return Err(crate::CoreError::KeyNotConfigured("Verify key not configured"));
                 }
                 // SAFETY: Under the active epoch guard, dereferencing the pointer is safe
                 // because memory reclamation is deferred until after the guard is dropped.
@@ -61,7 +63,7 @@ pub fn verify(message: &[u8], signature: &[u8]) -> Result<(), &'static str> {
             {
                 let loaded_ptr = VERIFY_KEY.load(Ordering::Acquire);
                 if loaded_ptr.is_null() {
-                    return Err("Verify key not configured");
+                    return Err(crate::CoreError::KeyNotConfigured("Verify key not configured"));
                 }
                 // SAFETY: In single-threaded environments, no concurrent mutations occur,
                 // making dereferencing safe.
@@ -70,19 +72,19 @@ pub fn verify(message: &[u8], signature: &[u8]) -> Result<(), &'static str> {
         };
 
         let verifying_key =
-            ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| "Invalid verify key")?;
+            ed25519_dalek::VerifyingKey::from_bytes(&key).map_err(|_| crate::CoreError::KeyNotConfigured("Invalid verify key"))?;
         let mut sig_bytes = [0u8; SIG_LEN];
         sig_bytes.copy_from_slice(signature);
         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
         verifying_key
             .verify(message, &sig)
-            .map_err(|_| "Pak signature invalid")
+            .map_err(|_| crate::CoreError::SignatureInvalid("Pak signature invalid"))
     }
     #[cfg(not(feature = "alloc"))]
     {
         let _ = message;
         let _ = signature;
-        Err("Integrity support not enabled")
+        Err(crate::CoreError::FeatureNotEnabled("Integrity support not enabled"))
     }
 }
 
@@ -111,5 +113,37 @@ mod tests {
         assert!(set_verify_key(&TEST_PUBLIC_KEY));
         assert!(verify(TEST_MESSAGE, &TEST_SIGNATURE).is_ok());
         assert!(verify(b"tampered", &TEST_SIGNATURE).is_err());
+    }
+
+    #[test]
+    fn set_verify_key_wrong_length() {
+        assert!(!set_verify_key(&[0u8; 16]));
+        assert!(!set_verify_key(&[0u8; 64]));
+    }
+
+    #[test]
+    fn verify_key_configured_returns_false_initially() {
+        let old = VERIFY_KEY.swap(core::ptr::null_mut(), Ordering::SeqCst);
+        if !old.is_null() { crate::reclaim::schedule_drop(old); }
+        assert!(!verify_key_configured());
+    }
+
+    #[test]
+    fn verify_invalid_sig_length() {
+        let old = VERIFY_KEY.swap(core::ptr::null_mut(), Ordering::SeqCst);
+        if !old.is_null() { crate::reclaim::schedule_drop(old); }
+        let key = [42u8; 32];
+        assert!(set_verify_key(&key));
+        let result = verify(b"msg", &[0u8; 32]);
+        assert!(result.is_err());
+    }
+
+    #[cfg(feature = "alloc")]
+    #[test]
+    fn verify_no_key_configured() {
+        let old = VERIFY_KEY.swap(core::ptr::null_mut(), Ordering::SeqCst);
+        if !old.is_null() { crate::reclaim::schedule_drop(old); }
+        let result = verify(b"msg", &[0u8; 64]);
+        assert!(result.is_err());
     }
 }

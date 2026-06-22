@@ -13,6 +13,7 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
+use crate::error::CoreResult;
 use crate::integrity;
 
 /// Magic bytes identifying an `l10n4x` outer pak container.
@@ -45,29 +46,29 @@ pub fn seal(unsigned: &[u8], signature: &[u8; PAK_SIGNATURE_SIZE]) -> Vec<u8> {
 pub type ParsedSignedPak<'a> = (&'a [u8], &'a [u8], &'a [u8]);
 
 /// Parses a signed pak and returns `(signed_message, compressed_payload, signature)`.
-pub fn parse_signed(data: &[u8]) -> Result<ParsedSignedPak<'_>, &'static str> {
+pub fn parse_signed(data: &[u8]) -> CoreResult<ParsedSignedPak<'_>> {
     if data.len() < PAK_HEADER_SIZE + PAK_SIGNATURE_SIZE {
-        return Err("Pak file too short");
+        return Err(crate::CoreError::BufferTooShort("Pak file too short"));
     }
     if &data[0..4] != PAK_MAGIC {
-        return Err("Invalid pak magic bytes");
+        return Err(crate::CoreError::InvalidMagic("Invalid pak magic bytes"));
     }
     let version = u32::from_be_bytes(data[4..8].try_into().unwrap());
     if version != PAK_VERSION {
-        return Err("Unsupported pak version");
+        return Err(crate::CoreError::UnsupportedVersion(version));
     }
     let payload_len = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
     let message_end = PAK_HEADER_SIZE
         .checked_add(payload_len)
-        .ok_or("Pak payload length overflow")?;
+        .ok_or(crate::CoreError::Overflow("Pak payload length overflow"))?;
     let sig_end = message_end
         .checked_add(PAK_SIGNATURE_SIZE)
-        .ok_or("Pak signature overflow")?;
+        .ok_or(crate::CoreError::Overflow("Pak signature overflow"))?;
     if data.len() < sig_end {
-        return Err("Pak file truncated");
+        return Err(crate::CoreError::BufferTooShort("Pak file truncated"));
     }
     if data.len() != sig_end {
-        return Err("Pak file has trailing bytes");
+        return Err(crate::CoreError::TrailingData("Pak file has trailing bytes"));
     }
     Ok((
         &data[0..message_end],
@@ -78,16 +79,17 @@ pub fn parse_signed(data: &[u8]) -> Result<ParsedSignedPak<'_>, &'static str> {
 
 /// Verifies signature and decompresses a `.pak` file into inner `L10N` binary bytes.
 /// Accepts signed `L10P` files or `L10E`-encrypted envelopes (requires decrypt key).
-pub fn decompress_pak(data: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn decompress_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
     let signed = crate::envelope::open_outer(data)?;
     decompress_signed_pak(&signed)
 }
 
 /// Verifies signature and decompresses a signed `L10P` container.
-pub fn decompress_signed_pak(data: &[u8]) -> Result<Vec<u8>, &'static str> {
+pub fn decompress_signed_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
     let (message, compressed, signature) = parse_signed(data)?;
     integrity::verify(message, signature)?;
-    miniz_oxide::inflate::decompress_to_vec(compressed).map_err(|_| "Pak decompression failed")
+    miniz_oxide::inflate::decompress_to_vec(compressed)
+        .map_err(|_| crate::CoreError::IoError("Pak decompression failed"))
 }
 
 #[cfg(test)]

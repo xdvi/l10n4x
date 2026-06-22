@@ -1,23 +1,60 @@
 //! ICU MessageFormat Parsing and Representation.
 //!
 //! ### Supported ICU MessageFormat 2.0 (MF2) Subset:
-//! - **Single Selector**: Only a single variable selector is supported in `match` statements (e.g. `match $count`).
+//! - **Single or Dual Selectors**: `match` statements support 1 or 2 selector variables (e.g. `match $count $gender`).
+//! - **Nested AST**: Two-variable matches compile to a nested `Select`/`Plural` tree (outer on the second variable).
 //! - **Fallback Catch-all**: Wildcard `*` patterns in match bodies map to the default `other` case.
 //! - **Standard Variables**: Simple braced placeholders (e.g. `{name}`) are parsed as variable node interpolation.
 //!
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum NumberStyle {
     Decimal,
     Percent,
     Integer,
+    Currency(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DateStyle {
+    Date,
+    Time,
+    DateTime,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ListStyle {
+    Conjunction,
+    Disjunction,
+    Unit,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelTimeStyle {
+    Auto,
+    Seconds,
+    Minutes,
+    Hours,
+    Days,
+    Weeks,
+    Months,
+    Years,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CustomFormat {
+    pub formatter: String,
+    pub options: std::collections::HashMap<String, String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageNode {
     Text(String),
     Variable(String),
+    /// Unescaped variable ({- name} in ICU 1.0 syntax). Same as Variable but without HTML escaping.
+    RawVariable(String),
     Plural {
         var: String,
+        ordinal: bool,
         cases: Vec<(PluralCaseKey, Vec<MessageNode>)>,
     },
     Select {
@@ -27,6 +64,27 @@ pub enum MessageNode {
     Number {
         var: String,
         style: NumberStyle,
+    },
+    Date {
+        var: String,
+        style: DateStyle,
+    },
+    RelTime {
+        var: String,
+        style: RelTimeStyle,
+    },
+    List {
+        var: String,
+        style: ListStyle,
+    },
+    KeyRef(String),
+    VariableWithDefault {
+        name: String,
+        default: String,
+    },
+    Custom {
+        var: String,
+        format: CustomFormat,
     },
 }
 
@@ -78,6 +136,30 @@ impl<'a> MessageParser<'a> {
                 nodes.push(node);
             } else if c == '}' && in_brace {
                 break;
+            } else if c == '$' {
+                // Check for $t(...) cross-reference
+                let saved = self.chars.clone();
+                self.chars.next();
+                if self.chars.peek() == Some(&'t') {
+                    self.chars.next();
+                    if self.chars.peek() == Some(&'(') {
+                        self.chars.next();
+                        if !current_text.is_empty() {
+                            nodes.push(MessageNode::Text(core::mem::take(&mut current_text)));
+                        }
+                        let mut key_ref = String::new();
+                        for ch in self.chars.by_ref() {
+                            if ch == ')' { break; }
+                            key_ref.push(ch);
+                        }
+                        nodes.push(MessageNode::KeyRef(key_ref.trim().to_string()));
+                        continue;
+                    }
+                }
+                // Not a $t(...), restore and push as regular text
+                self.chars = saved;
+                self.chars.next();
+                current_text.push('$');
             } else {
                 self.chars.next();
                 current_text.push(c);
@@ -117,9 +199,15 @@ impl<'a> MessageParser<'a> {
 
             if expr_type == "plural" && parts.len() == 3 {
                 let body = parts[2].trim();
+                let (body, ordinal) = if let Some(rest) = body.strip_prefix("ordinal") {
+                    (rest.trim().trim_start_matches(','), true)
+                } else {
+                    (body, false)
+                };
                 let cases = parse_cases(body, &var_name)?;
                 return Ok(MessageNode::Plural {
                     var: var_name,
+                    ordinal,
                     cases,
                 });
             } else if expr_type == "select" && parts.len() == 3 {
@@ -134,16 +222,92 @@ impl<'a> MessageParser<'a> {
                     match parts[2].trim() {
                         "percent" => NumberStyle::Percent,
                         "integer" => NumberStyle::Integer,
+                        "currency" => NumberStyle::Currency(
+                            parts.get(3).map(|s| s.trim().to_string()).unwrap_or_default()
+                        ),
                         _ => NumberStyle::Decimal,
                     }
                 } else {
                     NumberStyle::Decimal
                 };
                 return Ok(MessageNode::Number { var: var_name, style });
+            } else if expr_type == "date" || expr_type == "Date" {
+                return Ok(MessageNode::Date { var: var_name, style: DateStyle::Date });
+            } else if expr_type == "time" || expr_type == "Time" {
+                return Ok(MessageNode::Date { var: var_name, style: DateStyle::Time });
+            } else if expr_type == "datetime" || expr_type == "dateTime" || expr_type == "DateTime" {
+                return Ok(MessageNode::Date { var: var_name, style: DateStyle::DateTime });
+            } else if expr_type == "list" {
+                let style = if parts.len() == 3 {
+                    match parts[2].trim() {
+                        "or" => ListStyle::Disjunction,
+                        "unit" => ListStyle::Unit,
+                        _ => ListStyle::Conjunction,
+                    }
+                } else {
+                    ListStyle::Conjunction
+                };
+                return Ok(MessageNode::List { var: var_name, style });
+            } else if expr_type == "relativedelta" || expr_type == "relativetime" {
+                let style = if parts.len() == 3 {
+                    match parts[2].trim() {
+                        "seconds" => RelTimeStyle::Seconds,
+                        "minutes" => RelTimeStyle::Minutes,
+                        "hours"   => RelTimeStyle::Hours,
+                        "days"    => RelTimeStyle::Days,
+                        "weeks"   => RelTimeStyle::Weeks,
+                        "months"  => RelTimeStyle::Months,
+                        "years"   => RelTimeStyle::Years,
+                        _         => RelTimeStyle::Auto,
+                    }
+                } else {
+                    RelTimeStyle::Auto
+                };
+                return Ok(MessageNode::RelTime { var: var_name, style });
+            } else if !expr_type.is_empty() {
+                // Custom formatter (unknown function type in ICU 1.0 syntax)
+                let mut options = std::collections::HashMap::new();
+                if parts.len() >= 3 {
+                    let body = parts[2].trim();
+                    for option in body.split_whitespace() {
+                        if let Some(eq_pos) = option.find('=') {
+                            options.insert(
+                                option[..eq_pos].trim().to_string(),
+                                option[eq_pos+1..].trim().to_string(),
+                            );
+                        }
+                    }
+                }
+                return Ok(MessageNode::Custom {
+                    var: var_name,
+                    format: CustomFormat { formatter: expr_type.to_string(), options },
+                });
             }
         }
 
-        let var_name = expr_str.trim().trim_start_matches('$').to_string();
+        let trimmed = expr_str.trim();
+        // Check for unescape marker: {- name}
+        if let Some(rest) = trimmed.strip_prefix('-') {
+            let bare_name = rest.trim_start_matches('$').trim().to_string();
+            // Check for pipe default value syntax: {- name|Guest}
+            if let Some(pipe_pos) = bare_name.find('|') {
+                let name = bare_name[..pipe_pos].trim().to_string();
+                let default = bare_name[pipe_pos + 1..].trim().to_string();
+                // For raw variables with defaults, use RawVariableWithDefault (handled via 0x0C flags & 0x01)
+                // We still mark as VariableWithDefault for now — the binary writer handles flags
+                return Ok(MessageNode::VariableWithDefault { name, default });
+            }
+            return Ok(MessageNode::RawVariable(bare_name));
+        }
+
+        // Check for pipe default value syntax: {name|Guest}
+        if let Some(pipe_pos) = trimmed.find('|') {
+            let name = trimmed[..pipe_pos].trim_start_matches('$').trim().to_string();
+            let default = trimmed[pipe_pos + 1..].trim().to_string();
+            return Ok(MessageNode::VariableWithDefault { name, default });
+        }
+
+        let var_name = trimmed.trim_start_matches('$').to_string();
 
         // Check for MF2 inline function syntax: {$var :number} or {$var :number style=percent}
         if let Some(func_part) = var_name.split_once(':') {
@@ -154,15 +318,143 @@ impl<'a> MessageParser<'a> {
                     NumberStyle::Percent
                 } else if func_spec.contains("style=integer") {
                     NumberStyle::Integer
+                } else if func_spec.contains("style=currency") {
+                    let code = func_spec
+                        .split_whitespace()
+                        .find(|s| s.starts_with("currency="))
+                        .and_then(|s| s.split('=').nth(1))
+                        .unwrap_or("USD")
+                        .to_string();
+                    NumberStyle::Currency(code)
                 } else {
                     NumberStyle::Decimal
                 };
                 return Ok(MessageNode::Number { var: base_var, style });
             }
+            if func_spec.starts_with(":string") || func_spec.starts_with("string") {
+                let default = if let Some(start) = func_spec.find("default=\"") {
+                    let after = &func_spec[start + 9..];
+                    after.split('"').next().unwrap_or("").to_string()
+                } else if let Some(start) = func_spec.find("default=") {
+                    let after = &func_spec[start + 8..];
+                    after.split_whitespace().next().unwrap_or("").to_string()
+                } else {
+                    String::new()
+                };
+                return Ok(MessageNode::VariableWithDefault { name: base_var, default });
+            }
+            if func_spec == ":date" || func_spec == "date" || func_spec == "Date" {
+                return Ok(MessageNode::Date { var: base_var, style: DateStyle::Date });
+            }
+            if func_spec == ":time" || func_spec == "time" || func_spec == "Time" {
+                return Ok(MessageNode::Date { var: base_var, style: DateStyle::Time });
+            }
+            if func_spec == ":datetime" || func_spec == "datetime" || func_spec == "DateTime" {
+                return Ok(MessageNode::Date { var: base_var, style: DateStyle::DateTime });
+            }
+            if func_spec.starts_with(":list") || func_spec.starts_with("list") {
+                let style = if func_spec.contains("style=or") { ListStyle::Disjunction }
+                    else if func_spec.contains("style=unit") { ListStyle::Unit }
+                    else { ListStyle::Conjunction };
+                return Ok(MessageNode::List { var: base_var, style });
+            }
+            if func_spec.starts_with(":relativedelta") || func_spec.starts_with("relativedelta")
+                || func_spec.starts_with(":relativetime") || func_spec.starts_with("relativetime") {
+                let style = if func_spec.contains("unit=seconds") { RelTimeStyle::Seconds }
+                    else if func_spec.contains("unit=minutes") { RelTimeStyle::Minutes }
+                    else if func_spec.contains("unit=hours") { RelTimeStyle::Hours }
+                    else if func_spec.contains("unit=days") { RelTimeStyle::Days }
+                    else if func_spec.contains("unit=weeks") { RelTimeStyle::Weeks }
+                    else if func_spec.contains("unit=months") { RelTimeStyle::Months }
+                    else if func_spec.contains("unit=years") { RelTimeStyle::Years }
+                    else { RelTimeStyle::Auto };
+                return Ok(MessageNode::RelTime { var: base_var, style });
+            }
         }
 
         Ok(MessageNode::Variable(var_name))
     }
+}
+
+/// Parses an interval plural string like `(0)[no messages];(1)[one message];(2-7)[a few messages]`
+/// into standard plural cases. Returns `None` if the string is not an interval pattern.
+pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<MessageNode>)>> {
+    let input = input.trim();
+    if !input.starts_with('(') {
+        return None;
+    }
+
+    let mut cases = Vec::new();
+    let mut remaining = input;
+
+    while !remaining.is_empty() {
+        remaining = remaining.trim();
+        if !remaining.starts_with('(') { break; }
+
+        // Find the matching ) for the range specifier
+        let close_paren = remaining.find(')')?;
+        let range_part = &remaining[0..close_paren + 1]; // e.g., "(0)" or "(2-7)" or "(7-inf)"
+
+        // Find the matching [ for body
+        let open_body = remaining[close_paren..].find('[')?;
+        let body_start = close_paren + open_body + 1;
+        let body_end = remaining[body_start..].find(']')?;
+        let body_str = &remaining[body_start..body_start + body_end];
+        remaining = &remaining[body_start + body_end + 1..];
+        if remaining.starts_with(';') { remaining = &remaining[1..]; }
+
+        // Parse range: (exact), (min-max), or (min-inf)
+        let inner = range_part.trim_start_matches('(').trim_end_matches(')');
+        if let Some(hyphen) = inner.find('-') {
+            let min_str = inner[..hyphen].trim();
+            let max_str = inner[hyphen + 1..].trim();
+            let min: i32 = min_str.parse().ok()?;
+            let max: i32 = if max_str == "inf" || max_str == "∞" {
+                // For max=inf, just use "other" catch-all
+                let mut parser = MessageParser::new(body_str);
+                let nodes = parser.parse_pattern(false).ok()?;
+                cases.push((PluralCaseKey::Other, nodes));
+                continue;
+            } else {
+                max_str.parse().ok()?
+            };
+            // Expand range into individual exact entries, capped at 100
+            let cap = max.min(100.min(min + 99));
+            for i in min..=cap {
+                let mut parser = MessageParser::new(body_str);
+                let nodes = parser.parse_pattern(false).ok()?;
+                cases.push((PluralCaseKey::Exact(i as f64), nodes));
+            }
+        } else {
+            // Exact value
+            let val: f64 = inner.parse().ok()?;
+            let mut parser = MessageParser::new(body_str);
+            let nodes = parser.parse_pattern(false).ok()?;
+            cases.push((PluralCaseKey::Exact(val), nodes));
+        }
+    }
+
+    if cases.is_empty() { None } else { Some(cases) }
+}
+
+/// Expands `#` to `{var_name}` (but not `\#`) in a plural case pattern string.
+/// This must be called per-body with the immediately enclosing plural's variable name.
+fn expand_hash_for_var(pattern: &str, var_name: &str) -> String {
+    let mut result = String::with_capacity(pattern.len());
+    let mut chars = pattern.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'#') {
+            chars.next();
+            result.push('#');
+        } else if c == '#' {
+            result.push('{');
+            result.push_str(var_name);
+            result.push('}');
+        } else {
+            result.push(c);
+        }
+    }
+    result
 }
 
 fn parse_cases(
@@ -215,26 +507,8 @@ fn parse_cases(
         let end_idx = end_idx.ok_or("Unmatched brace in case pattern")?;
         let pattern_str = &input[brace_idx + 1..end_idx];
 
-        let mut preprocessed = String::new();
-        let mut chars = pattern_str.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' {
-                if let Some('#') = chars.peek() {
-                    chars.next();
-                    preprocessed.push('#');
-                } else {
-                    preprocessed.push('\\');
-                }
-            } else if c == '#' {
-                preprocessed.push('{');
-                preprocessed.push_str(var_name);
-                preprocessed.push('}');
-            } else {
-                preprocessed.push(c);
-            }
-        }
-
-        let mut parser = MessageParser::new(&preprocessed);
+        let expanded = expand_hash_for_var(pattern_str, var_name);
+        let mut parser = MessageParser::new(&expanded);
         let pattern_nodes = parser.parse_pattern(false)?;
 
         cases.push((key, pattern_nodes));
@@ -294,12 +568,19 @@ pub fn extract_params(nodes: &[MessageNode]) -> Vec<String> {
 fn collect_params(nodes: &[MessageNode], seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
     for node in nodes {
         match node {
-            MessageNode::Variable(v) | MessageNode::Number { var: v, .. } => {
+            MessageNode::Variable(v) | MessageNode::RawVariable(v) | MessageNode::Number { var: v, .. }
+            | MessageNode::Date { var: v, .. } | MessageNode::RelTime { var: v, .. }
+            | MessageNode::List { var: v, .. } => {
                 if seen.insert(v.clone()) {
                     out.push(v.clone());
                 }
             }
-            MessageNode::Plural { var, cases } => {
+            MessageNode::VariableWithDefault { name, .. } => {
+                if seen.insert(name.clone()) {
+                    out.push(name.clone());
+                }
+            }
+            MessageNode::Plural { var, ordinal: _, cases } => {
                 if seen.insert(var.clone()) {
                     out.push(var.clone());
                 }
@@ -315,8 +596,42 @@ fn collect_params(nodes: &[MessageNode], seen: &mut std::collections::HashSet<St
                     collect_params(body, seen, out);
                 }
             }
-            MessageNode::Text(_) => {}
+            MessageNode::Custom { var, .. } => {
+                if seen.insert(var.clone()) {
+                    out.push(var.clone());
+                }
+            }
+            MessageNode::Text(_) | MessageNode::KeyRef(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod interval_plural_tests {
+    use super::*;
+
+    #[test]
+    fn parse_exact_interval() {
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2)[two]").unwrap();
+        assert_eq!(cases.len(), 3);
+    }
+
+    #[test]
+    fn parse_range_interval() {
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few]").unwrap();
+        assert!(cases.len() >= 3);
+    }
+
+    #[test]
+    fn parse_inf_interval() {
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few];(7-inf)[many]").unwrap();
+        let last_is_other = matches!(cases.last(), Some((PluralCaseKey::Other, _)));
+        assert!(last_is_other, "inf should expand to Other catch-all");
+    }
+
+    #[test]
+    fn non_interval_returns_none() {
+        assert!(parse_interval_plural("Hello {name}").is_none());
     }
 }
 
@@ -390,6 +705,173 @@ mod number_tests {
     }
 }
 
+#[cfg(test)]
+mod multi_match_tests {
+    use super::*;
+
+    #[test]
+    fn parse_multi_variable_match_select_first() {
+        let input = r#"match $count $gender
+when one masculine {1 hombre}
+when one feminine  {1 mujer}
+when *   *         {{count}}"#;
+        let nodes = MessageParser::new(input).parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            MessageNode::Select { var, cases } => {
+                assert_eq!(var, "gender");
+                assert_eq!(cases.len(), 3); // masculine, feminine, other
+                for (_, pattern) in cases {
+                    assert_eq!(pattern.len(), 1);
+                    assert!(matches!(pattern[0], MessageNode::Plural { .. }));
+                }
+            }
+            other => panic!("Expected Select node, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_multi_variable_with_all_wildcards() {
+        let input = r#"match $a $b
+when * * {fallback}"#;
+        let nodes = MessageParser::new(input).parse().unwrap();
+        match &nodes[0] {
+            MessageNode::Select { var, cases } => {
+                assert_eq!(var, "b");
+                assert_eq!(cases.len(), 1);
+                assert_eq!(cases[0].0, "other");
+            }
+            other => panic!("Expected Select, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_multi_variable_rejects_three_selectors() {
+        let input = r#"match $a $b $c
+when x y z {value}"#;
+        let result = MessageParser::new(input).parse();
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_multi_variable_select_first_string_keys() {
+        let input = r#"match $type $level
+when info debug {Info Debug}
+when info error {Info Error}
+when warn * {Warning}
+when *   * {Unknown}"#;
+        let nodes = MessageParser::new(input).parse().unwrap();
+        match &nodes[0] {
+            MessageNode::Select { var, cases: _ } => {
+                assert_eq!(var, "level", "innermost var should be the 2nd selector");
+            }
+            other => panic!("Expected Select, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn single_variable_match_still_works() {
+        let input = r#"match $count
+when one {1 item}
+when other {{count} items}"#;
+        let nodes = MessageParser::new(input).parse().unwrap();
+        match &nodes[0] {
+            MessageNode::Plural { var, .. } => {
+                assert_eq!(var, "count");
+            }
+            other => panic!("Expected Plural, got {:?}", other),
+        }
+    }
+}
+
+#[cfg(test)]
+mod custom_formatter_parse_tests {
+    use super::*;
+
+    #[test]
+    fn parses_unknown_function_as_custom() {
+        let nodes = MessageParser::new("{name, uppercase}").parse().unwrap();
+        assert_eq!(nodes.len(), 1);
+        match &nodes[0] {
+            MessageNode::Custom { var, format } => {
+                assert_eq!(var, "name");
+                assert_eq!(format.formatter, "uppercase");
+                assert!(format.options.is_empty());
+            }
+            other => panic!("Expected Custom, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parses_custom_with_options() {
+        let nodes = MessageParser::new("{val, prefix, prefix=Hello_}").parse().unwrap();
+        match &nodes[0] {
+            MessageNode::Custom { var, format } => {
+                assert_eq!(var, "val");
+                assert_eq!(format.formatter, "prefix");
+                assert_eq!(format.options.get("prefix").map(|s| s.as_str()), Some("Hello_"));
+            }
+            other => panic!("Expected Custom, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn custom_node_is_extracted_as_param() {
+        let nodes = MessageParser::new("Hello {name, uppercase}!").parse().unwrap();
+        let params = extract_params(&nodes);
+        assert!(params.contains(&"name".to_string()));
+    }
+
+    #[test]
+    fn test_hash_escape_in_plural() {
+        let nodes = MessageParser::new("{count, plural, one {escaped \\# here} other {normal # here}}")
+            .parse()
+            .unwrap();
+        if let MessageNode::Plural { var, cases, .. } = &nodes[0] {
+            assert_eq!(var, "count");
+            assert_eq!(cases.len(), 2);
+            assert_eq!(cases[0].0, PluralCaseKey::One);
+            assert_eq!(cases[0].1, vec![MessageNode::Text("escaped # here".to_string())]);
+            assert_eq!(cases[1].0, PluralCaseKey::Other);
+            assert_eq!(
+                cases[1].1,
+                vec![
+                    MessageNode::Text("normal ".to_string()),
+                    MessageNode::Variable("count".to_string()),
+                    MessageNode::Text(" here".to_string())
+                ]
+            );
+        } else {
+            panic!("Expected Plural");
+        }
+    }
+}
+
+fn extract_case_body(remaining: &str, brace_idx: usize) -> Result<(usize, &str), String> {
+    let mut brace_count = 0;
+    let mut end_idx = None;
+    for (idx, c) in remaining[brace_idx..].char_indices() {
+        if c == '{' {
+            brace_count += 1;
+        } else if c == '}' {
+            brace_count -= 1;
+            if brace_count == 0 {
+                end_idx = Some(brace_idx + idx);
+                break;
+            }
+        }
+    }
+    let end_idx = end_idx.ok_or("Unmatched brace in match case")?;
+    let pattern_str = &remaining[brace_idx + 1..end_idx];
+    Ok((end_idx, pattern_str))
+}
+
+fn is_plural_key(key: &str) -> bool {
+    matches!(key, "zero" | "one" | "two" | "few" | "many" | "other")
+        || key.starts_with('=')
+        || key.parse::<f64>().is_ok()
+}
+
 fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
     let input = input.trim();
     if !input.starts_with("match") {
@@ -403,103 +885,277 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
     if vars.is_empty() {
         return Err("Match statement must have at least one selector variable".to_string());
     }
-    let var_name = vars[0].trim_start_matches('$').to_string();
-
-    let mut cases = Vec::new();
-    let mut is_select = false;
-
-    let mut remaining = input[match_line.len()..].trim();
-    while !remaining.is_empty() {
-        remaining = remaining.trim_start();
-        if remaining.is_empty() {
-            break;
-        }
-
-        let is_when = remaining.starts_with("when");
-        let is_fallback = remaining.starts_with('*');
-
-        if !is_when && !is_fallback {
-            return Err(format!(
-                "Expected 'when' or '*' in match body: {}",
-                remaining
-            ));
-        }
-
-        let brace_idx = remaining
-            .find('{')
-            .ok_or("Expected case pattern starting with '{'")?;
-        let key_part = remaining[..brace_idx].trim();
-
-        let key_str = if is_when {
-            key_part
-                .split_whitespace()
-                .nth(1)
-                .ok_or("Expected key after when")?
-        } else {
-            "other"
-        };
-
-        let mut brace_count = 0;
-        let mut end_idx = None;
-        for (idx, c) in remaining[brace_idx..].char_indices() {
-            if c == '{' {
-                brace_count += 1;
-            } else if c == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    end_idx = Some(brace_idx + idx);
-                    break;
-                }
-            }
-        }
-
-        let end_idx = end_idx.ok_or("Unmatched brace in match case")?;
-        let pattern_str = &remaining[brace_idx + 1..end_idx];
-
-        let mut parser = MessageParser::new(pattern_str);
-        let pattern_nodes = parser.parse_pattern(false)?;
-
-        let plural_key = match key_str {
-            "zero" => Some(PluralCaseKey::Zero),
-            "one" => Some(PluralCaseKey::One),
-            "two" => Some(PluralCaseKey::Two),
-            "few" => Some(PluralCaseKey::Few),
-            "many" => Some(PluralCaseKey::Many),
-            "other" => Some(PluralCaseKey::Other),
-            _ => {
-                if let Ok(val) = key_str.parse::<f64>() {
-                    Some(PluralCaseKey::Exact(val))
-                } else {
-                    None
-                }
-            }
-        };
-
-        if plural_key.is_none() {
-            is_select = true;
-        }
-
-        cases.push((key_str.to_string(), plural_key, pattern_nodes));
-        remaining = &remaining[end_idx + 1..];
+    if vars.len() > 2 {
+        return Err("Only up to 2 selector variables supported in match".to_string());
     }
 
-    if is_select {
-        let select_cases = cases
-            .into_iter()
-            .map(|(key, _, nodes)| (key, nodes))
-            .collect();
-        Ok(MessageNode::Select {
-            var: var_name,
-            cases: select_cases,
-        })
+    let two_vars = vars.len() == 2 && vars[1].starts_with('$');
+
+    if !two_vars {
+        // --- SINGLE VARIABLE LOGIC (unchanged from original) ---
+        let var_name = vars[0].trim_start_matches('$').to_string();
+        let ordinal = vars.get(1).is_some_and(|v| v.trim() == "selectordinal");
+
+        let mut cases = Vec::new();
+        let mut is_select = false;
+
+        let mut remaining = input[match_line.len()..].trim();
+        while !remaining.is_empty() {
+            remaining = remaining.trim_start();
+            if remaining.is_empty() {
+                break;
+            }
+
+            let is_when = remaining.starts_with("when");
+            let is_fallback = remaining.starts_with('*');
+
+            if !is_when && !is_fallback {
+                return Err(format!(
+                    "Expected 'when' or '*' in match body: {}",
+                    remaining
+                ));
+            }
+
+            let brace_idx = remaining
+                .find('{')
+                .ok_or("Expected case pattern starting with '{'")?;
+            let key_part = remaining[..brace_idx].trim();
+
+            let key_str = if is_when {
+                key_part
+                    .split_whitespace()
+                    .nth(1)
+                    .ok_or("Expected key after when")?
+            } else {
+                "other"
+            };
+
+            let (end_idx, pattern_str) = extract_case_body(remaining, brace_idx)?;
+
+            let mut parser = MessageParser::new(pattern_str);
+            let pattern_nodes = parser.parse_pattern(false)?;
+
+            let plural_key = match key_str {
+                "zero" => Some(PluralCaseKey::Zero),
+                "one" => Some(PluralCaseKey::One),
+                "two" => Some(PluralCaseKey::Two),
+                "few" => Some(PluralCaseKey::Few),
+                "many" => Some(PluralCaseKey::Many),
+                "other" => Some(PluralCaseKey::Other),
+                _ => {
+                    if let Ok(val) = key_str.parse::<f64>() {
+                        Some(PluralCaseKey::Exact(val))
+                    } else {
+                        None
+                    }
+                }
+            };
+
+            if plural_key.is_none() {
+                is_select = true;
+            }
+
+            cases.push((key_str.to_string(), plural_key, pattern_nodes));
+            remaining = &remaining[end_idx + 1..];
+        }
+
+        if is_select {
+            let select_cases = cases
+                .into_iter()
+                .map(|(key, _, nodes)| (key, nodes))
+                .collect();
+            Ok(MessageNode::Select {
+                var: var_name,
+                cases: select_cases,
+            })
+        } else {
+            let plural_cases = cases
+                .into_iter()
+                .map(|(_, pkey, nodes)| (pkey.unwrap_or(PluralCaseKey::Other), nodes))
+                .collect();
+            Ok(MessageNode::Plural {
+                var: var_name,
+                ordinal,
+                cases: plural_cases,
+            })
+        }
     } else {
-        let plural_cases = cases
-            .into_iter()
-            .map(|(_, pkey, nodes)| (pkey.unwrap_or(PluralCaseKey::Other), nodes))
-            .collect();
-        Ok(MessageNode::Plural {
-            var: var_name,
-            cases: plural_cases,
-        })
+        // --- TWO-VARIABLE LOGIC ---
+        let var1 = vars[0].trim_start_matches('$').to_string();
+        let var2 = vars[1].trim_start_matches('$').to_string();
+
+        // Parse all case entries with compound keys
+        let mut entries: Vec<(String, String, Vec<MessageNode>)> = Vec::new();
+
+        let mut remaining = input[match_line.len()..].trim();
+        while !remaining.is_empty() {
+            remaining = remaining.trim_start();
+            if remaining.is_empty() {
+                break;
+            }
+
+            let is_when = remaining.starts_with("when");
+            if !is_when {
+                return Err(format!(
+                    "Expected 'when' in match body for multi-variable match: {}",
+                    remaining
+                ));
+            }
+
+            let brace_idx = remaining
+                .find('{')
+                .ok_or("Expected case pattern starting with '{'")?;
+            let key_part = remaining[..brace_idx].trim();
+
+            let keys: Vec<&str> = key_part.split_whitespace().skip(1).collect();
+            if keys.len() != 2 {
+                return Err(format!(
+                    "Expected 2 keys after 'when' for 2-variable match, got {}",
+                    keys.len()
+                ));
+            }
+
+            let (end_idx, pattern_str) = extract_case_body(remaining, brace_idx)?;
+
+            let mut parser = MessageParser::new(pattern_str);
+            let pattern_nodes = parser.parse_pattern(false)?;
+
+            entries.push((keys[0].to_string(), keys[1].to_string(), pattern_nodes));
+            remaining = &remaining[end_idx + 1..];
+        }
+
+        if entries.is_empty() {
+            return Err("No case entries in match body".to_string());
+        }
+
+        // Group by key2 (the second selector variable — becomes the outer node)
+        let mut groups: std::collections::BTreeMap<String, Vec<(String, Vec<MessageNode>)>> =
+            std::collections::BTreeMap::new();
+        let mut outer_wildcards: std::collections::HashSet<String> =
+            std::collections::HashSet::new();
+
+        for (k1, k2, nodes) in entries {
+            let is_wildcard = k2 == "*";
+            // Map wildcard "*" to "other" for the outer key
+            let outer_key = if is_wildcard { "other".to_string() } else { k2 };
+            if is_wildcard {
+                outer_wildcards.insert(outer_key.clone());
+            }
+            groups.entry(outer_key).or_default().push((k1, nodes));
+        }
+
+        // For each group, determine if inner is plural or select and build the inner node
+        let mut outer_cases: Vec<(String, Vec<MessageNode>)> = Vec::new();
+
+        for (outer_key, sub_entries) in &groups {
+            // Determine if sub-keys are plural or select
+            let sub_is_plural = sub_entries
+                .iter()
+                .all(|(k, _)| k == "*" || is_plural_key(k));
+
+            let inner_pattern = if sub_is_plural {
+                let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = sub_entries
+                    .iter()
+                    .map(|(k, nodes)| {
+                        let plural_key = if k == "*" {
+                            PluralCaseKey::Other
+                        } else {
+                            match k.as_str() {
+                                "zero" => PluralCaseKey::Zero,
+                                "one" => PluralCaseKey::One,
+                                "two" => PluralCaseKey::Two,
+                                "few" => PluralCaseKey::Few,
+                                "many" => PluralCaseKey::Many,
+                                "other" => PluralCaseKey::Other,
+                                _ => {
+                                    if let Some(stripped) = k.strip_prefix('=') {
+                                        PluralCaseKey::Exact(
+                                            stripped
+                                                .trim()
+                                                .parse::<f64>()
+                                                .unwrap_or(f64::NAN),
+                                        )
+                                    } else if let Ok(val) = k.parse::<f64>() {
+                                        PluralCaseKey::Exact(val)
+                                    } else {
+                                        PluralCaseKey::Other
+                                    }
+                                }
+                            }
+                        };
+                        (plural_key, nodes.clone())
+                    })
+                    .collect();
+                vec![MessageNode::Plural {
+                    var: var1.clone(),
+                    ordinal: false,
+                    cases: plural_cases,
+                }]
+            } else {
+                let select_cases: Vec<(String, Vec<MessageNode>)> = sub_entries
+                    .iter()
+                    .map(|(k, nodes)| {
+                        let select_key = if k == "*" { "other" } else { k.as_str() };
+                        (select_key.to_string(), nodes.clone())
+                    })
+                    .collect();
+                vec![MessageNode::Select {
+                    var: var1.clone(),
+                    cases: select_cases,
+                }]
+            };
+
+            outer_cases.push((outer_key.clone(), inner_pattern));
+        }
+
+        // Determine if the outer is select or plural (based on outer keys)
+        // Keys that originated from wildcards are excluded from the plural check
+        // since "*" is ambiguous — it maps to "other" for both plural and select.
+        // If ALL outer keys are wildcard-originated, default to Select.
+        let outer_is_plural = groups.keys().all(|k| {
+            if outer_wildcards.contains(k.as_str()) {
+                false // wildcard-originated "other" is ambiguous — don't assume plural
+            } else {
+                is_plural_key(k)
+            }
+        });
+
+        if outer_is_plural {
+            let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = outer_cases
+                .into_iter()
+                .map(|(k, nodes)| {
+                    let plural_key = match k.as_str() {
+                        "zero" => PluralCaseKey::Zero,
+                        "one" => PluralCaseKey::One,
+                        "two" => PluralCaseKey::Two,
+                        "few" => PluralCaseKey::Few,
+                        "many" => PluralCaseKey::Many,
+                        "other" => PluralCaseKey::Other,
+                        _ => {
+                            if let Some(stripped) = k.strip_prefix('=') {
+                                PluralCaseKey::Exact(
+                                    stripped.trim().parse::<f64>().unwrap_or(f64::NAN),
+                                )
+                            } else if let Ok(val) = k.parse::<f64>() {
+                                PluralCaseKey::Exact(val)
+                            } else {
+                                PluralCaseKey::Other
+                            }
+                        }
+                    };
+                    (plural_key, nodes)
+                })
+                .collect();
+            Ok(MessageNode::Plural {
+                var: var2,
+                ordinal: false,
+                cases: plural_cases,
+            })
+        } else {
+            Ok(MessageNode::Select {
+                var: var2,
+                cases: outer_cases,
+            })
+        }
     }
 }
