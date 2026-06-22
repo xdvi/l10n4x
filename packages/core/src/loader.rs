@@ -1,26 +1,26 @@
 extern crate alloc;
 use crate::pak::decompress_pak;
-use crate::store::{read_store, swap_store, TranslationStore};
+use crate::store::{emit_locale_changed, read_store, swap_store, StoreData, TranslationStore};
 use alloc::string::ToString;
 use alloc::sync::Arc;
 
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
 pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
-    let mut success = false;
-    read_store(|store| {
-        let mut new_vec = (*store.locales).clone();
-        let entry = (locale_str.to_string(), Arc::new(bytes.to_vec()));
-        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-            Ok(pos) => new_vec[pos] = entry,
-            Err(pos) => new_vec.insert(pos, entry),
-        }
-        swap_store(TranslationStore {
-            locales: Arc::new(new_vec),
-            fallback_chain: alloc::sync::Arc::clone(&store.fallback_chain),
-        });
-        success = true;
+    crate::metrics::inc_locale_loads();
+    let (mut new_vec, fallback_chain) = read_store(|store| {
+        ((*store.locales).clone(), alloc::sync::Arc::clone(&store.fallback_chain))
     });
-    success
+    let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes.to_vec())));
+    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+        Ok(pos) => new_vec[pos] = entry,
+        Err(pos) => new_vec.insert(pos, entry),
+    }
+    swap_store(TranslationStore {
+        locales: Arc::new(new_vec),
+        fallback_chain,
+    });
+    emit_locale_changed(locale_str);
+    true
 }
 
 /// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
@@ -69,4 +69,63 @@ pub fn load_pak_directory(dir_path_str: &str) -> bool {
     }
 
     loaded_any
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+    use crate::store::{clear_translations, locale_loaded};
+
+    fn make_l10n_bytes() -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"L10N");
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(&16u32.to_be_bytes());
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf
+    }
+
+    #[test]
+    fn load_raw_bytes_success() {
+        clear_translations();
+        let bytes = make_l10n_bytes();
+        assert!(load_raw_bytes("test", &bytes));
+    }
+
+    #[test]
+    fn load_raw_bytes_then_locale_loaded() {
+        clear_translations();
+        let bytes = make_l10n_bytes();
+        load_raw_bytes("test-loc", &bytes);
+        assert!(locale_loaded("test-loc"));
+    }
+
+    #[test]
+    fn load_raw_bytes_overwrites_existing_locale() {
+        clear_translations();
+        let bytes1 = make_l10n_bytes();
+        let mut bytes2 = make_l10n_bytes();
+        bytes2.push(0xFF);
+        assert!(load_raw_bytes("dup", &bytes1));
+        assert!(load_raw_bytes("dup", &bytes2));
+    }
+
+    #[test]
+    fn load_pak_bytes_invalid_fails() {
+        let result = load_pak_bytes("xx", b"not a pak");
+        assert!(!result);
+    }
+
+    #[test]
+    fn load_pak_locale_nonexistent_file() {
+        let result = load_pak_locale("xx", "/nonexistent/path.pak");
+        assert!(!result);
+    }
+
+    #[test]
+    fn load_pak_directory_rejects_file_path() {
+        let result = load_pak_directory("/dev/null");
+        assert!(!result);
+    }
 }

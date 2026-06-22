@@ -4,7 +4,7 @@ use l10n4x_core::formatter::{format_message, PluralCategory};
 use l10n4x_core::plural_rules::get_plural_category;
 #[cfg(feature = "std")]
 use l10n4x_core::store::read_store;
-use l10n4x_core::store::{swap_store, translate, TranslationStore};
+use l10n4x_core::store::{swap_store, translate, StoreData, TranslationStore};
 use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::thread;
@@ -132,7 +132,7 @@ fn test_translate_helper_and_macro() {
     data.extend_from_slice(&(bc.len() as u32).to_be_bytes());
 
     let mut locales = Vec::new();
-    locales.push(("en".to_string(), Arc::new(data)));
+    locales.push(("en".to_string(), StoreData::Owned(Arc::new(data))));
     let store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
@@ -142,6 +142,7 @@ fn test_translate_helper_and_macro() {
     let result = translate(
         "en",
         "hello",
+        None,
         l10n4x_core::l10n_params! { "name" => "Diego" },
     );
     assert_eq!(result, "Hello Diego");
@@ -152,7 +153,7 @@ fn test_translate_helper_and_macro() {
 fn test_lock_free_concurrency_rcu() {
     let _lock = TEST_MUTEX.lock().unwrap();
     let mut locales = Vec::new();
-    locales.push(("en".to_string(), Arc::new(vec![])));
+    locales.push(("en".to_string(), StoreData::Owned(Arc::new(vec![]))));
     let initial_store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
@@ -172,7 +173,7 @@ fn test_lock_free_concurrency_rcu() {
             mock_data.extend_from_slice(&0u32.to_be_bytes()); // count
 
             let mut locales = Vec::new();
-            locales.push(("en".to_string(), Arc::new(mock_data)));
+            locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
             let store = TranslationStore {
                 locales: Arc::new(locales),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
@@ -214,7 +215,7 @@ fn test_lock_free_concurrency_rcu() {
 fn test_ebr_stress() {
     let _lock = TEST_MUTEX.lock().unwrap();
     let mut locales = Vec::new();
-    locales.push(("en".to_string(), Arc::new(vec![])));
+    locales.push(("en".to_string(), StoreData::Owned(Arc::new(vec![]))));
     let initial_store = TranslationStore {
         locales: Arc::new(locales),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
@@ -235,8 +236,8 @@ fn test_ebr_stress() {
             mock_data.extend_from_slice(&0u32.to_be_bytes());
 
             let mut locales = Vec::new();
-            locales.push(("en".to_string(), Arc::new(mock_data)));
-            locales.push(("es".to_string(), Arc::new(vec![count as u8])));
+            locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
+            locales.push(("es".to_string(), StoreData::Owned(Arc::new(vec![count as u8]))));
             let store = TranslationStore {
                 locales: Arc::new(locales),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
