@@ -109,3 +109,37 @@ jobs:
           export ASAN_OPTIONS="detect_leaks=1"
           cargo +nightly test -p l10n4c -Z build-std --target x86_64-unknown-linux-gnu
         continue-on-error: true
+
+  arm:
+    name: ARM64 cross-compile
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: aarch64-unknown-linux-gnu
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ARM GCC
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
+      - name: Check core (ARM64, no_std)
+        run: |
+          cargo check -p l10n4x-core --no-default-features --features alloc --target aarch64-unknown-linux-gnu
+      - name: Check compiler (ARM64)
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+        run: |
+          cargo check -p l10n4x-compiler --target aarch64-unknown-linux-gnu
+
+  audit:
+    name: Security Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+      - name: Audit dependencies
+        run: cargo audit

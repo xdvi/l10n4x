@@ -96,7 +96,7 @@ jobs:
           L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
         run: |
           cd examples/python
-          python3 main.py
+          python3 -m unittest test_smoke.py -v
 
   # ── Go ──────────────────────────────────────────────────────────────────────
   smoke_go:
@@ -129,7 +129,7 @@ jobs:
           CGO_ENABLED: "1"
         run: |
           cd examples/go
-          go run . "${{ github.workspace }}/examples/dist/locales"
+          go test -v .
 
   # ── C# ──────────────────────────────────────────────────────────────────────
   smoke_csharp:
@@ -158,9 +158,10 @@ jobs:
         env:
           L10N4X_VERIFY_PUBLIC_KEY: ${{ needs.build_artifacts.outputs.verify_hex }}
           L10N4X_LIB_DIR: ${{ github.workspace }}/examples/lib
+          LD_LIBRARY_PATH: ${{ github.workspace }}/examples/lib
         run: |
           cd examples/csharp
-          dotnet run --nologo -v q
+          dotnet test test/ExampleTests.csproj --nologo
 
   # ── Flutter ─────────────────────────────────────────────────────────────────
   smoke_flutter:
