@@ -17,7 +17,7 @@ use std::cell::RefCell;
 #[cfg(feature = "std")]
 use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "std")]
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 #[cfg(feature = "std")]
 const TRANSLATE_CACHE_CAPACITY: usize = 128;
@@ -242,6 +242,9 @@ type LazyDecompressCache = HashMap<u64, Arc<OnceLock<(Vec<u8>, OffsetMap)>>>;
 /// Per-locale O(1) offset cache: maps locale_hash to key-hash-based (offset, length) pairs.
 #[cfg(feature = "std")]
 type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
+/// Loaded namespace names per locale hash (modular bundles).
+#[cfg(feature = "std")]
+type LoadedNamespacesMap = Arc<HashMap<u64, Arc<[Arc<str>]>>>;
 
 /// Returns a mutable lazy-cache map, allocating `Arc` storage on first use.
 #[cfg(feature = "std")]
@@ -283,6 +286,12 @@ pub struct TranslationStore {
     /// Per-locale O(1) offset maps. Key: locale_hash. `None` when empty.
     #[cfg(feature = "std")]
     pub offset_maps: Option<Arc<HashMap<u64, OffsetMap>>>,
+    /// Optional hash → key name table (`debug-keys` feature).
+    #[cfg(all(feature = "std", feature = "debug-keys"))]
+    pub debug_keys: Option<Arc<HashMap<u64, Arc<str>>>>,
+    /// Loaded namespace names per locale hash (modular bundles).
+    #[cfg(feature = "std")]
+    pub loaded_namespaces: Option<LoadedNamespacesMap>,
 }
 
 impl Default for TranslationStore {
@@ -294,7 +303,49 @@ impl Default for TranslationStore {
             lazy_cache: None,
             #[cfg(feature = "std")]
             offset_maps: None,
+            #[cfg(all(feature = "std", feature = "debug-keys"))]
+            debug_keys: None,
+            #[cfg(feature = "std")]
+            loaded_namespaces: None,
         }
+    }
+}
+
+/// Cloned store state used by RCU writers (`load`, `clear`, `swap_store`).
+#[cfg(feature = "std")]
+pub(crate) struct StoreSnapshot {
+    pub locales: Arc<Vec<(String, StoreData)>>,
+    pub fallback_chain: Arc<[Arc<str>]>,
+    pub lazy_cache: Option<Arc<LazyDecompressCache>>,
+    pub offset_maps: Option<Arc<HashMap<u64, OffsetMap>>>,
+    #[cfg(feature = "debug-keys")]
+    pub debug_keys: Option<Arc<HashMap<u64, Arc<str>>>>,
+    pub loaded_namespaces: Option<LoadedNamespacesMap>,
+}
+
+#[cfg(feature = "std")]
+pub(crate) fn store_snapshot(store: &TranslationStore) -> StoreSnapshot {
+    StoreSnapshot {
+        locales: Arc::clone(&store.locales),
+        fallback_chain: Arc::clone(&store.fallback_chain),
+        lazy_cache: store.lazy_cache.clone(),
+        offset_maps: store.offset_maps.clone(),
+        #[cfg(feature = "debug-keys")]
+        debug_keys: store.debug_keys.clone(),
+        loaded_namespaces: store.loaded_namespaces.clone(),
+    }
+}
+
+#[cfg(feature = "std")]
+pub(crate) fn build_store(snap: StoreSnapshot) -> TranslationStore {
+    TranslationStore {
+        locales: snap.locales,
+        fallback_chain: snap.fallback_chain,
+        lazy_cache: snap.lazy_cache,
+        offset_maps: snap.offset_maps,
+        #[cfg(feature = "debug-keys")]
+        debug_keys: snap.debug_keys,
+        loaded_namespaces: snap.loaded_namespaces,
     }
 }
 
@@ -337,6 +388,22 @@ impl TranslationStore {
 
 // Global store pointer
 static STORE: AtomicPtr<TranslationStore> = AtomicPtr::new(core::ptr::null_mut());
+
+/// Serializes writers (`load`, `clear`, `swap_store`) while readers proceed lock-free via RCU.
+#[cfg(feature = "std")]
+static STORE_WRITE_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Runs a store mutation under the writer lock. Safe to call concurrently with readers.
+#[cfg(feature = "std")]
+pub fn with_store_write<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    let _guard = STORE_WRITE_MUTEX
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    f()
+}
 
 // Function pointer type for missing key notifications.
 type MissingKeyFn = fn(locale: &str, key_hash: u64);
@@ -425,14 +492,17 @@ where
     }
 }
 
-/// Swaps the current store with a new one and schedules the old store for reclamation
+/// Swaps the current store with a new one and schedules the old store for reclamation.
+/// Thread-safe with concurrent readers; writers are serialized internally.
 #[cfg(feature = "std")]
 pub fn swap_store(new_store: TranslationStore) {
-    let new_ptr = Box::into_raw(Box::new(new_store));
-    let old_ptr = STORE.swap(new_ptr, Ordering::SeqCst);
-    if !old_ptr.is_null() {
-        crate::reclaim::schedule_drop(old_ptr);
-    }
+    with_store_write(|| {
+        let new_ptr = Box::into_raw(Box::new(new_store));
+        let old_ptr = STORE.swap(new_ptr, Ordering::SeqCst);
+        if !old_ptr.is_null() {
+            crate::reclaim::schedule_drop(old_ptr);
+        }
+    });
 }
 
 /// Swaps the current store with a new one and schedules the old store for reclamation
@@ -470,20 +540,9 @@ pub fn set_fallback_chain(chain: &[&str]) {
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
     #[cfg(feature = "std")]
     {
-        let (locales, _fallback, lazy_cache, offset_maps) = read_store(|store| {
-            (
-                Arc::clone(&store.locales),
-                Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
-            )
-        });
-        swap_store(TranslationStore {
-            locales,
-            fallback_chain: new_chain,
-            lazy_cache,
-            offset_maps,
-        });
+        let mut snap = read_store(store_snapshot);
+        snap.fallback_chain = new_chain;
+        swap_store(build_store(snap));
     }
     #[cfg(not(feature = "std"))]
     {
@@ -521,12 +580,15 @@ pub fn clear_translations() {
     let chain = read_store(|store| Arc::clone(&store.fallback_chain));
     #[cfg(feature = "std")]
     {
-        swap_store(TranslationStore {
+        swap_store(build_store(StoreSnapshot {
             locales: Arc::new(Vec::new()),
             fallback_chain: chain,
             lazy_cache: None,
             offset_maps: None,
-        });
+            #[cfg(feature = "debug-keys")]
+            debug_keys: None,
+            loaded_namespaces: None,
+        }));
     }
     #[cfg(not(feature = "std"))]
     {
@@ -683,6 +745,30 @@ pub fn locale_loaded(locale: &str) -> bool {
     read_store(|store| store.lookup(locale).is_some())
 }
 
+/// Returns `true` when modular bundle `namespace` is loaded for `locale`.
+#[cfg(feature = "std")]
+pub fn namespace_loaded(locale: &str, namespace: &str) -> bool {
+    read_store(|store| {
+        let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+        store
+            .loaded_namespaces
+            .as_ref()
+            .and_then(|m| m.get(&locale_hash))
+            .is_some_and(|list| list.iter().any(|n| n.as_ref() == namespace))
+    })
+}
+
+/// Resolves a key hash to its human-readable name (`debug-keys` compile feature).
+#[cfg(all(feature = "std", feature = "debug-keys"))]
+pub fn resolve_key_name(key_hash: u64) -> Option<Arc<str>> {
+    read_store(|store| {
+        store
+            .debug_keys
+            .as_ref()
+            .and_then(|m| m.get(&key_hash).cloned())
+    })
+}
+
 /// Loads a static (compile-time embedded) L10N binary buffer into the global store.
 ///
 /// `already_verified`: if `true`, the data was cryptographically verified at build time.
@@ -697,16 +783,9 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut locales, fallback_chain, lazy_cache, mut offset_maps) = read_store(|store| {
-            (
-                Arc::clone(&store.locales),
-                Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
-            )
-        });
-        let new_vec = Arc::make_mut(&mut locales);
-        let offset_map = offset_maps_mut(&mut offset_maps);
+        let mut snap = read_store(store_snapshot);
+        let new_vec = Arc::make_mut(&mut snap.locales);
+        let offset_map = offset_maps_mut(&mut snap.offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
             Arc::new(reader.to_offsets())
@@ -714,6 +793,19 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             Arc::new(HashMap::new())
         };
         offset_map.insert(locale_hash, offset_arc);
+        #[cfg(feature = "debug-keys")]
+        if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
+            let table = reader.debug_key_table();
+            if !table.is_empty() {
+                let dk = snap
+                    .debug_keys
+                    .get_or_insert_with(|| Arc::new(HashMap::new()));
+                let map = Arc::make_mut(dk);
+                for (hash, name) in table {
+                    map.insert(hash, Arc::from(name.as_str()));
+                }
+            }
+        }
         let entry = (
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
@@ -722,12 +814,11 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             Ok(pos) => new_vec[pos] = entry,
             Err(pos) => new_vec.insert(pos, entry),
         }
-        swap_store(TranslationStore {
-            locales,
-            fallback_chain,
-            lazy_cache,
-            offset_maps,
-        });
+        let ns_map = snap
+            .loaded_namespaces
+            .get_or_insert_with(|| Arc::new(HashMap::new()));
+        Arc::make_mut(ns_map).remove(&locale_hash);
+        swap_store(build_store(snap));
         emit_locale_changed(locale_str);
         true
     }
@@ -1300,6 +1391,9 @@ mod store_extra_tests {
                 fallback_chain: chain,
                 lazy_cache: None,
                 offset_maps: None,
+                #[cfg(feature = "debug-keys")]
+                debug_keys: None,
+                loaded_namespaces: None,
             });
         }
         #[cfg(not(feature = "std"))]

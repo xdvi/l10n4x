@@ -137,6 +137,7 @@ fn test_translate_helper_and_macro() {
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
+        loaded_namespaces: None,
     };
     swap_store(store);
 
@@ -158,31 +159,23 @@ fn test_lock_free_concurrency_rcu() {
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
+        loaded_namespaces: None,
     };
     swap_store(initial_store);
 
     let active = Arc::new(core::sync::atomic::AtomicBool::new(true));
     let active_clone = active.clone();
 
-    // Spawn a background locale swapper (dynamic reloads)
+    // Spawn a background reloader using the public load API (thread-safe writers)
     let swapper = thread::spawn(move || {
+        use l10n4x_core::binary_format::{fnv1a_64, pack_l10n, RUNTIME_VERSION};
+        use l10n4x_core::loader::try_load_raw_bytes;
+        use std::collections::BTreeMap;
         while active_clone.load(core::sync::atomic::Ordering::Relaxed) {
-            let mut mock_data = Vec::new();
-            mock_data.extend_from_slice(b"L10N");
-            mock_data.extend_from_slice(&1u32.to_be_bytes());
-            mock_data.extend_from_slice(&16u32.to_be_bytes()); // index offset
-            mock_data.extend_from_slice(&0u32.to_be_bytes()); // count
-
-            let store = TranslationStore {
-                locales: Arc::new(vec![(
-                    "en".to_string(),
-                    StoreData::Owned(Arc::new(mock_data)),
-                )]),
-                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-                lazy_cache: None,
-                offset_maps: None,
-            };
-            swap_store(store);
+            let mut entries = BTreeMap::new();
+            entries.insert(fnv1a_64(b"reload.key"), b"v".to_vec());
+            let bytes = pack_l10n(&entries, RUNTIME_VERSION, None);
+            let _ = try_load_raw_bytes("en", bytes);
             thread::yield_now();
         }
     });
@@ -223,6 +216,7 @@ fn test_ebr_stress() {
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
+        loaded_namespaces: None,
     };
     swap_store(initial_store);
 
@@ -250,6 +244,7 @@ fn test_ebr_stress() {
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
                 lazy_cache: None,
                 offset_maps: None,
+                loaded_namespaces: None,
             };
             swap_store(store);
             count = count.wrapping_add(1);
@@ -293,6 +288,7 @@ fn test_ebr_stress() {
 
 #[test]
 fn test_load_pak_lazy_then_translate() {
+    let _lock = TEST_MUTEX.lock().unwrap();
     use l10n4x_core::integrity;
     use l10n4x_core::loader::try_load_pak_lazy;
     use l10n4x_core::store::{clear_translations, translate};
