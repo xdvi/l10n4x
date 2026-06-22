@@ -156,7 +156,7 @@ mod tests {
         let enc_key = [9u8; 32];
         assert!(encryption::set_decrypt_key(&enc_key));
 
-        let body = build_unsigned(b"payload");
+        let body = build_unsigned(b"payload", None);
         let sig = [0u8; 64];
         let signed = seal(&body, &sig);
         let wrapped = wrap_encrypted(&signed).unwrap();

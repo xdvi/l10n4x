@@ -92,7 +92,7 @@ pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let (message, _compressed, signature) = match crate::pak::parse_signed(&signed) {
+    let (message, _compressed, signature, _parent) = match crate::pak::parse_signed(&signed) {
         Ok(p) => p,
         Err(_) => return false,
     };
