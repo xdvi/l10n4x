@@ -1,4 +1,4 @@
-use l10n4x_core::binary_format::BinaryFormatReader;
+use l10n4x_core::binary_format::{BinaryFormatReader, fnv1a_64};
 
 use l10n4x_core::formatter::{format_message, PluralCategory};
 use l10n4x_core::plural_rules::get_plural_category;
@@ -31,15 +31,13 @@ fn test_binary_format_reader_mock() {
     data.extend_from_slice(b"val_b");
 
     let index_offset = data.len();
-    // entry 1: key "a" (16, 1), val "val_a" (17, 5)
-    data.extend_from_slice(&16u32.to_be_bytes());
-    data.extend_from_slice(&1u32.to_be_bytes());
+    // entry 1: hash("a"), val "val_a" (offset 17, len 5)
+    data.extend_from_slice(&fnv1a_64(b"a").to_be_bytes());
     data.extend_from_slice(&17u32.to_be_bytes());
     data.extend_from_slice(&5u32.to_be_bytes());
 
-    // entry 2: key "b" (22, 1), val "val_b" (23, 5)
-    data.extend_from_slice(&22u32.to_be_bytes());
-    data.extend_from_slice(&1u32.to_be_bytes());
+    // entry 2: hash("b"), val "val_b" (offset 23, len 5)
+    data.extend_from_slice(&fnv1a_64(b"b").to_be_bytes());
     data.extend_from_slice(&23u32.to_be_bytes());
     data.extend_from_slice(&5u32.to_be_bytes());
 
@@ -47,9 +45,9 @@ fn test_binary_format_reader_mock() {
     data[8..12].copy_from_slice(&(index_offset as u32).to_be_bytes());
 
     let reader = BinaryFormatReader::new(&data).unwrap();
-    assert_eq!(reader.lookup("a"), Some(b"val_a".as_slice()));
-    assert_eq!(reader.lookup("b"), Some(b"val_b".as_slice()));
-    assert_eq!(reader.lookup("c"), None);
+    assert_eq!(reader.lookup(fnv1a_64(b"a")), Some(b"val_a".as_slice()));
+    assert_eq!(reader.lookup(fnv1a_64(b"b")), Some(b"val_b".as_slice()));
+    assert_eq!(reader.lookup(fnv1a_64(b"c")), None);
 }
 
 #[test]
