@@ -27,32 +27,110 @@ thread_local! {
     static TRANSLATE_BUF: RefCell<String> = const { RefCell::new(String::new()) };
 }
 
+/// Fast cache key for param-free, context-free labels (hot path).
+#[cfg(feature = "std")]
+type FastTranslateCacheKey = (u64, u64);
+
+/// Full cache key: locale hash, key hash, context (`u64::MAX` = none), params hash.
+#[cfg(feature = "std")]
+type TranslateCacheKey = (u64, u64, u64, u64);
+
 #[cfg(feature = "std")]
 thread_local! {
-    static TRANSLATE_CACHE: RefCell<HashMap<(u64, u64), String>> = RefCell::new(HashMap::new());
-    static TRANSLATE_CACHE_ORDER: RefCell<VecDeque<(u64, u64)>> = const { RefCell::new(VecDeque::new()) };
+    static TRANSLATE_CACHE_FAST: RefCell<HashMap<FastTranslateCacheKey, String>> =
+        RefCell::new(HashMap::new());
+    static TRANSLATE_CACHE_FAST_ORDER: RefCell<VecDeque<FastTranslateCacheKey>> =
+        const { RefCell::new(VecDeque::new()) };
+    static TRANSLATE_CACHE: RefCell<HashMap<TranslateCacheKey, Arc<str>>> =
+        RefCell::new(HashMap::new());
+    static TRANSLATE_CACHE_ORDER: RefCell<VecDeque<TranslateCacheKey>> =
+        const { RefCell::new(VecDeque::new()) };
 }
 
 #[cfg(feature = "std")]
-fn cache_translate(locale: &str, key_hash: u64, params: &[(&str, &str)]) -> Option<String> {
-    // Only cache translations without parameters (most repetitive calls: labels, titles)
-    if !params.is_empty() {
-        return None;
+fn hash_params(params: &[(&str, &str)]) -> u64 {
+    if params.is_empty() {
+        return 0;
     }
-    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
-    TRANSLATE_CACHE.with(|cell| {
+    let mut h = 0xcbf29ce484222325u64;
+    for (key, value) in params {
+        h ^= crate::binary_format::fnv1a_64(key.as_bytes());
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= crate::binary_format::fnv1a_64(value.as_bytes());
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+#[cfg(feature = "std")]
+fn translate_cache_key(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+) -> TranslateCacheKey {
+    (
+        crate::binary_format::fnv1a_64(locale.as_bytes()),
+        key_hash,
+        context_hash.unwrap_or(u64::MAX),
+        hash_params(params),
+    )
+}
+
+#[cfg(feature = "std")]
+fn cache_translate_fast(locale_hash: u64, key_hash: u64) -> Option<String> {
+    TRANSLATE_CACHE_FAST.with(|cell| {
         let cache = cell.borrow();
         cache.get(&(locale_hash, key_hash)).cloned()
     })
 }
 
 #[cfg(feature = "std")]
-fn cache_insert(locale: &str, key_hash: u64, params: &[(&str, &str)], result: &str, key_found: bool) {
-    if !key_found || !params.is_empty() {
-        return;
-    }
-    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+fn cache_insert_fast(locale_hash: u64, key_hash: u64, result: &str) {
     let cache_key = (locale_hash, key_hash);
+    TRANSLATE_CACHE_FAST.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        TRANSLATE_CACHE_FAST_ORDER.with(|order_cell| {
+            let mut order = order_cell.borrow_mut();
+            if cache.len() >= TRANSLATE_CACHE_CAPACITY && !cache.contains_key(&cache_key) {
+                let evict_count = TRANSLATE_CACHE_CAPACITY / 4;
+                for _ in 0..evict_count {
+                    if let Some(old_key) = order.pop_front() {
+                        cache.remove(&old_key);
+                    }
+                }
+            }
+            if !cache.contains_key(&cache_key) {
+                order.push_back(cache_key);
+            }
+            cache.insert(cache_key, result.to_string());
+        });
+    });
+}
+
+#[cfg(feature = "std")]
+fn cache_translate_full(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+) -> Option<String> {
+    let cache_key = translate_cache_key(locale, key_hash, context_hash, params);
+    TRANSLATE_CACHE.with(|cell| {
+        let cache = cell.borrow();
+        cache.get(&cache_key).map(|text| text.to_string())
+    })
+}
+
+#[cfg(feature = "std")]
+fn cache_insert_full(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+    result: Arc<str>,
+) {
+    let cache_key = translate_cache_key(locale, key_hash, context_hash, params);
     TRANSLATE_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
         TRANSLATE_CACHE_ORDER.with(|order_cell| {
@@ -68,7 +146,7 @@ fn cache_insert(locale: &str, key_hash: u64, params: &[(&str, &str)], result: &s
             if !cache.contains_key(&cache_key) {
                 order.push_back(cache_key);
             }
-            cache.insert(cache_key, result.to_string());
+            cache.insert(cache_key, result);
         });
     });
 }
@@ -848,7 +926,7 @@ pub fn translate_to_writer_with_status<W: core::fmt::Write>(
 ) -> CoreResult<TranslateStatus> {
     crate::metrics::inc_total_translations();
 
-    #[cfg(feature = "std")]
+    #[cfg(all(feature = "std", debug_assertions))]
     {
         log::debug!("translate: locale={}, key_hash={:#x}", locale, key_hash);
     }
@@ -903,11 +981,14 @@ pub fn translate(
 ) -> String {
     #[cfg(feature = "std")]
     {
-        // Check cache first (only for param-free translations like labels, titles)
-        if context_hash.is_none() {
-            if let Some(cached) = cache_translate(locale, key_hash, params) {
+        let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+        let use_fast_cache = context_hash.is_none() && params.is_empty();
+        if use_fast_cache {
+            if let Some(cached) = cache_translate_fast(locale_hash, key_hash) {
                 return cached;
             }
+        } else if let Some(cached) = cache_translate_full(locale, key_hash, context_hash, params) {
+            return cached;
         }
         let (result, key_found) = TRANSLATE_BUF.with(|cell| {
             let mut guard = cell.borrow_mut();
@@ -920,7 +1001,16 @@ pub fn translate(
                     });
             (core::mem::take(&mut *guard), status.key_found)
         });
-        cache_insert(locale, key_hash, params, &result, key_found);
+        if key_found {
+            if use_fast_cache {
+                cache_insert_fast(locale_hash, key_hash, &result);
+            } else {
+                let shared = Arc::<str>::from(result);
+                let output = shared.to_string();
+                cache_insert_full(locale, key_hash, context_hash, params, shared);
+                return output;
+            }
+        }
         result
     }
     #[cfg(not(feature = "std"))]
@@ -1152,6 +1242,33 @@ mod store_perf_tests {
 #[cfg(test)]
 mod store_extra_tests {
     use super::*;
+
+    fn make_binary_with_keys(entries: &[(&str, &[u8])]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(b"L10N");
+        buf.extend_from_slice(&1u32.to_be_bytes());
+        buf.extend_from_slice(&0u32.to_be_bytes());
+        buf.extend_from_slice(&(entries.len() as u32).to_be_bytes());
+
+        let mut sorted = entries.to_vec();
+        sorted.sort_by_key(|(key, _)| hash(key));
+
+        let mut index_records = Vec::with_capacity(sorted.len());
+        for (key, val) in sorted {
+            let val_offset = buf.len() as u32;
+            buf.extend_from_slice(val);
+            index_records.push((hash(key), val_offset, val.len() as u32));
+        }
+
+        let index_offset = buf.len() as u32;
+        buf[8..12].copy_from_slice(&index_offset.to_be_bytes());
+        for (key_hash, val_offset, val_len) in index_records {
+            buf.extend_from_slice(&key_hash.to_be_bytes());
+            buf.extend_from_slice(&val_offset.to_be_bytes());
+            buf.extend_from_slice(&val_len.to_be_bytes());
+        }
+        buf
+    }
 
     fn make_binary_with_key(key: &str, val: &[u8]) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -1490,17 +1607,39 @@ mod store_extra_tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn translate_cache_skipped_when_params_provided() {
+    fn translate_cache_hit_with_params() {
         let _lock = lock_extra();
         clear_translations();
-        let buf = vec![
-            b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
-            0x00, 0x00,
-        ];
+        load_locale_with_key(
+            "en",
+            "greeting",
+            &[
+                0x01, 0, 0, 0, 3, b'H', b'i', b' ', 0x02, 0, 0, 0, 4, b'n', b'a', b'm', b'e',
+            ],
+        );
+        let key_hash = hash("greeting");
+        let params = &[("name", "World")];
+        let r1 = translate("en", key_hash, None, params);
+        let r2 = translate("en", key_hash, None, params);
+        assert_eq!(r1, "Hi World");
+        assert_eq!(r1, r2);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn translate_cache_hit_with_context() {
+        let _lock = lock_extra();
+        clear_translations();
+        let buf = make_binary_with_keys(&[
+            ("friend", b"friend-default"),
+            ("friend_male", b"friend-male"),
+        ]);
         assert!(crate::loader::load_raw_bytes("en", buf));
-        // With params, cache should be bypassed
-        let r1 = translate("en", hash("greeting"), None, &[("name", "World")]);
-        let r2 = translate("en", hash("greeting"), None, &[("name", "World")]);
+        let key_hash = hash("friend");
+        let ctx_hash = hash("friend_male");
+        let r1 = translate("en", key_hash, Some(ctx_hash), &[]);
+        let r2 = translate("en", key_hash, Some(ctx_hash), &[]);
+        assert_eq!(r1, "friend-male");
         assert_eq!(r1, r2);
     }
 }

@@ -83,6 +83,9 @@ pub enum PluralCategory {
     Other,
 }
 
+/// Build a `BTreeMap` index only when linear scan would cost more than tree lookup.
+const PARAM_INDEX_THRESHOLD: usize = 5;
+
 #[inline]
 fn param_value<'a>(
     params: &[(&'a str, &'a str)],
@@ -118,7 +121,7 @@ pub fn format_message<W: core::fmt::Write>(
         let text = core::str::from_utf8(bytecode).map_err(|_| core::fmt::Error)?;
         return writer.write_str(text);
     }
-    let param_index = if params.len() > 1 {
+    let param_index = if params.len() > PARAM_INDEX_THRESHOLD {
         let mut map = BTreeMap::new();
         for (k, v) in params {
             map.insert(*k, *v);
