@@ -281,7 +281,7 @@ async fn serve_locale_file(
     }
     if lang_pak.ends_with(".json") {
         let locale = lang_pak.trim_end_matches(".json");
-        if sanitize_locale_filename(&lang_pak).is_none() {
+        if sanitize_locale_filename(locale).is_none() {
             return (StatusCode::BAD_REQUEST, "Invalid locale filename").into_response();
         }
         let pak_path = Path::new(&state.output_dir).join(format!("{}.pak", locale));
@@ -945,7 +945,8 @@ fn pseudo_command(
     for file_entry in std::fs::read_dir(&source_path)? {
         let file_entry = file_entry?;
         let fpath = file_entry.path();
-        if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") {
+        let is_json = matches!(fpath.extension().and_then(|e| e.to_str()), Some("json"));
+        if !fpath.is_file() || !is_json {
             continue;
         }
 
@@ -1093,14 +1094,7 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
 
 /// Computes FNV-1a 64-bit hash of `data` and returns it as a 16-char lowercase hex string.
 fn fnv1a_hex(data: &[u8]) -> String {
-    const FNV_OFFSET: u64 = 14695981039346656037;
-    const FNV_PRIME: u64 = 1099511628211;
-    let mut hash = FNV_OFFSET;
-    for &byte in data {
-        hash ^= byte as u64;
-        hash = hash.wrapping_mul(FNV_PRIME);
-    }
-    format!("{:016x}", hash)
+    format!("{:016x}", l10n4x_core::binary_format::fnv1a_64(data))
 }
 
 // ── Existing extract command ────────────────────────────────────────────────
@@ -1156,7 +1150,8 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
         for file_entry in std::fs::read_dir(lang_entry.path())? {
             let file_entry = file_entry?;
             let fpath = file_entry.path();
-            if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") {
+            let is_json = matches!(fpath.extension().and_then(|e| e.to_str()), Some("json"));
+            if !fpath.is_file() || !is_json {
                 continue;
             }
             let ns = fpath.file_stem().unwrap().to_string_lossy().to_string();
@@ -1596,7 +1591,13 @@ mod path_safety_tests {
     fn accepts_simple_locale_pak() {
         assert!(sanitize_locale_filename("en.pak").is_some());
         assert!(sanitize_locale_filename("zh-CN.pak").is_some());
-        assert!(sanitize_locale_filename("pt_BR.json").is_some());
+        assert!(sanitize_locale_filename("en").is_some());
+        assert!(sanitize_locale_filename("pt_BR").is_some());
+    }
+
+    #[test]
+    fn rejects_locale_stem_with_path_traversal() {
+        assert!(sanitize_locale_filename("../en").is_none());
     }
 
     #[test]
@@ -1665,21 +1666,16 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
         Commands::Generate { target } => {
-            if ![
-                "go",
-                "typescript",
-                "python",
-                "c",
-                "flutter",
-                "dart",
-                "vue",
-                "svelte",
-            ]
-            .contains(&target.as_str())
-            {
+            let normalized = if target == "dart" {
+                "flutter"
+            } else {
+                target.as_str()
+            };
+            if !targets::SUPPORTED_TARGETS.contains(&normalized) {
                 anyhow::bail!(
-                    "Unsupported target '{}'. Supported targets are: go, typescript, python, c, flutter, dart, vue, svelte.",
-                    target
+                    "Unsupported target '{}'. Supported targets are: {}.",
+                    target,
+                    targets::SUPPORTED_TARGETS.join(", ")
                 );
             }
             let config = load_config()?;
@@ -1687,7 +1683,14 @@ async fn main() -> Result<(), anyhow::Error> {
             let filtered: Vec<Target> = config
                 .targets
                 .into_iter()
-                .filter(|t| t.r#type == target)
+                .filter(|t| {
+                    let cfg_type = if t.r#type == "dart" {
+                        "flutter"
+                    } else {
+                        t.r#type.as_str()
+                    };
+                    cfg_type == normalized
+                })
                 .collect();
             if filtered.is_empty() {
                 anyhow::bail!("No target matching '{}' found in configuration.", target);

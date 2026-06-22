@@ -71,7 +71,12 @@ pub fn generate_bindings(
         let out_dir = Path::new(&target.out_dir);
         fs::create_dir_all(out_dir)?;
 
-        match target.r#type.as_str() {
+        let target_type = if target.r#type == "dart" {
+            "flutter"
+        } else {
+            target.r#type.as_str()
+        };
+        match target_type {
             "go" => {
                 targets::go::generate(out_dir, &key_pairs, &target.options, &ctx, to_pascal_case)?;
             }

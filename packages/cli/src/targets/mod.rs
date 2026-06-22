@@ -1,3 +1,15 @@
+/// Canonical binding targets accepted by `generate` and documented in the CLI.
+pub const SUPPORTED_TARGETS: &[&str] = &[
+    "go",
+    "typescript",
+    "python",
+    "c",
+    "flutter",
+    "angular",
+    "vue",
+    "svelte",
+];
+
 pub mod angular;
 pub mod c;
 pub mod flutter;

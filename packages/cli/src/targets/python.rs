@@ -90,19 +90,19 @@ class L10n4cParam(ctypes.Structure):
 
 def _setup_signatures(lib: ctypes.CDLL) -> None:
     lib.l10n4c_set_verify_key.argtypes    = [ctypes.POINTER(ctypes.c_uint8), ctypes.c_size_t]
-    lib.l10n4c_set_verify_key.restype     = ctypes.c_bool
+    lib.l10n4c_set_verify_key.restype     = ctypes.c_int32
     lib.l10n4c_set_fallback_locale.argtypes = [ctypes.c_char_p]
-    lib.l10n4c_set_fallback_locale.restype  = None
+    lib.l10n4c_set_fallback_locale.restype  = ctypes.c_int32
     lib.l10n4c_load_pak_locale.argtypes   = [ctypes.c_char_p, ctypes.c_char_p]
     lib.l10n4c_load_pak_locale.restype    = ctypes.c_int32
     lib.l10n4c_load_pak_directory.argtypes = [ctypes.c_char_p]
-    lib.l10n4c_load_pak_directory.restype  = ctypes.c_bool
+    lib.l10n4c_load_pak_directory.restype  = ctypes.c_int32
     lib.l10n4c_translate_with_params_alloc.argtypes = [
-        ctypes.c_char_p, ctypes.c_char_p,
+        ctypes.c_char_p, ctypes.c_uint64,
         ctypes.POINTER(L10n4cParam), ctypes.c_size_t,
     ]
     lib.l10n4c_translate_with_params_alloc.restype = ctypes.c_char_p
-    lib.l10n4c_translate_alloc.argtypes   = [ctypes.c_char_p, ctypes.c_char_p]
+    lib.l10n4c_translate_alloc.argtypes   = [ctypes.c_char_p, ctypes.c_uint64]
     lib.l10n4c_translate_alloc.restype    = ctypes.c_char_p
     lib.l10n4c_free_string.argtypes       = [ctypes.c_char_p]
     lib.l10n4c_free_string.restype        = None
@@ -116,33 +116,33 @@ def set_verify_key(key_hex: str) -> bool:
         raise ValueError("verify key must be 64 hex characters (32 bytes)")
     raw = bytes.fromhex(key_hex)
     buf = (ctypes.c_uint8 * 32)(*raw)
-    return bool(_get_lib().l10n4c_set_verify_key(buf, 32))
+    return _get_lib().l10n4c_set_verify_key(buf, 32) == L10nErrors.OK
 
-def set_fallback_locale(locale: str) -> None:
-    _get_lib().l10n4c_set_fallback_locale(locale.encode("utf-8"))
+def set_fallback_locale(locale: str) -> int:
+    return int(_get_lib().l10n4c_set_fallback_locale(locale.encode("utf-8")))
 
 def load_pak_locale(locale: str, path: str) -> int:
     return int(_get_lib().l10n4c_load_pak_locale(
         locale.encode("utf-8"), path.encode("utf-8")
     ))
 
-def load_pak_directory(directory: str) -> bool:
-    return bool(_get_lib().l10n4c_load_pak_directory(directory.encode("utf-8")))
+def load_pak_directory(directory: str) -> int:
+    return int(_get_lib().l10n4c_load_pak_directory(directory.encode("utf-8")))
 
 def translate(key: "LocaleKey", locale: str = "en", **kwargs: str) -> str:
     lib = _get_lib()
     locale_b = locale.encode("utf-8")
-    key_b    = str(key.value).encode("utf-8")
+    key_hash = ctypes.c_uint64(key.value)
 
     if kwargs:
         params = [L10n4cParam(k.encode("utf-8"), str(v).encode("utf-8")) for k, v in kwargs.items()]
         arr    = (L10n4cParam * len(params))(*params)
-        ptr    = lib.l10n4c_translate_with_params_alloc(locale_b, key_b, arr, len(params))
+        ptr    = lib.l10n4c_translate_with_params_alloc(locale_b, key_hash, arr, len(params))
     else:
-        ptr = lib.l10n4c_translate_alloc(locale_b, key_b)
+        ptr = lib.l10n4c_translate_alloc(locale_b, key_hash)
 
     if not ptr:
-        return str(key.value)
+        return f"{{key.value:#x}}"
     result = ctypes.string_at(ptr).decode("utf-8")
     lib.l10n4c_free_string(ptr)
     return result
@@ -199,5 +199,13 @@ mod tests {
     fn contains_load_pak_locale() {
         let code = run_generate(&["k"]);
         assert!(code.contains("l10n4c_load_pak_locale"));
+    }
+
+    #[test]
+    fn translate_uses_uint64_key_hash() {
+        let code = run_generate(&["greeting"]);
+        assert!(code.contains("ctypes.c_uint64"));
+        assert!(code.contains("key.value"));
+        assert!(!code.contains("str(key.value).encode"));
     }
 }
