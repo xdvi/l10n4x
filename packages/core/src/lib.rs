@@ -15,6 +15,10 @@
 
 extern crate alloc;
 
+/// Structured error types for core operations.
+pub mod error;
+pub use error::{CoreError, CoreResult};
+
 /// Custom binary package format parsing and search routines.
 pub mod binary_format;
 /// Optional AES-GCM encryption (`L10E` envelope).
@@ -28,6 +32,12 @@ pub mod formatter;
 pub mod plural_rules;
 /// Locale-aware number formatting (decimal, percent, integer styles).
 pub mod number_format;
+/// Locale-aware date and time formatting (date, time, datetime styles).
+pub mod date_format;
+/// Locale-aware relative time formatting (seconds ago, in X days, etc.).
+pub mod reltime;
+/// Locale-aware list formatting ("A, B, and C").
+pub mod list_format;
 /// Ed25519 signing and verification for `.pak` integrity.
 pub mod integrity;
 /// Decompression and in-memory pak loading.
@@ -37,8 +47,15 @@ pub mod pak;
 pub(crate) mod reclaim;
 /// Thread-safe RCU store swap and lookup management.
 pub mod store;
+pub use store::{init_embedded, load_static_bytes, StoreData};
 #[cfg(test)]
 pub(crate) mod test_fixtures;
+
+/// Diagnostic counters for telemetry.
+pub mod metrics;
+
+#[cfg(feature = "std")]
+pub use formatter::{register_formatter, format_with_custom, CustomFormatter};
 
 /// Macro helper to build a zero-cost stack-allocated slice of key-value parameters.
 /// Useful for passing variables to the translation function without heap allocations.

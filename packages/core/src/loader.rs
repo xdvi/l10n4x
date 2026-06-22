@@ -41,6 +41,12 @@ pub fn load_pak_locale(locale_str: &str, path_str: &str) -> bool {
     }
 }
 
+/// Loads a static (compile-time embedded) L10N binary buffer into the global store.
+/// Convenience wrapper around `store::load_static_bytes`.
+pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
+    crate::store::load_static_bytes(locale_str, data, already_verified)
+}
+
 /// Scans a directory for all `.pak` files and automatically loads them (requires std).
 #[cfg(feature = "std")]
 pub fn load_pak_directory(dir_path_str: &str) -> bool {

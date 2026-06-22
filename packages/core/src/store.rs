@@ -4,6 +4,7 @@ use crate::error::CoreResult;
 use crate::formatter::format_message;
 use alloc::boxed::Box;
 use alloc::string::String;
+use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicPtr, Ordering};
@@ -302,6 +303,63 @@ pub fn key_exists(locale: &str, key: &str, context: Option<&str>) -> bool {
 /// Returns `true` if translations for `locale` are loaded.
 pub fn locale_loaded(locale: &str) -> bool {
     read_store(|store| store.lookup(locale).is_some())
+}
+
+/// Loads a static (compile-time embedded) L10N binary buffer into the global store.
+///
+/// `already_verified`: if `true`, the data was cryptographically verified at build time.
+///   Runtime will NOT re-verify it. This follows Rule 2 of the static embed contract.
+///   If `false`, the data is treated as unverified (conservative default).
+///
+/// Unlike `load_raw_bytes`, this does NOT allocate a copy of the data buffer —
+/// the `&'static [u8]` is stored directly in the `StoreData::Static` variant.
+///
+/// Compatible with `no_std + alloc` (no filesystem I/O required).
+pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
+    crate::metrics::inc_locale_loads();
+    let (mut new_vec, fallback_chain) = read_store(|store| {
+        ((*store.locales).clone(), alloc::sync::Arc::clone(&store.fallback_chain))
+    });
+    let entry = (locale_str.to_string(), StoreData::Static(data, already_verified));
+    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+        Ok(pos) => new_vec[pos] = entry,
+        Err(pos) => new_vec.insert(pos, entry),
+    }
+    swap_store(TranslationStore {
+        locales: Arc::new(new_vec),
+        fallback_chain,
+    });
+    emit_locale_changed(locale_str);
+    true
+}
+
+/// Batch-initializes the store with multiple static (compile-time embedded) locales.
+///
+/// Each entry in `locales` is a `(locale_code, &'static [u8])` pair.
+///
+/// # Security
+///
+/// This function sets `already_verified = true` for all entries. It is the
+/// **responsibility of the build script** (`build.rs`) to verify the Ed25519
+/// signature of each locale's data BEFORE generating the static byte arrays.
+/// See "Signature handling rules" in the design doc
+/// (`docs/superpowers/specs/2026-06-21-compile-time-embedding-design.md` §4b).
+///
+/// If you need to load data that has NOT been verified at build time, call
+/// `load_static_bytes` directly with `already_verified: false`.
+///
+/// # Example
+///
+/// ```ignore
+/// l10n4x_core::store::init_embedded(&[
+///     ("en", include_bytes!("../translations/en.l10n")),
+///     ("es", include_bytes!("../translations/es.l10n")),
+/// ]);
+/// ```
+pub fn init_embedded(locales: &[(&str, &'static [u8])]) {
+    for (locale, data) in locales {
+        load_static_bytes(locale, data, true);
+    }
 }
 
 /// Returns the parent language tag by stripping the last subtag component.
@@ -844,5 +902,84 @@ mod store_extra_tests {
         let after = crate::metrics::format_errors();
         assert_eq!(result, "broken", "bad context bytecode falls through");
         assert!(after >= before, "format_errors should increase for bad context bytecode");
+    }
+
+    #[test]
+    fn load_static_bytes_then_translate() {
+        let _lock = lock_extra();
+        clear_translations();
+
+        let key = b"greeting";
+        let val: &[u8] = &[
+            0x01, 0x00, 0x00, 0x00, 0x05,
+            b'H', b'e', b'l', b'l', b'o',
+        ];
+        let key_off: u32 = 16 + 16;
+        let val_off: u32 = key_off + key.len() as u32;
+
+        let mut data = Vec::with_capacity((val_off + val.len() as u32) as usize);
+        data.extend_from_slice(b"L10N");
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(&16u32.to_be_bytes());
+        data.extend_from_slice(&1u32.to_be_bytes());
+        data.extend_from_slice(&key_off.to_be_bytes());
+        data.extend_from_slice(&(key.len() as u32).to_be_bytes());
+        data.extend_from_slice(&val_off.to_be_bytes());
+        data.extend_from_slice(&(val.len() as u32).to_be_bytes());
+        data.extend_from_slice(key);
+        data.extend_from_slice(val);
+
+        let static_data: &'static [u8] = Box::leak(data.into_boxed_slice());
+        assert!(load_static_bytes("en", static_data, true));
+
+        let result = translate("en", "greeting", None, &[]);
+        assert_eq!(result, "Hello", "should translate from static L10N data");
+    }
+
+    #[test]
+    fn init_embedded_multiple_locales() {
+        let _lock = lock_extra();
+        clear_translations();
+
+        fn make_l10n() -> &'static [u8] {
+            let buf = vec![
+                b'L', b'1', b'0', b'N',
+                0x00, 0x00, 0x00, 0x01,
+                0x00, 0x00, 0x00, 0x10,
+                0x00, 0x00, 0x00, 0x00,
+            ];
+            Box::leak(buf.into_boxed_slice())
+        }
+
+        let en_data = make_l10n();
+        let es_data = make_l10n();
+        init_embedded(&[("en", en_data), ("es", es_data)]);
+        assert!(locale_loaded("en"));
+        assert!(locale_loaded("es"));
+    }
+
+    #[test]
+    fn static_and_owned_coexist() {
+        let _lock = lock_extra();
+        clear_translations();
+
+        let static_en: &'static [u8] = Box::leak(vec![
+            b'L', b'1', b'0', b'N',
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x10,
+            0x00, 0x00, 0x00, 0x00,
+        ].into_boxed_slice());
+        assert!(load_static_bytes("en", static_en, true));
+
+        let buf = vec![
+            b'L', b'1', b'0', b'N',
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x10,
+            0x00, 0x00, 0x00, 0x00,
+        ];
+        assert!(crate::loader::load_raw_bytes("fr", &buf));
+
+        assert!(locale_loaded("en"));
+        assert!(locale_loaded("fr"));
     }
 }
