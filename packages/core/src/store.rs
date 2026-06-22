@@ -175,10 +175,10 @@ pub struct TranslationStore {
     pub fallback_chain: Arc<[Arc<str>]>,
     /// Per-locale lazy decompression cache. Key: locale_hash.
     #[cfg(feature = "std")]
-    pub lazy_cache: LazyDecompressCache,
+    pub lazy_cache: Arc<LazyDecompressCache>,
     /// Per-locale O(1) offset maps. Key: locale_hash. Value: Arc<HashMap<key_hash -> (offset, len)>>.
     #[cfg(feature = "std")]
-    pub offset_maps: HashMap<u64, OffsetMap>,
+    pub offset_maps: Arc<HashMap<u64, OffsetMap>>,
 }
 
 impl Default for TranslationStore {
@@ -187,9 +187,9 @@ impl Default for TranslationStore {
             locales: Arc::new(Vec::new()),
             fallback_chain: default_chain(),
             #[cfg(feature = "std")]
-            lazy_cache: HashMap::new(),
+            lazy_cache: Arc::new(HashMap::new()),
             #[cfg(feature = "std")]
-            offset_maps: HashMap::new(),
+            offset_maps: Arc::new(HashMap::new()),
         }
     }
 }
@@ -369,8 +369,8 @@ pub fn set_fallback_chain(chain: &[&str]) {
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
+                Arc::clone(&store.lazy_cache),
+                Arc::clone(&store.offset_maps),
             )
         });
         swap_store(TranslationStore {
@@ -419,8 +419,8 @@ pub fn clear_translations() {
         swap_store(TranslationStore {
             locales: Arc::new(Vec::new()),
             fallback_chain: chain,
-            lazy_cache: HashMap::new(),
-            offset_maps: HashMap::new(),
+            lazy_cache: Arc::new(HashMap::new()),
+            offset_maps: Arc::new(HashMap::new()),
         });
     }
     #[cfg(not(feature = "std"))]
@@ -590,22 +590,23 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut locales, fallback_chain, _lazy_cache, mut offset_maps) = read_store(|store| {
+        let (mut locales, fallback_chain, lazy_cache, mut offset_maps) = read_store(|store| {
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
+                Arc::clone(&store.lazy_cache),
+                Arc::clone(&store.offset_maps),
             )
         });
         let new_vec = Arc::make_mut(&mut locales);
+        let offset_map = Arc::make_mut(&mut offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
             Arc::new(reader.to_offsets())
         } else {
             Arc::new(HashMap::new())
         };
-        offset_maps.insert(locale_hash, offset_arc);
+        offset_map.insert(locale_hash, offset_arc);
         let entry = (
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
@@ -617,7 +618,7 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
         swap_store(TranslationStore {
             locales,
             fallback_chain,
-            lazy_cache: _lazy_cache,
+            lazy_cache,
             offset_maps,
         });
         emit_locale_changed(locale_str);
@@ -886,7 +887,7 @@ pub fn translate(
                         key_found: false,
                         locale_loaded: false,
                     });
-            (guard.clone(), status.key_found)
+            (core::mem::take(&mut *guard), status.key_found)
         });
         cache_insert(locale, key_hash, params, &result, key_found);
         result
@@ -1149,8 +1150,8 @@ mod store_extra_tests {
             swap_store(TranslationStore {
                 locales,
                 fallback_chain: chain,
-                lazy_cache: HashMap::new(),
-                offset_maps: HashMap::new(),
+                lazy_cache: Arc::new(HashMap::new()),
+                offset_maps: Arc::new(HashMap::new()),
             });
         }
         #[cfg(not(feature = "std"))]

@@ -223,6 +223,15 @@ fn bench_lookup(c: &mut Criterion) {
             swap_store(black_box(store));
         });
     });
+
+    let welcome_bc = [0x01, 0, 0, 0, 6, b'H', b'e', b'l', b'l', b'o', b'!'];
+    let reload_bytes = make_binary_with_keys(&[("common.welcome", &welcome_bc)]);
+    setup_locales();
+    c.bench_function("load_raw_bytes_reload", |b| {
+        b.iter(|| {
+            let _ = load_raw_bytes(black_box("es"), black_box(reload_bytes.clone()));
+        });
+    });
 }
 
 criterion_group!(benches, bench_lookup);

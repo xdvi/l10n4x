@@ -136,8 +136,8 @@ fn test_translate_helper_and_macro() {
     let store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(data)))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: HashMap::new(),
-        offset_maps: HashMap::new(),
+        lazy_cache: Arc::new(HashMap::new()),
+        offset_maps: Arc::new(HashMap::new()),
     };
     swap_store(store);
 
@@ -157,8 +157,8 @@ fn test_lock_free_concurrency_rcu() {
     let initial_store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: HashMap::new(),
-        offset_maps: HashMap::new(),
+        lazy_cache: Arc::new(HashMap::new()),
+        offset_maps: Arc::new(HashMap::new()),
     };
     swap_store(initial_store);
 
@@ -180,8 +180,8 @@ fn test_lock_free_concurrency_rcu() {
                     StoreData::Owned(Arc::new(mock_data)),
                 )]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-                lazy_cache: HashMap::new(),
-                offset_maps: HashMap::new(),
+                lazy_cache: Arc::new(HashMap::new()),
+                offset_maps: Arc::new(HashMap::new()),
             };
             swap_store(store);
             thread::yield_now();
@@ -222,8 +222,8 @@ fn test_ebr_stress() {
     let initial_store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: HashMap::new(),
-        offset_maps: HashMap::new(),
+        lazy_cache: Arc::new(HashMap::new()),
+        offset_maps: Arc::new(HashMap::new()),
     };
     swap_store(initial_store);
 
@@ -249,8 +249,8 @@ fn test_ebr_stress() {
                     ),
                 ]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-                lazy_cache: HashMap::new(),
-                offset_maps: HashMap::new(),
+                lazy_cache: Arc::new(HashMap::new()),
+                offset_maps: Arc::new(HashMap::new()),
             };
             swap_store(store);
             count = count.wrapping_add(1);

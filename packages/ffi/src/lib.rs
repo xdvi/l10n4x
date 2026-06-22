@@ -27,6 +27,7 @@ pub use error::*;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
+use std::sync::Arc;
 
 use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::encryption;
@@ -67,7 +68,7 @@ pub struct L10n4cParam {
 }
 
 struct TranslateOutcome {
-    text: String,
+    text: Arc<str>,
     key_found: bool,
     locale_loaded: bool,
 }
@@ -77,7 +78,7 @@ struct CachedTranslate {
     key_hash: u64,
     context_hash: Option<u64>,
     params_key: u64,
-    text: String,
+    text: Arc<str>,
     key_found: bool,
     locale_loaded: bool,
 }
@@ -96,6 +97,8 @@ thread_local! {
         })
     };
 }
+
+const MAX_STACK_PARAMS: usize = 8;
 
 fn hash_params(params: &[(&str, &str)]) -> u64 {
     let mut h = 0xcbf29ce484222325u64;
@@ -123,7 +126,7 @@ fn cache_lookup(
             && entry.params_key == params_key
         {
             Some(TranslateOutcome {
-                text: entry.text.clone(),
+                text: Arc::clone(&entry.text),
                 key_found: entry.key_found,
                 locale_loaded: entry.locale_loaded,
             })
@@ -146,7 +149,7 @@ fn cache_store(
             key_hash,
             context_hash,
             params_key,
-            text: outcome.text.clone(),
+            text: Arc::clone(&outcome.text),
             key_found: outcome.key_found,
             locale_loaded: outcome.locale_loaded,
         });
@@ -187,7 +190,7 @@ fn resolve_translation(
         locale_loaded: false,
     });
     let outcome = TranslateOutcome {
-        text: resolved,
+        text: Arc::from(resolved),
         key_found: status.key_found,
         locale_loaded: status.locale_loaded,
     };
@@ -250,12 +253,41 @@ fn fill_typed_params(
 
     storage.reserve(param_count);
     let slice = unsafe { std::slice::from_raw_parts(params, param_count) };
-    for p in slice {
+    for (i, p) in slice.iter().enumerate() {
         let key = cstr_to_str(p.key)?;
         let value = cstr_to_str(p.value)?;
-        storage.push((key.to_string(), value.to_string()));
+        if i < storage.len() {
+            storage[i].0.clear();
+            storage[i].0.push_str(key);
+            storage[i].1.clear();
+            storage[i].1.push_str(value);
+        } else {
+            storage.push((key.to_owned(), value.to_owned()));
+        }
     }
+    storage.truncate(param_count);
     Ok(())
+}
+
+fn resolve_with_param_pairs(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    pairs: &[(String, String)],
+) -> TranslateOutcome {
+    if pairs.len() <= MAX_STACK_PARAMS {
+        let mut buf = [("", ""); MAX_STACK_PARAMS];
+        for (i, (k, v)) in pairs.iter().enumerate() {
+            buf[i] = (k.as_str(), v.as_str());
+        }
+        resolve_translation(locale, key_hash, context_hash, &buf[..pairs.len()])
+    } else {
+        let refs: Vec<(&str, &str)> = pairs
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+        resolve_translation(locale, key_hash, context_hash, &refs)
+    }
 }
 
 fn translate_core(
@@ -271,16 +303,11 @@ fn translate_core(
             None => Ok(resolve_translation(&scratch.locale, key_hash, context_hash, &[])),
             Some((ptr, count)) => {
                 fill_typed_params(ptr, count, &mut scratch.param_pairs)?;
-                let refs: Vec<(&str, &str)> = scratch
-                    .param_pairs
-                    .iter()
-                    .map(|(k, v)| (k.as_str(), v.as_str()))
-                    .collect();
-                Ok(resolve_translation(
+                Ok(resolve_with_param_pairs(
                     &scratch.locale,
                     key_hash,
                     context_hash,
-                    &refs,
+                    &scratch.param_pairs,
                 ))
             }
         }

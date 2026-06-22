@@ -1,6 +1,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use l10n4c::{
-    l10n4c_clear, l10n4c_translate, l10n4c_translate_required_size, L10N4C_OK,
+    l10n4c_clear, l10n4c_translate, l10n4c_translate_required_size,
+    l10n4c_translate_with_params, l10n4c_translate_with_params_required_size, L10n4cParam,
+    L10N4C_OK,
 };
 use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::loader::load_raw_bytes;
@@ -83,6 +85,64 @@ fn bench_ffi_translate(c: &mut Criterion) {
                 black_box(key_hash),
                 black_box(buf.as_mut_ptr()),
                 black_box(buf.len()),
+            );
+            black_box(status);
+        });
+    });
+
+    let name_bc = [
+        0x01, 0, 0, 0, 6, b'H', b'e', b'l', b'l', b'o', b' ', 0x02, 0, 0, 0, 4, b'n', b'a', b'm',
+        b'e',
+    ];
+    l10n4c_clear();
+    assert!(load_raw_bytes(
+        "en",
+        make_binary_with_key("common.hello_name", &name_bc),
+    ));
+    let hello_name_hash = fnv1a_64(b"common.hello_name");
+    let key_c = CString::new("name").unwrap();
+    let val_c = CString::new("Diego").unwrap();
+    let param = L10n4cParam {
+        key: key_c.as_ptr(),
+        value: val_c.as_ptr(),
+    };
+    let mut params_buf = vec![0u8; 64];
+
+    c.bench_function("ffi_translate_with_params", |b| {
+        b.iter(|| {
+            let status = l10n4c_translate_with_params(
+                black_box(locale.as_ptr()),
+                black_box(hello_name_hash),
+                black_box(&param),
+                black_box(1),
+                black_box(params_buf.as_mut_ptr()),
+                black_box(params_buf.len()),
+            );
+            black_box(status);
+        });
+    });
+
+    let mut out_size = 0usize;
+    assert_eq!(
+        l10n4c_translate_with_params_required_size(
+            locale.as_ptr(),
+            hello_name_hash,
+            &param,
+            1,
+            &mut out_size,
+        ),
+        L10N4C_OK
+    );
+
+    c.bench_function("ffi_translate_with_params_cache_hit", |b| {
+        b.iter(|| {
+            let status = l10n4c_translate_with_params(
+                black_box(locale.as_ptr()),
+                black_box(hello_name_hash),
+                black_box(&param),
+                black_box(1),
+                black_box(params_buf.as_mut_ptr()),
+                black_box(params_buf.len()),
             );
             black_box(status);
         });

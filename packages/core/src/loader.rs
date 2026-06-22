@@ -18,15 +18,17 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut locales, fallback_chain, mut _lazy_cache, mut offset_maps) = read_store(|store| {
+        let (mut locales, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
+                Arc::clone(&store.lazy_cache),
+                Arc::clone(&store.offset_maps),
             )
         });
         let new_vec = Arc::make_mut(&mut locales);
+        let lazy = Arc::make_mut(&mut lazy_cache);
+        let offset_map = Arc::make_mut(&mut offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(&bytes) {
             Arc::new(reader.to_offsets())
@@ -36,19 +38,19 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
         let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
         match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
             Ok(pos) => {
-                _lazy_cache.remove(&locale_hash);
-                offset_maps.insert(locale_hash, offset_arc);
+                lazy.remove(&locale_hash);
+                offset_map.insert(locale_hash, offset_arc);
                 new_vec[pos] = entry;
             }
             Err(pos) => {
-                offset_maps.insert(locale_hash, offset_arc);
+                offset_map.insert(locale_hash, offset_arc);
                 new_vec.insert(pos, entry);
             }
         }
         swap_store(TranslationStore {
             locales,
             fallback_chain,
-            lazy_cache: _lazy_cache,
+            lazy_cache,
             offset_maps,
         });
         emit_locale_changed(locale_str);
@@ -109,11 +111,13 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
         (
             Arc::clone(&store.locales),
             Arc::clone(&store.fallback_chain),
-            store.lazy_cache.clone(),
-            store.offset_maps.clone(),
+            Arc::clone(&store.lazy_cache),
+            Arc::clone(&store.offset_maps),
         )
     });
     let new_vec = Arc::make_mut(&mut locales);
+    let lazy = Arc::make_mut(&mut lazy_cache);
+    let offset_map = Arc::make_mut(&mut offset_maps);
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
     let entry = (
         locale_str.to_string(),
@@ -121,17 +125,16 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     );
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
         Ok(pos) => {
-            lazy_cache.remove(&locale_hash);
-            offset_maps.remove(&locale_hash);
-            lazy_cache.insert(locale_hash, Arc::new(OnceLock::new()));
-            offset_maps.insert(locale_hash, Arc::new(HashMap::new()));
+            lazy.remove(&locale_hash);
+            offset_map.remove(&locale_hash);
+            lazy.insert(locale_hash, Arc::new(OnceLock::new()));
+            offset_map.insert(locale_hash, Arc::new(HashMap::new()));
             new_vec[pos] = entry;
         }
         Err(pos) => {
-            lazy_cache
-                .entry(locale_hash)
+            lazy.entry(locale_hash)
                 .or_insert_with(|| Arc::new(OnceLock::new()));
-            offset_maps
+            offset_map
                 .entry(locale_hash)
                 .or_insert_with(|| Arc::new(HashMap::new()));
             new_vec.insert(pos, entry);
