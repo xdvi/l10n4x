@@ -72,3 +72,40 @@ pub fn generate(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::generator::to_pascal_case;
+    use crate::targets::GenerateContext;
+
+    fn test_ctx() -> GenerateContext<'static> {
+        GenerateContext {
+            fallback: "en",
+            output_dir: "",
+            source_dir: "",
+            verify_key_bytes: "000000000000000000000000000000000000000000000000000000000000000000",
+            verify_public_key_hex: "",
+            encrypt: false,
+            encrypt_key_env: "",
+        }
+    }
+
+    #[test]
+    fn generates_key_constants() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["common.welcome".to_string(), "user.name".to_string()];
+        generate(dir.path(), &sorted, &serde_json::Value::Null, &test_ctx(), to_pascal_case).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("keys.go")).unwrap();
+        assert!(content.contains("CommonWelcome"));
+        assert!(content.contains("UserName"));
+    }
+
+    #[test]
+    fn copies_l10n4c_header() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["k".to_string()];
+        generate(dir.path(), &sorted, &serde_json::Value::Null, &test_ctx(), to_pascal_case).unwrap();
+        assert!(dir.path().join("l10n4c.h").exists());
+    }
+}

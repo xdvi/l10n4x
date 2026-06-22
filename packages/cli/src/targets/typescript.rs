@@ -47,10 +47,56 @@ fn ts_decrypt_key_init(encrypt: bool) -> String {
     "  l10n4x_set_decrypt_key(loadDecryptKey(options));\n".to_string()
 }
 
+fn react_block() -> &'static str {
+    r#"
+// ── React integration ─────────────────────────────────────────────────────────
+// Only included when options.react = true in l10n4x.config.json target entry.
+import { useState, useEffect, useCallback } from "react";
+
+interface UseTranslationResult {
+  t: (key: LocaleKey, params?: Record<string, string | number>) => string;
+  locale: string;
+  setLocale: (locale: string) => void;
+  isLoading: boolean;
+}
+
+/**
+ * React hook for l10n4x translations.
+ *
+ * @example
+ * const { t, setLocale } = useTranslation("en");
+ * return <h1>{t("welcome.title")}</h1>;
+ */
+export function useTranslation(initialLocale = _FALLBACK_LOCALE): UseTranslationResult {
+  const [locale, setLocaleState] = useState(initialLocale);
+  const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    setIsLoading(true);
+    loadLocale(locale)
+      .then(() => setIsLoading(false))
+      .catch(() => setIsLoading(false));
+  }, [locale]);
+
+  const setLocale = useCallback((next: string) => {
+    setLocaleState(next);
+  }, []);
+
+  const tFn = useCallback(
+    (key: LocaleKey, params?: Record<string, string | number>) =>
+      t(locale, key as LocaleKey, params),
+    [locale]
+  );
+
+  return { t: tFn, locale, setLocale, isLoading };
+}
+"#
+}
+
 pub fn generate(
     out_dir: &Path,
     sorted_keys: &[String],
-    _options: &Value,
+    options: &Value,
     ctx: &GenerateContext<'_>,
     params_map: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
@@ -83,6 +129,12 @@ pub fn generate(
         }
     }
 
+    let react = options
+        .get("react")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let react_block_content = if react { react_block() } else { "" };
+
     let i18n_content = TS_TEMPLATE
         .replace("{{KEY_DEFINITIONS}}", &key_definitions)
         .replace("{{FALLBACK_LOCALE}}", ctx.fallback)
@@ -90,7 +142,8 @@ pub fn generate(
         .replace("{{VERIFY_PUBLIC_KEY}}", ctx.verify_public_key_hex)
         .replace("{{ENCRYPT_BLOCK}}", &ts_encrypt_block(ctx))
         .replace("{{DECRYPT_KEY_IMPORT}}", ts_decrypt_key_import(ctx.encrypt))
-        .replace("{{DECRYPT_KEY_INIT}}", &ts_decrypt_key_init(ctx.encrypt));
+        .replace("{{DECRYPT_KEY_INIT}}", &ts_decrypt_key_init(ctx.encrypt))
+        .replace("{{REACT_BLOCK}}", react_block_content);
 
     let i18n_content = if !typed_overloads.is_empty() {
         i18n_content.replace(
@@ -106,4 +159,138 @@ pub fn generate(
     println!("Generated TypeScript bindings at '{}'", file_path.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::targets::GenerateContext;
+    use std::collections::HashMap;
+
+    fn test_ctx() -> GenerateContext<'static> {
+        GenerateContext {
+            fallback: "en",
+            output_dir: "",
+            source_dir: "",
+            verify_key_bytes: "000000000000000000000000000000000000000000000000000000000000000000",
+            verify_public_key_hex: "abcd",
+            encrypt: false,
+            encrypt_key_env: "",
+        }
+    }
+
+    fn test_ctx_encrypt() -> GenerateContext<'static> {
+        GenerateContext {
+            fallback: "en",
+            output_dir: "",
+            source_dir: "",
+            verify_key_bytes: "000000000000000000000000000000000000000000000000000000000000000000",
+            verify_public_key_hex: "abcd",
+            encrypt: true,
+            encrypt_key_env: "MY_KEY",
+        }
+    }
+
+    #[test]
+    fn ts_encrypt_block_when_disabled() {
+        let ctx = test_ctx();
+        assert_eq!(ts_encrypt_block(&ctx), "");
+    }
+
+    #[test]
+    fn ts_encrypt_block_when_enabled() {
+        let ctx = test_ctx_encrypt();
+        let block = ts_encrypt_block(&ctx);
+        assert!(block.contains("ENCRYPT_ENABLED = true"));
+        assert!(block.contains("MY_KEY"));
+    }
+
+    #[test]
+    fn ts_decrypt_key_import_disabled() {
+        assert_eq!(ts_decrypt_key_import(false), "");
+    }
+
+    #[test]
+    fn ts_decrypt_key_import_enabled() {
+        assert!(ts_decrypt_key_import(true).contains("l10n4x_set_decrypt_key"));
+    }
+
+    #[test]
+    fn ts_decrypt_key_init_disabled() {
+        assert_eq!(ts_decrypt_key_init(false), "");
+    }
+
+    #[test]
+    fn ts_decrypt_key_init_enabled() {
+        assert!(ts_decrypt_key_init(true).contains("l10n4x_set_decrypt_key"));
+    }
+
+    #[test]
+    fn react_block_content() {
+        assert!(react_block().contains("useTranslation"));
+    }
+
+    #[test]
+    fn generates_type_definitions() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["welcome.title".to_string()];
+        let params = HashMap::new();
+        generate(dir.path(), &sorted, &serde_json::Value::Null, &test_ctx(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("\"welcome.title\""));
+        assert!(content.contains("export function t("));
+    }
+
+    #[test]
+    fn key_definitions_are_typed() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["a.b".to_string(), "c.d".to_string()];
+        let params = HashMap::new();
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("a.b"));
+        assert!(content.contains("c.d"));
+    }
+
+    #[test]
+    fn generates_with_params() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["greeting".to_string()];
+        let mut params = HashMap::new();
+        params.insert("greeting".to_string(), vec!["name".to_string()]);
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("name: string | number"));
+    }
+
+    #[test]
+    fn generates_with_react() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["key".to_string()];
+        let params = HashMap::new();
+        let opts = serde_json::json!({"react": true});
+        generate(dir.path(), &sorted, &opts, &test_ctx(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("useTranslation"));
+    }
+
+    #[test]
+    fn generates_with_encrypt() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["key".to_string()];
+        let params = HashMap::new();
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx_encrypt(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("ENCRYPT_ENABLED"));
+    }
+
+    #[test]
+    fn generates_empty_keys_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec![];
+        let params = HashMap::new();
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
+        assert!(content.contains("string"));
+    }
 }

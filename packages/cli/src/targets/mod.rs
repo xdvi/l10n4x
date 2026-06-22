@@ -1,8 +1,11 @@
+pub mod angular;
 pub mod c;
 pub mod flutter;
 pub mod go;
 pub mod python;
+pub mod svelte;
 pub mod typescript;
+pub mod vue;
 
 /// Shared runtime/build settings passed to binding generators.
 pub struct GenerateContext<'a> {

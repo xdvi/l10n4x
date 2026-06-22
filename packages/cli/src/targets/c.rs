@@ -44,3 +44,30 @@ pub fn generate(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generates_header_and_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["common.welcome".to_string()];
+        generate(dir.path(), &sorted, &Value::Null, |s| s.to_uppercase().replace('.', "_")).unwrap();
+        assert!(dir.path().join("l10n4x_keys.h").exists());
+        assert!(dir.path().join("l10n4x_keys.c").exists());
+        let header = std::fs::read_to_string(dir.path().join("l10n4x_keys.h")).unwrap();
+        assert!(header.contains("L10N4X_COMMON_WELCOME"));
+        assert!(header.contains("l10n4x_key_t"));
+    }
+
+    #[test]
+    fn header_has_include_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["k".to_string()];
+        generate(dir.path(), &sorted, &Value::Null, |s| s.to_string()).unwrap();
+        let header = std::fs::read_to_string(dir.path().join("l10n4x_keys.h")).unwrap();
+        assert!(header.starts_with("// Code generated"));
+        assert!(header.contains("#ifndef L10N4X_KEYS_H"));
+    }
+}

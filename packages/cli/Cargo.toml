@@ -22,7 +22,7 @@ thiserror = "1"
 l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
 l10n4x-core = { version = "0.2.0", path = "../core" }
 tokio-stream = { version = "0.1", features = ["sync"] }
-tower-http = { version = "0.5", features = ["cors"] } # For browser cross-origin dev server requests
+tower-http = { version = "0.5", features = ["cors", "timeout"] } # For browser cross-origin dev server requests
 subtle = "2.5"
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 regex-lite = "0.1"

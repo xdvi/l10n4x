@@ -1,8 +1,11 @@
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
+
+static DEV_SERVER_LOCK: Mutex<()> = Mutex::new(());
 
 fn get_workspace_root() -> std::path::PathBuf {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
@@ -58,10 +61,10 @@ impl Drop for KillOnDrop {
 
 #[test]
 fn test_dev_server_token_auth() {
+    let _lock = DEV_SERVER_LOCK.lock().unwrap();
     let workspace_root = get_workspace_root();
-    let port = 13456;
 
-    let child = Command::new("cargo")
+    let mut child = Command::new("cargo")
         .args([
             "run",
             "-p",
@@ -69,7 +72,7 @@ fn test_dev_server_token_auth() {
             "--",
             "dev",
             "--port",
-            &port.to_string(),
+            "0",
         ])
         .current_dir(&workspace_root)
         .env("L10N4X_DEV_TOKEN", "my-test-token-123")
@@ -78,6 +81,30 @@ fn test_dev_server_token_auth() {
         .stderr(Stdio::piped())
         .spawn()
         .expect("Failed to start cargo run for dev server");
+
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let mut reader = BufReader::new(&mut stdout);
+    let mut line = String::new();
+
+    let port = loop {
+        line.clear();
+        if reader.read_line(&mut line).unwrap() == 0 {
+            let _ = child.kill();
+            let mut stderr_buf = String::new();
+            let _ = stderr.read_to_string(&mut stderr_buf);
+            let _ = child.wait();
+            panic!(
+                "Dev server exited before printing port.\nSTDERR:\n{}",
+                stderr_buf
+            );
+        }
+        if let Some(pos) = line.find("http://localhost:") {
+            let port_part = &line[pos + 17..];
+            let port_str: String = port_part.chars().take_while(|c| c.is_ascii_digit()).collect();
+            break port_str.parse::<u16>().expect("Failed to parse port from stdout");
+        }
+    };
 
     let mut guard = KillOnDrop(Some(child));
 
@@ -104,18 +131,12 @@ fn test_dev_server_token_auth() {
     if !ready {
         let mut child = guard.0.take().unwrap();
         let _ = child.kill();
-        let mut stdout_buf = String::new();
         let mut stderr_buf = String::new();
-        if let Some(mut out) = child.stdout.take() {
-            let _ = out.read_to_string(&mut stdout_buf);
-        }
-        if let Some(mut err) = child.stderr.take() {
-            let _ = err.read_to_string(&mut stderr_buf);
-        }
+        let _ = stderr.read_to_string(&mut stderr_buf);
         let _ = child.wait();
         panic!(
-            "Dev server failed to start or respond within 8 seconds. Last polling diagnostic: {:?}\nSTDOUT:\n{}\nSTDERR:\n{}",
-            last_err, stdout_buf, stderr_buf
+            "Dev server failed to start or respond within 8 seconds. Last polling diagnostic: {:?}\nSTDERR:\n{}",
+            last_err, stderr_buf
         );
     }
 

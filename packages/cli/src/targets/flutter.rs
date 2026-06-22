@@ -101,3 +101,73 @@ pub fn generate(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::targets::GenerateContext;
+
+    fn test_ctx() -> GenerateContext<'static> {
+        GenerateContext {
+            fallback: "en",
+            output_dir: "",
+            source_dir: "",
+            verify_key_bytes: "000000000000000000000000000000000000000000000000000000000000000000",
+            verify_public_key_hex: "",
+            encrypt: false,
+            encrypt_key_env: "",
+        }
+    }
+
+    #[test]
+    fn generates_key_definitions() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["common.welcome".to_string(), "user.name".to_string()];
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), |s| {
+            let pascal: String = s.split('.').map(|part| {
+                let mut c = part.chars();
+                match c.next() {
+                    None => String::new(),
+                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                }
+            }).collect();
+            let mut chars = pascal.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_ascii_lowercase().to_string() + chars.as_str(),
+            }
+        }).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
+        assert!(content.contains("static const String"));
+        assert!(content.contains("commonWelcome"));
+        assert!(content.contains("userName"));
+    }
+
+    #[test]
+    fn generates_helper_methods() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["greeting".to_string()];
+        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), |s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(f) => f.to_ascii_lowercase().to_string() + chars.as_str(),
+            }
+        }).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
+        assert!(content.contains("L10nKeys"));
+    }
+
+    #[test]
+    fn generates_bindings_with_encryption() {
+        let dir = tempfile::tempdir().unwrap();
+        let sorted: Vec<String> = vec!["greeting".to_string()];
+        let mut ctx = test_ctx();
+        ctx.encrypt = true;
+        ctx.encrypt_key_env = "TEST_ENCRYPT_KEY_ENV";
+        generate(dir.path(), &sorted, &Value::Null, &ctx, |s| s.to_string()).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
+        assert!(content.contains("l10n4c_set_decrypt_key"));
+        assert!(content.contains("Platform.environment['TEST_ENCRYPT_KEY_ENV']"));
+    }
+}

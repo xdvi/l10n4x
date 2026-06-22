@@ -155,6 +155,51 @@ pub fn format_verify_key_bytes(hex: &str) -> Result<String, anyhow::Error> {
 }
 
 #[cfg(test)]
+mod verify_key_tests {
+    use super::*;
+
+    #[test]
+    fn parse_verify_public_key_valid() {
+        let hex = "ab".repeat(32);
+        let key = parse_verify_public_key(&hex).unwrap();
+        assert_eq!(key, [0xabu8; 32]);
+    }
+
+    #[test]
+    fn parse_verify_public_key_wrong_length() {
+        assert!(parse_verify_public_key("ab").is_err());
+        assert!(parse_verify_public_key(&"a".repeat(63)).is_err());
+    }
+
+    #[test]
+    fn parse_verify_public_key_invalid_hex() {
+        assert!(parse_verify_public_key(&"zz".repeat(32)).is_err());
+    }
+
+    #[test]
+    fn format_verify_public_key_roundtrip() {
+        let key = [0xabu8; 32];
+        let hex = format_verify_public_key(&key);
+        assert_eq!(hex, "ab".repeat(32));
+        let parsed = parse_verify_public_key(&hex).unwrap();
+        assert_eq!(parsed, key);
+    }
+
+    #[test]
+    fn format_verify_key_bytes_format() {
+        let hex = "ab".repeat(32);
+        let result = format_verify_key_bytes(&hex).unwrap();
+        assert!(result.contains("0xab"));
+        assert!(result.contains(", "));
+    }
+
+    #[test]
+    fn format_verify_key_bytes_invalid_input() {
+        assert!(format_verify_key_bytes("zz").is_err());
+    }
+}
+
+#[cfg(test)]
 mod key_encoding_tests {
     use super::*;
 
@@ -214,5 +259,90 @@ mod key_encoding_tests {
     fn rejects_invalid_hex() {
         let bad = "zz".repeat(32);
         assert!(call_decode(&bad).is_err());
+    }
+}
+
+#[cfg(test)]
+mod config_io_and_env_tests {
+    use super::*;
+    use std::env;
+
+    #[test]
+    fn test_load_save_config_temp() {
+        let temp = tempfile::tempdir().unwrap();
+        let original_dir = env::current_dir().unwrap();
+        env::set_current_dir(temp.path()).unwrap();
+
+        // 1. load_config should fail because it doesn't exist
+        assert!(load_config().is_err());
+
+        // 2. save a valid config
+        let cfg = Config {
+            project: "test".to_string(),
+            source_dir: "src".to_string(),
+            output_dir: "out".to_string(),
+            fallback: "en".to_string(),
+            signing_key_env: "SIGN_KEY".to_string(),
+            verify_public_key: None,
+            encrypt: false,
+            encrypt_key_env: "ENC_KEY".to_string(),
+            cors_origins: None,
+            targets: vec![],
+        };
+        save_config(&cfg).unwrap();
+
+        // 3. load_config should now succeed and match
+        let loaded = load_config().unwrap();
+        assert_eq!(loaded.project, "test");
+
+        env::set_current_dir(original_dir).unwrap();
+    }
+
+    #[test]
+    fn default_key_env_vars() {
+        assert_eq!(default_encrypt_key_env(), "L10N4X_ENCRYPT_KEY");
+        assert_eq!(default_signing_key_env(), "L10N4X_SIGNING_KEY");
+    }
+
+    #[test]
+    fn decode_base64_wrong_decoded_length() {
+        // base64 of 31 zero bytes produces 44 chars but decodes to 31 bytes
+        let thirty_one_bytes = general_purpose::STANDARD.encode(&[0u8; 31]);
+        assert_eq!(thirty_one_bytes.len(), 44);
+        let result = decode_32_byte_key(&thirty_one_bytes, "test");
+        assert!(result.is_err());
+        let msg = format!("{}", result.err().unwrap());
+        assert!(msg.contains("bytes, expected 32"), "msg: {}", msg);
+    }
+
+    #[test]
+    fn test_get_keys_from_env() {
+        let cfg = Config {
+            project: "test".to_string(),
+            source_dir: "src".to_string(),
+            output_dir: "out".to_string(),
+            fallback: "en".to_string(),
+            signing_key_env: "TEST_SIGN_KEY_ENV".to_string(),
+            verify_public_key: None,
+            encrypt: false,
+            encrypt_key_env: "TEST_ENC_KEY_ENV".to_string(),
+            cors_origins: None,
+            targets: vec![],
+        };
+
+        // 1. Env vars not set
+        assert!(get_signing_key(&cfg).is_err());
+        assert!(get_encrypt_key(&cfg).is_err());
+
+        // 2. Set them
+        let key_hex = "ab".repeat(32);
+        env::set_var("TEST_SIGN_KEY_ENV", &key_hex);
+        env::set_var("TEST_ENC_KEY_ENV", &key_hex);
+
+        assert_eq!(get_signing_key(&cfg).unwrap(), [0xab; 32]);
+        assert_eq!(get_encrypt_key(&cfg).unwrap(), [0xab; 32]);
+
+        env::remove_var("TEST_SIGN_KEY_ENV");
+        env::remove_var("TEST_ENC_KEY_ENV");
     }
 }

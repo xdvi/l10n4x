@@ -144,17 +144,54 @@ export async function initializeI18n(options?: {
   await loadLocale(_fallback);
 }
 
-export async function loadLocale(locale: string): Promise<boolean> {
+const CACHE_PREFIX = "l10n4x_pak_";
+
+function cacheKey(locale: string): string {
+  return `${CACHE_PREFIX}${_outputDir}:${locale}`;
+}
+
+async function loadLocaleWithCache(locale: string): Promise<boolean> {
   if (_loadedLocales.has(locale)) return true;
+
+  // Try browser cache (localStorage)
+  if (typeof localStorage !== "undefined") {
+    const cached = localStorage.getItem(cacheKey(locale));
+    if (cached) {
+      try {
+        const parsed = JSON.parse(cached);
+        const bytes = new Uint8Array(parsed);
+        l10n4x_load_pak_bytes(bytes, locale);
+        _loadedLocales.add(locale);
+        return true;
+      } catch {
+        localStorage.removeItem(cacheKey(locale));
+      }
+    }
+  }
+
+  // Network / disk load
   try {
     const bytes = await _loader(locale, _outputDir);
     l10n4x_load_pak_bytes(bytes, locale);
     _loadedLocales.add(locale);
+
+    // Cache for next time
+    if (typeof localStorage !== "undefined") {
+      try {
+        localStorage.setItem(cacheKey(locale), JSON.stringify(Array.from(bytes)));
+      } catch {
+        // localStorage full — silently ignore
+      }
+    }
     return true;
   } catch (e) {
     console.warn(`l10n4x: failed to load locale '${locale}':`, e);
     throw e;
   }
+}
+
+export async function loadLocale(locale: string): Promise<boolean> {
+  return loadLocaleWithCache(locale);
 }
 
 export function t(
@@ -180,3 +217,24 @@ export function clearI18n(): void {
   _loadedLocales.clear();
   _initialized = false;
 }
+
+// ── Dev server hot-reload integration ─────────────────────────────────────────
+/**
+ * Connects to the l10n4x dev server SSE endpoint and reloads paks automatically
+ * when files change. Call during development only.
+ * @param baseUrl  Dev server base URL, e.g. "http://localhost:3456"
+ * @param locales  List of locale codes to reload on change
+ */
+export function connectDevServer(baseUrl: string, locales: string[]): () => void {
+  const url = `${baseUrl}/events`;
+  const es = new EventSource(url);
+  es.onmessage = async () => {
+    await Promise.all(locales.map((locale) => loadLocale(locale)));
+  };
+  es.onerror = () => {
+    console.warn("[l10n4x] Dev server connection lost. Retrying...");
+  };
+  return () => es.close();
+}
+
+{{REACT_BLOCK}}

@@ -10,7 +10,11 @@ use config::{
 use generator::generate_bindings;
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io::{stdin, stdout, Write};
 use std::path::Path;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
+use tower_http::timeout::TimeoutLayer;
 
 use axum::{
     body::Body,
@@ -63,6 +67,33 @@ enum Commands {
     Generate {
         #[arg(long)]
         target: String,
+    },
+    /// Verify source code keys match locale files. Exits non-zero on any mismatch (CI gate).
+    Check {
+        /// Glob patterns for source files (defaults same as extract).
+        #[arg(long, value_name = "GLOB")]
+        src: Vec<String>,
+        /// Output results as JSON to stdout.
+        #[arg(long)]
+        json: bool,
+    },
+    /// Generate a pseudolocale for layout and overflow testing.
+    Pseudo {
+        /// Source locale to transform (defaults to config fallback).
+        #[arg(long, value_name = "LOCALE")]
+        locale: Option<String>,
+        /// Output directory for pseudolocale JSON files (defaults to sourceDir/pseudo).
+        #[arg(long, value_name = "DIR")]
+        out: Option<String>,
+    },
+    /// Show translation coverage statistics for all locales.
+    Stats {
+        /// Output results as JSON.
+        #[arg(long)]
+        json: bool,
+        /// Show the list of missing keys for each locale.
+        #[arg(long)]
+        verbose: bool,
     },
     /// Scan source files for translation key usages and add missing keys to locale JSON files.
     Extract {
@@ -242,7 +273,11 @@ fn sanitize_locale_filename(s: &str) -> Option<&str> {
 async fn serve_locale_file(
     AxumPath(lang_pak): AxumPath<String>,
     State(state): State<ServerState>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
+    if lang_pak.len() > 512 {
+        return (StatusCode::BAD_REQUEST, "Path too long").into_response();
+    }
     if lang_pak.ends_with(".json") {
         let locale = lang_pak.trim_end_matches(".json");
         if sanitize_locale_filename(&lang_pak).is_none() {
@@ -254,12 +289,27 @@ async fn serve_locale_file(
         }
         match fs::read(&pak_path) {
             Ok(bytes) => match l10n4x_core::pak::decompress_pak(&bytes) {
-                Ok(decompressed) => (
-                    StatusCode::OK,
-                    [(header::CONTENT_TYPE, "application/json")],
-                    decompressed,
-                )
-                    .into_response(),
+                Ok(decompressed) => {
+                    let etag = fnv1a_hex(&bytes);
+                    let etag_header = format!("\"{}\"", etag);
+                    let client_etag = headers
+                        .get(axum::http::header::IF_NONE_MATCH)
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("");
+                    if client_etag == etag_header {
+                        return StatusCode::NOT_MODIFIED.into_response();
+                    }
+                    (
+                        StatusCode::OK,
+                        [
+                            (header::CONTENT_TYPE, "application/json"),
+                            (header::ETAG, etag_header.as_str()),
+                            (header::CACHE_CONTROL, "no-cache"),
+                        ],
+                        decompressed,
+                    )
+                        .into_response()
+                }
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     format!("Pak decompression failed: {}", e),
@@ -281,12 +331,27 @@ async fn serve_locale_file(
             return (StatusCode::NOT_FOUND, "Locale PAK not found").into_response();
         }
         match fs::read(&pak_path) {
-            Ok(bytes) => (
-                StatusCode::OK,
-                [(header::CONTENT_TYPE, "application/octet-stream")],
-                bytes,
-            )
-                .into_response(),
+            Ok(bytes) => {
+                let etag = fnv1a_hex(&bytes);
+                let etag_header = format!("\"{}\"", etag);
+                let client_etag = headers
+                    .get(axum::http::header::IF_NONE_MATCH)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("");
+                if client_etag == etag_header {
+                    return StatusCode::NOT_MODIFIED.into_response();
+                }
+                (
+                    StatusCode::OK,
+                    [
+                        (header::CONTENT_TYPE, "application/octet-stream"),
+                        (header::ETAG, etag_header.as_str()),
+                        (header::CACHE_CONTROL, "no-cache"),
+                    ],
+                    bytes,
+                )
+                    .into_response()
+            }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Failed to read pak file: {}", e),
@@ -308,7 +373,11 @@ async fn handle_events(
     State(state): State<ServerState>,
 ) -> Result<Sse<impl tokio_stream::Stream<Item = Result<Event, axum::Error>>>, StatusCode> {
     if let Some(locale) = &query.locale {
-        if locale.contains('\n') || locale.contains('\r') || locale.contains(':') {
+        if locale.len() > 128
+            || locale.contains('\n')
+            || locale.contains('\r')
+            || locale.contains(':')
+        {
             return Err(StatusCode::BAD_REQUEST);
         }
     }
@@ -365,6 +434,60 @@ async fn auth_middleware(req: Request<Body>, next: Next) -> Result<impl IntoResp
         }
     }
     Err(StatusCode::UNAUTHORIZED)
+}
+
+struct RateLimiter {
+    state: Mutex<HashMap<String, (usize, Instant)>>,
+    max_per_second: usize,
+}
+
+impl RateLimiter {
+    fn new(max_per_second: usize) -> Self {
+        Self {
+            state: Mutex::new(HashMap::new()),
+            max_per_second,
+        }
+    }
+
+    fn check(&self, ip: &str) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let now = Instant::now();
+        let entry = state.entry(ip.to_string()).or_insert((0, now));
+        if now.duration_since(entry.1).as_secs() >= 1 {
+            *entry = (1, now);
+            true
+        } else if entry.0 < self.max_per_second {
+            entry.0 += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+static RATE_LIMITER: LazyLock<RateLimiter> = LazyLock::new(|| RateLimiter::new(100));
+
+async fn rate_limit_middleware(
+    req: Request<Body>,
+    next: Next,
+) -> Result<impl IntoResponse, StatusCode> {
+    let ip = req
+        .headers()
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            req.extensions()
+                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .map(|ci| ci.0.ip().to_string())
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    if !RATE_LIMITER.check(&ip) {
+        return Err(StatusCode::TOO_MANY_REQUESTS);
+    }
+    Ok(next.run(req).await)
 }
 
 async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Error> {
@@ -503,19 +626,26 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
     let protected_routes = Router::new()
         .route("/locales/:lang_pak", get(serve_locale_file))
         .route("/events", get(handle_events))
-        .layer(middleware::from_fn(auth_middleware));
+        .layer(middleware::from_fn(auth_middleware))
+        .layer(middleware::from_fn(rate_limit_middleware));
 
     let app = Router::new()
         .merge(protected_routes)
         .layer(cors_layer)
+        .layer(TimeoutLayer::new(Duration::from_secs(30)))
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
-    println!("l10n4x dev server running at http://localhost:{}", port);
+    let actual_port = listener.local_addr()?.port();
+    println!("l10n4x dev server running at http://localhost:{}", actual_port);
     if flutter_web {
         println!("Flutter Web proxy mode active.");
     }
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await?;
     Ok(())
 }
 
@@ -533,6 +663,322 @@ fn insert_nested_key(obj: &mut serde_json::Value, key_path: &str, value: &str) {
         }
     }
 }
+
+// ── Task 6: Check (CI gate) ────────────────────────────────────────────────
+
+#[derive(Debug)]
+struct CheckReport {
+    missing_in_locale: Vec<String>,
+    unused_in_code: Vec<String>,
+}
+
+fn check_report(code_keys: &[String], locale_keys: &[String]) -> CheckReport {
+    let code_set: std::collections::HashSet<_> = code_keys.iter().collect();
+    let locale_set: std::collections::HashSet<_> = locale_keys.iter().collect();
+
+    let mut missing_in_locale: Vec<String> = code_set
+        .difference(&locale_set)
+        .map(|s| (*s).clone())
+        .collect();
+    missing_in_locale.sort();
+
+    let mut unused_in_code: Vec<String> = locale_set
+        .difference(&code_set)
+        .map(|s| (*s).clone())
+        .collect();
+    unused_in_code.sort();
+
+    CheckReport { missing_in_locale, unused_in_code }
+}
+
+fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
+    let config = match load_config() {
+        Ok(c) => c,
+        Err(e) => { eprintln!("Error: {}", e); return 1; }
+    };
+
+    let globs = if src_globs.is_empty() {
+        vec!["src/**/*.ts".to_string(), "src/**/*.tsx".to_string(),
+             "src/**/*.js".to_string(), "lib/**/*.go".to_string(),
+             "lib/**/*.py".to_string()]
+    } else {
+        src_globs
+    };
+
+    let mut code_keys_set: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for pattern in &globs {
+        if let Ok(entries) = glob::glob(pattern) {
+            for entry in entries.flatten() {
+                if let Ok(content) = std::fs::read_to_string(&entry) {
+                    for k in extract_keys_from_source(&content) {
+                        code_keys_set.insert(k);
+                    }
+                }
+            }
+        }
+    }
+    let mut code_keys: Vec<String> = code_keys_set.into_iter().collect();
+    code_keys.sort();
+
+    let ref_locale_path = std::path::Path::new(&config.source_dir).join(&config.fallback);
+    let locale_keys: Vec<String> = if ref_locale_path.is_dir() {
+        match get_flat_keys_for_lang_dir(&ref_locale_path) {
+            Ok(keys) => { let mut v: Vec<_> = keys.into_iter().collect(); v.sort(); v }
+            Err(e) => { eprintln!("Error reading locale keys: {}", e); return 1; }
+        }
+    } else {
+        match validate_keys(&config.source_dir) {
+            Ok(keys) => { let mut v: Vec<_> = keys.into_iter().collect(); v.sort(); v }
+            Err(e) => { eprintln!("Error: {}", e); return 1; }
+        }
+    };
+
+    let report = check_report(&code_keys, &locale_keys);
+    let has_issues = !report.missing_in_locale.is_empty() || !report.unused_in_code.is_empty();
+
+    if json_output {
+        println!("{{");
+        println!("  \"missing\": {:?},", report.missing_in_locale);
+        println!("  \"unused\": {:?}", report.unused_in_code);
+        println!("}}");
+    } else {
+        if report.missing_in_locale.is_empty() && report.unused_in_code.is_empty() {
+            println!("✓ All {} code keys are present in locale files.", code_keys.len());
+        } else {
+            if !report.missing_in_locale.is_empty() {
+                eprintln!("✗ {} key(s) used in code but missing from locales:", report.missing_in_locale.len());
+                for k in &report.missing_in_locale { eprintln!("    - {}", k); }
+            }
+            if !report.unused_in_code.is_empty() {
+                println!("⚠ {} key(s) in locales not used in code:", report.unused_in_code.len());
+                for k in &report.unused_in_code { println!("    - {}", k); }
+            }
+        }
+    }
+
+    if has_issues { 1 } else { 0 }
+}
+
+// ── Task 7: Pseudo (pseudolocalization) ────────────────────────────────────
+
+fn pseudolocalize_string(s: &str) -> String {
+    const SUBSTITUTIONS: &[(char, char)] = &[
+        ('a', 'á'), ('b', 'ƀ'), ('c', 'ć'), ('d', 'ď'), ('e', 'é'), ('f', 'ƒ'),
+        ('g', 'ĝ'), ('h', 'ĥ'), ('i', 'í'), ('j', 'ĵ'), ('k', 'ķ'), ('l', 'ĺ'),
+        ('m', 'm'), ('n', 'ń'), ('o', 'ö'), ('p', 'þ'), ('q', 'q'), ('r', 'ŕ'),
+        ('s', 'š'), ('t', 'ţ'), ('u', 'ü'), ('v', 'v'), ('w', 'ŵ'), ('x', 'x'),
+        ('y', 'ŷ'), ('z', 'ž'),
+        ('A', 'Á'), ('B', 'Ɓ'), ('C', 'Ć'), ('D', 'Ď'), ('E', 'É'), ('F', 'F'),
+        ('G', 'Ĝ'), ('H', 'Ĥ'), ('I', 'Í'), ('J', 'Ĵ'), ('K', 'Ķ'), ('L', 'Ĺ'),
+        ('M', 'M'), ('N', 'Ń'), ('O', 'Ö'), ('P', 'Þ'), ('Q', 'Q'), ('R', 'Ŕ'),
+        ('S', 'Š'), ('T', 'Ţ'), ('U', 'Ü'), ('V', 'V'), ('W', 'Ŵ'), ('X', 'X'),
+        ('Y', 'Ŷ'), ('Z', 'Ž'),
+    ];
+
+    let mut result = String::with_capacity(s.len() * 2 + 2);
+    result.push('[');
+
+    let mut chars = s.chars().peekable();
+    let mut visible_chars = 0usize;
+
+    while let Some(c) = chars.next() {
+        if c == '{' {
+            result.push(c);
+            for inner in chars.by_ref() {
+                result.push(inner);
+                if inner == '}' { break; }
+            }
+        } else {
+            let sub = SUBSTITUTIONS.iter()
+                .find(|(from, _)| *from == c)
+                .map(|(_, to)| *to)
+                .unwrap_or(c);
+            result.push(sub);
+            visible_chars += 1;
+        }
+    }
+
+    let target_extra = (visible_chars * 2) / 5 + 1;
+    for _ in 0..target_extra {
+        result.push('~');
+    }
+
+    result.push(']');
+    result
+}
+
+fn pseudo_transform_json(value: &serde_json::Value, count: &mut usize) -> serde_json::Value {
+    match value {
+        serde_json::Value::String(s) => {
+            *count += 1;
+            serde_json::Value::String(pseudolocalize_string(s))
+        }
+        serde_json::Value::Object(map) => {
+            let new_map: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .map(|(k, v)| (k.clone(), pseudo_transform_json(v, count)))
+                .collect();
+            serde_json::Value::Object(new_map)
+        }
+        other => other.clone(),
+    }
+}
+
+fn pseudo_command(locale_opt: Option<String>, out_opt: Option<String>) -> Result<(), anyhow::Error> {
+    let config = load_config()?;
+    let source_locale = locale_opt.unwrap_or_else(|| config.fallback.clone());
+    let source_path = std::path::Path::new(&config.source_dir).join(&source_locale);
+
+    if !source_path.is_dir() {
+        anyhow::bail!("Source locale '{}' not found at '{}'", source_locale, source_path.display());
+    }
+
+    let out_dir_str = out_opt.unwrap_or_else(|| {
+        std::path::Path::new(&config.source_dir).join("pseudo").to_string_lossy().into_owned()
+    });
+    let out_dir = std::path::Path::new(&out_dir_str);
+    std::fs::create_dir_all(out_dir)?;
+
+    let mut total_keys = 0usize;
+
+    for file_entry in std::fs::read_dir(&source_path)? {
+        let file_entry = file_entry?;
+        let fpath = file_entry.path();
+        if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") { continue; }
+
+        let content = std::fs::read_to_string(&fpath)?;
+        let json: serde_json::Value = serde_json::from_str(&content)?;
+
+        let pseudo_json = pseudo_transform_json(&json, &mut total_keys);
+        let file_name = fpath.file_name().unwrap();
+        let out_file = out_dir.join(file_name);
+        std::fs::write(&out_file, serde_json::to_string_pretty(&pseudo_json)?)?;
+        println!("Wrote {}", out_file.display());
+    }
+
+    println!("Pseudolocale generated: {} keys transformed.", total_keys);
+    Ok(())
+}
+
+// ── Task 8: Stats (coverage report) ─────────────────────────────────────────
+
+struct LocaleCoverage {
+    locale: String,
+    total_keys: usize,
+    missing_count: usize,
+    extra_count: usize,
+    percent: u8,
+}
+
+fn compute_coverage(
+    locale: &str,
+    locale_keys: &std::collections::HashSet<String>,
+    reference_keys: &std::collections::HashSet<String>,
+) -> LocaleCoverage {
+    if reference_keys.is_empty() {
+        return LocaleCoverage {
+            locale: locale.to_string(),
+            total_keys: 0,
+            missing_count: 0,
+            extra_count: locale_keys.len(),
+            percent: 100,
+        };
+    }
+    let missing_count  = reference_keys.difference(locale_keys).count();
+    let extra_count    = locale_keys.difference(reference_keys).count();
+    let translated     = reference_keys.len() - missing_count;
+    let percent        = (translated * 100 / reference_keys.len()) as u8;
+
+    LocaleCoverage {
+        locale: locale.to_string(),
+        total_keys: reference_keys.len(),
+        missing_count,
+        extra_count,
+        percent,
+    }
+}
+
+fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> {
+    let config = load_config()?;
+    let src_path = std::path::Path::new(&config.source_dir);
+
+    let ref_path = src_path.join(&config.fallback);
+    let ref_keys: std::collections::HashSet<String> = if ref_path.is_dir() {
+        get_flat_keys_for_lang_dir(&ref_path)?.into_iter().collect()
+    } else {
+        validate_keys(&config.source_dir)?.into_iter().collect()
+    };
+
+    let mut coverages: Vec<LocaleCoverage> = Vec::new();
+
+    for lang_entry in std::fs::read_dir(src_path)? {
+        let lang_entry = lang_entry?;
+        if !lang_entry.path().is_dir() { continue; }
+        let lang = lang_entry.file_name().to_string_lossy().to_string();
+        let locale_keys: std::collections::HashSet<String> =
+            get_flat_keys_for_lang_dir(&lang_entry.path())?.into_iter().collect();
+        coverages.push(compute_coverage(&lang, &locale_keys, &ref_keys));
+    }
+
+    coverages.sort_by_key(|c| c.percent);
+
+    if json_output {
+        println!("[");
+        for (i, cov) in coverages.iter().enumerate() {
+            let comma = if i < coverages.len() - 1 { "," } else { "" };
+            println!(
+                "  {{\"locale\":\"{}\",\"percent\":{},\"total\":{},\"missing\":{},\"extra\":{}}}{}",
+                cov.locale, cov.percent, cov.total_keys, cov.missing_count, cov.extra_count, comma
+            );
+        }
+        println!("]");
+    } else {
+        println!("\n{:<12} {:>8} {:>8} {:>8}  Bar", "Locale", "Coverage", "Missing", "Total");
+        println!("{}", "─".repeat(60));
+        for cov in &coverages {
+            let bar_filled = (cov.percent as usize * 20) / 100;
+            let bar: String = "█".repeat(bar_filled) + &"░".repeat(20 - bar_filled);
+            let status = if cov.percent == 100 { "✓" } else if cov.percent >= 80 { "~" } else { "✗" };
+            println!(
+                "{:<12} {:>7}%  {:>7}  {:>7}  {} {}",
+                cov.locale, cov.percent, cov.missing_count, cov.total_keys, bar, status
+            );
+            if verbose && cov.missing_count > 0 {
+                let locale_path = src_path.join(&cov.locale);
+                if let Ok(locale_keys) = get_flat_keys_for_lang_dir(&locale_path) {
+                    let locale_set: std::collections::HashSet<_> = locale_keys.into_iter().collect();
+                    let mut missing: Vec<_> = ref_keys.difference(&locale_set).collect();
+                    missing.sort();
+                    for k in missing {
+                        println!("    missing: {}", k);
+                    }
+                }
+            }
+        }
+        let total_locales = coverages.len();
+        let avg = coverages.iter().map(|c| c.percent as usize).sum::<usize>().checked_div(total_locales).unwrap_or(0);
+        println!("{}", "─".repeat(60));
+        println!("Average coverage: {}% across {} locale(s)", avg, total_locales);
+    }
+
+    Ok(())
+}
+
+// ── Task 11: ETag helper ───────────────────────────────────────────────────
+
+/// Computes FNV-1a 64-bit hash of `data` and returns it as a 16-char lowercase hex string.
+fn fnv1a_hex(data: &[u8]) -> String {
+    const FNV_OFFSET: u64 = 14695981039346656037;
+    const FNV_PRIME:  u64 = 1099511628211;
+    let mut hash = FNV_OFFSET;
+    for &byte in data {
+        hash ^= byte as u64;
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{:016x}", hash)
+}
+
+// ── Existing extract command ────────────────────────────────────────────────
 
 fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::Error> {
     let config = load_config()?;
@@ -636,47 +1082,112 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
     Ok(())
 }
 
+fn detect_project_type() -> Vec<String> {
+    let mut targets = Vec::new();
+    if Path::new("package.json").exists() {
+        targets.push("typescript".to_string());
+        if let Ok(content) = std::fs::read_to_string("package.json") {
+            if content.contains("\"react\"") || content.contains("\"react-dom\"") {
+                targets.push("react".to_string());
+            }
+            if content.contains("\"vue\"") {
+                targets.push("vue".to_string());
+            }
+            if content.contains("\"svelte\"") {
+                targets.push("svelte".to_string());
+            }
+        }
+    }
+    if Path::new("go.mod").exists() {
+        targets.push("go".to_string());
+    }
+    if Path::new("pubspec.yaml").exists() {
+        targets.push("flutter".to_string());
+    }
+    if Path::new("Cargo.toml").exists() {
+        targets.push("c".to_string());
+    }
+    targets
+}
+
 fn init_wizard() -> Result<(), anyhow::Error> {
     println!("Initializing l10n4x configuration...");
 
+    let path = Path::new("l10n4x.config.json");
+    if path.exists() {
+        anyhow::bail!("l10n4x.config.json already exists in this directory.");
+    }
+
+    let detected = detect_project_type();
     let mut targets = Vec::new();
 
-    if Path::new("go.mod").exists() {
-        println!("Detected Go project. Adding 'go' target.");
-        targets.push(Target {
-            r#type: "go".to_string(),
-            out_dir: "./backend/pkg/i18n".to_string(),
-            options: serde_json::json!({ "package": "i18n" }),
-        });
+    if detected.is_empty() {
+        println!("No standard project files detected.");
     }
 
-    if Path::new("package.json").exists() {
-        println!("Detected Node/JS project. Adding 'typescript' target.");
-        targets.push(Target {
-            r#type: "typescript".to_string(),
-            out_dir: "./frontend/src/i18n".to_string(),
-            options: serde_json::json!({ "flavor": "react", "strictTypes": true }),
-        });
-    }
-
-    if Path::new("pubspec.yaml").exists() {
-        println!("Detected Flutter project. Adding 'flutter' target.");
-        targets.push(Target {
-            r#type: "flutter".to_string(),
-            out_dir: "./mobile/lib/generated".to_string(),
-            options: serde_json::json!({
-                "package": "app",
-                "useFfi": true,
-                "strictNullSafety": true,
-                "generateHelpers": true
-            }),
-        });
+    for t in &detected {
+        print!("Add '{}' target? [Y/n]: ", t);
+        stdout().flush()?;
+        let mut input = String::new();
+        stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        if input.is_empty() || input == "y" || input == "yes" {
+            let target = match t.as_str() {
+                "go" => Target {
+                    r#type: "go".to_string(),
+                    out_dir: "./backend/pkg/i18n".to_string(),
+                    options: serde_json::json!({ "package": "i18n" }),
+                },
+                "react" => Target {
+                    r#type: "typescript".to_string(),
+                    out_dir: "./frontend/src/i18n".to_string(),
+                    options: serde_json::json!({ "flavor": "react", "strictTypes": true }),
+                },
+                "typescript" => Target {
+                    r#type: "typescript".to_string(),
+                    out_dir: "./frontend/src/i18n".to_string(),
+                    options: serde_json::json!({ "flavor": "react", "strictTypes": true }),
+                },
+                "vue" => Target {
+                    r#type: "vue".to_string(),
+                    out_dir: "./src/i18n".to_string(),
+                    options: serde_json::json!({}),
+                },
+                "svelte" => Target {
+                    r#type: "svelte".to_string(),
+                    out_dir: "./src/i18n".to_string(),
+                    options: serde_json::json!({}),
+                },
+                "flutter" => Target {
+                    r#type: "flutter".to_string(),
+                    out_dir: "./mobile/lib/generated".to_string(),
+                    options: serde_json::json!({
+                        "package": "app",
+                        "useFfi": true,
+                        "strictNullSafety": true,
+                        "generateHelpers": true
+                    }),
+                },
+                "c" => Target {
+                    r#type: "c".to_string(),
+                    out_dir: "./src/i18n".to_string(),
+                    options: serde_json::json!({}),
+                },
+                _ => Target {
+                    r#type: t.clone(),
+                    out_dir: "./src/i18n".to_string(),
+                    options: serde_json::json!({}),
+                },
+            };
+            println!("  Added '{}' target.", t);
+            targets.push(target);
+        } else {
+            println!("  Skipped '{}' target.", t);
+        }
     }
 
     if targets.is_empty() {
-        println!(
-            "No standard project files detected. Adding default 'go' and 'typescript' targets."
-        );
+        println!("Adding default targets.");
         targets.push(Target {
             r#type: "go".to_string(),
             out_dir: "./i18n/go".to_string(),
@@ -685,6 +1196,16 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         targets.push(Target {
             r#type: "typescript".to_string(),
             out_dir: "./i18n/ts".to_string(),
+            options: serde_json::json!({}),
+        });
+        targets.push(Target {
+            r#type: "vue".to_string(),
+            out_dir: "./i18n/vue".to_string(),
+            options: serde_json::json!({}),
+        });
+        targets.push(Target {
+            r#type: "svelte".to_string(),
+            out_dir: "./i18n/svelte".to_string(),
             options: serde_json::json!({}),
         });
     }
@@ -701,11 +1222,6 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         cors_origins: None,
         targets,
     };
-
-    let path = Path::new("l10n4x.config.json");
-    if path.exists() {
-        anyhow::bail!("l10n4x.config.json already exists in this directory.");
-    }
 
     let content = serde_json::to_string_pretty(&config)?;
     fs::write(path, content)?;
@@ -795,6 +1311,131 @@ mod extract_tests {
 }
 
 #[cfg(test)]
+mod check_tests {
+    use super::check_report;
+
+    #[test]
+    fn detects_key_missing_from_locale() {
+        let code_keys = vec!["common.title".to_string(), "common.missing_key".to_string()];
+        let locale_keys = vec!["common.title".to_string()];
+        let report = check_report(&code_keys, &locale_keys);
+        assert!(report.missing_in_locale.contains(&"common.missing_key".to_string()));
+        assert!(report.unused_in_code.is_empty());
+    }
+
+    #[test]
+    fn detects_locale_key_unused_in_code() {
+        let code_keys   = vec!["common.title".to_string()];
+        let locale_keys = vec!["common.title".to_string(), "common.orphan".to_string()];
+        let report = check_report(&code_keys, &locale_keys);
+        assert!(report.unused_in_code.contains(&"common.orphan".to_string()));
+        assert!(report.missing_in_locale.is_empty());
+    }
+
+    #[test]
+    fn clean_check_returns_empty_report() {
+        let keys = vec!["a.b".to_string(), "c.d".to_string()];
+        let report = check_report(&keys, &keys);
+        assert!(report.missing_in_locale.is_empty());
+        assert!(report.unused_in_code.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod pseudo_tests {
+    use super::pseudolocalize_string;
+
+    #[test]
+    fn wraps_in_brackets() {
+        let result = pseudolocalize_string("Hello");
+        assert!(result.starts_with('['));
+        assert!(result.ends_with(']'));
+    }
+
+    #[test]
+    fn substitutes_latin_chars() {
+        let result = pseudolocalize_string("Hello");
+        assert!(result.contains('é') || result.contains('ĥ') || result.contains('ö'));
+    }
+
+    #[test]
+    fn preserves_icu_placeholders() {
+        let result = pseudolocalize_string("Hello {name}, you have {count} items.");
+        assert!(result.contains("{name}"));
+        assert!(result.contains("{count}"));
+    }
+
+    #[test]
+    fn pads_to_longer_length() {
+        let original = "Short text";
+        let result = pseudolocalize_string(original);
+        let inner = &result[1..result.len()-1];
+        assert!(
+            inner.len() >= original.len(),
+            "pseudolocalized string should be at least as long as original"
+        );
+    }
+}
+
+#[cfg(test)]
+mod stats_tests {
+    use super::compute_coverage;
+    use std::collections::HashSet;
+
+    fn make_keys(keys: &[&str]) -> HashSet<String> {
+        keys.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn full_coverage() {
+        let ref_keys = make_keys(&["a", "b", "c"]);
+        let locale_keys = make_keys(&["a", "b", "c"]);
+        let cov = compute_coverage("en", &locale_keys, &ref_keys);
+        assert_eq!(cov.percent, 100);
+        assert_eq!(cov.missing_count, 0);
+    }
+
+    #[test]
+    fn partial_coverage() {
+        let ref_keys  = make_keys(&["a", "b", "c", "d"]);
+        let locale_keys = make_keys(&["a", "b"]);
+        let cov = compute_coverage("fr", &locale_keys, &ref_keys);
+        assert_eq!(cov.percent, 50);
+        assert_eq!(cov.missing_count, 2);
+    }
+
+    #[test]
+    fn zero_keys_in_locale() {
+        let ref_keys = make_keys(&["a"]);
+        let cov = compute_coverage("de", &HashSet::new(), &ref_keys);
+        assert_eq!(cov.percent, 0);
+    }
+}
+
+#[cfg(test)]
+mod etag_tests {
+    use super::fnv1a_hex;
+
+    #[test]
+    fn same_input_produces_same_etag() {
+        let data = b"hello world";
+        assert_eq!(fnv1a_hex(data), fnv1a_hex(data));
+    }
+
+    #[test]
+    fn different_input_produces_different_etag() {
+        assert_ne!(fnv1a_hex(b"hello"), fnv1a_hex(b"world"));
+    }
+
+    #[test]
+    fn etag_is_hex_string() {
+        let tag = fnv1a_hex(b"test");
+        assert!(tag.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(tag.len(), 16, "FNV-1a 64-bit = 16 hex chars");
+    }
+}
+
+#[cfg(test)]
 mod path_safety_tests {
     use super::sanitize_locale_filename;
 
@@ -848,6 +1489,21 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Dev { flutter_web, port } => {
             run_dev_server(port, flutter_web).await?;
         }
+        Commands::Check { src, json } => {
+            std::process::exit(check_command(src, json));
+        }
+        Commands::Pseudo { locale, out } => {
+            if let Err(e) = pseudo_command(locale, out) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Stats { json, verbose } => {
+            if let Err(e) = stats_command(json, verbose) {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
         Commands::Extract { src, dry_run } => {
             let result = extract_command(src, dry_run);
             if let Err(e) = result {
@@ -856,9 +1512,9 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
         Commands::Generate { target } => {
-            if !["go", "typescript", "python", "c", "flutter", "dart"].contains(&target.as_str()) {
+            if !["go", "typescript", "python", "c", "flutter", "dart", "vue", "svelte"].contains(&target.as_str()) {
                 anyhow::bail!(
-                    "Unsupported target '{}'. Supported targets are: go, typescript, python, c, flutter, dart.",
+                    "Unsupported target '{}'. Supported targets are: go, typescript, python, c, flutter, dart, vue, svelte.",
                     target
                 );
             }
