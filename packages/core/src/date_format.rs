@@ -99,21 +99,17 @@ pub fn format_date(value: &str, locale: &str, style: DateStyle) -> String {
         None => return alloc::string::String::from(value),
     };
 
-    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
+    let lang = crate::locale_util::lang_subtag(locale);
 
-    let date_str = match lang.to_lowercase().as_str() {
-        "en" | "zh" | "ko" | "fil" | "he" | "iw" => {
+    let date_str = match () {
+        _ if crate::locale_util::lang_matches_any(lang, &["en", "zh", "ko", "fil", "he", "iw"]) => {
             alloc::format!("{:02}/{:02}/{}", parts.month, parts.day, parts.year)
         }
-        "ja" => alloc::format!("{}年{:02}月{:02}日", parts.year, parts.month, parts.day),
-        "de" | "at" | "cs" | "sk" | "pl" | "hu" | "ru" | "uk" | "be" | "bg" | "sr" | "hr"
-        | "bs" | "mk" | "ro" | "sl" | "lv" | "lt" | "et" | "el" | "tr" | "ka" | "hy" | "az"
-        | "kk" | "ky" | "uz" | "tk" | "mn" => {
+        _ if crate::locale_util::lang_eq(lang, "ja") => alloc::format!("{}年{:02}月{:02}日", parts.year, parts.month, parts.day),
+        _ if crate::locale_util::lang_matches_any(lang, &["de", "at", "cs", "sk", "pl", "hu", "ru", "uk", "be", "bg", "sr", "hr", "bs", "mk", "ro", "sl", "lv", "lt", "et", "el", "tr", "ka", "hy", "az", "kk", "ky", "uz", "tk", "mn"]) => {
             alloc::format!("{:02}.{:02}.{}", parts.day, parts.month, parts.year)
         }
-        "fr" | "es" | "pt" | "it" | "nl" | "da" | "sv" | "nb" | "fi" | "af" | "ca" | "gl"
-        | "eu" | "ar" | "fa" | "ur" | "hi" | "bn" | "pa" | "gu" | "mr" | "ta" | "te" | "kn"
-        | "ml" | "si" | "my" | "km" | "lo" | "th" | "vi" | "id" | "ms" | "sw" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["fr", "es", "pt", "it", "nl", "da", "sv", "nb", "fi", "af", "ca", "gl", "eu", "ar", "fa", "ur", "hi", "bn", "pa", "gu", "mr", "ta", "te", "kn", "ml", "si", "my", "km", "lo", "th", "vi", "id", "ms", "sw"]) => {
             alloc::format!("{:02}/{:02}/{}", parts.day, parts.month, parts.year)
         }
         _ => alloc::format!("{}-{:02}-{:02}", parts.year, parts.month, parts.day),

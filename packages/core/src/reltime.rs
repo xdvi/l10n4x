@@ -197,10 +197,11 @@ pub fn format_relative_time(value: i64, locale: &str, style: RelTimeStyle) -> St
     };
     let adjusted_value = convert_to_unit(value, actual_style);
 
-    let lang = locale.split(['-', '_']).next().unwrap_or("en");
-    match lang.to_lowercase().as_str() {
-        "es" => format_reltime_es(adjusted_value, actual_style),
-        _ => format_reltime_en(adjusted_value, actual_style),
+    let lang = crate::locale_util::lang_subtag(locale);
+    if crate::locale_util::lang_eq(lang, "es") {
+        format_reltime_es(adjusted_value, actual_style)
+    } else {
+        format_reltime_en(adjusted_value, actual_style)
     }
 }
 

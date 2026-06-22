@@ -131,10 +131,11 @@ pub fn format_list(items_json: &str, locale: &str, style: ListStyle) -> String {
         None => return alloc::string::String::from(items_json),
     };
 
-    let lang = locale.split(['-', '_']).next().unwrap_or("en");
-    match lang.to_lowercase().as_str() {
-        "es" => format_list_es(&items, style),
-        _ => format_list_en(&items, style),
+    let lang = crate::locale_util::lang_subtag(locale);
+    if crate::locale_util::lang_eq(lang, "es") {
+        format_list_es(&items, style)
+    } else {
+        format_list_en(&items, style)
     }
 }
 

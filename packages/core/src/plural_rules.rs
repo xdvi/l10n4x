@@ -39,11 +39,11 @@ impl Ops {
 /// Returns the CLDR **ordinal** plural category for a given locale tag and integer value.
 /// Supports ordinals like "1st", "2nd", "3rd" in English.
 pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
-    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
+    let lang = crate::locale_util::lang_subtag(locale);
 
-    match lang.to_lowercase().as_str() {
+    match () {
         // ── English ordinal: special 1st, 2nd, 3rd, 11th-13th ─────────────────
-        "en" => {
+        _ if crate::locale_util::lang_eq(lang, "en") => {
             let mod100 = value % 100;
             let mod10 = value % 10;
             if mod10 == 1 && mod100 != 11 {
@@ -57,7 +57,7 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
             }
         }
         // ── French: 1er, 2e ────────────────────────────────────────────────────
-        "fr" | "ff" | "kab" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["fr", "ff", "kab"]) => {
             if value == 1 {
                 PluralCategory::One
             } else {
@@ -65,13 +65,12 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
             }
         }
         // ── Spanish, Italian, Portuguese: default ordinal ─────────────────────
-        "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "ro" | "mo" => PluralCategory::Other,
+        _ if crate::locale_util::lang_matches_any(lang, &["es", "it", "pt", "ca", "gl", "eu", "eo", "ro", "mo"]) => PluralCategory::Other,
         // ── German, Dutch, Swedish: always other ──────────────────────────────
-        "de" | "nl" | "sv" | "da" | "nb" | "fi" | "et" | "lv" | "lt" | "hu" | "af" | "sq"
-        | "sw" | "tr" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" => PluralCategory::Other,
+        _ if crate::locale_util::lang_matches_any(lang, &["de", "nl", "sv", "da", "nb", "fi", "et", "lv", "lt", "hu", "af", "sq", "sw", "tr", "az", "kk", "ky", "uz", "tk", "mn"]) => PluralCategory::Other,
         // ── Russian ordinals: one for 1, 2, 3, 4? Actually Russian ordinals
         //    follow same pattern as cardinals (1→One, 2-4→Few, 5+→Many, 11-14→Many)
-        "ru" | "uk" | "be" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["ru", "uk", "be"]) => {
             let mod100 = value % 100;
             let mod10 = value % 10;
             if mod10 == 1 && mod100 != 11 {
@@ -83,9 +82,9 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
             }
         }
         // ── Arabic ordinals: always other ─────────────────────────────────────
-        "ar" | "ckb" => PluralCategory::Other,
+        _ if crate::locale_util::lang_matches_any(lang, &["ar", "ckb"]) => PluralCategory::Other,
         // ── Chinese, Japanese, Korean, Vietnamese: always other ───────────────
-        "zh" | "ja" | "ko" | "vi" | "th" | "my" | "id" | "km" | "ms" | "lo" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["zh", "ja", "ko", "vi", "th", "my", "id", "km", "ms", "lo"]) => {
             PluralCategory::Other
         }
         // ── Default: n=1 → One, else Other ────────────────────────────────────
@@ -103,21 +102,17 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
 /// Locale matching is done on the first two characters (language subtag) in lowercase.
 pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
     let ops = Ops::from(value);
-    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
+    let lang = crate::locale_util::lang_subtag(locale);
 
-    match lang.to_lowercase().as_str() {
+    match () {
         // ── Family 0: invariable — always Other ──────────────────────────────
         // Japanese, Korean, Chinese, Vietnamese, Thai, Burmese, Indonesian, Khmer, Malay, Lao
-        "ja" | "ko" | "zh" | "vi" | "th" | "my" | "id" | "km" | "ms" | "lo" | "bo" | "dz"
-        | "ig" | "ii" | "jv" | "kde" | "kea" | "nqo" | "ses" | "sg" | "wo" | "yo" | "yue" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["ja", "ko", "zh", "vi", "th", "my", "id", "km", "ms", "lo", "bo", "dz", "ig", "ii", "jv", "kde", "kea", "nqo", "ses", "sg", "wo", "yo", "yue"]) => {
             PluralCategory::Other
         }
 
         // ── Family 1: one/other (n = 1) ───────────────────────────────────────
-        "af" | "az" | "bg" | "bn" | "ca" | "da" | "de" | "el" | "eo" | "es" | "et" | "eu"
-        | "fi" | "fy" | "gl" | "gu" | "hu" | "it" | "kk" | "ky" | "lb" | "mn" | "mr" | "ne"
-        | "nl" | "or" | "pa" | "rm" | "sq" | "sw" | "ta" | "te" | "tk" | "tr" | "ug" | "ur"
-        | "uz" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["af", "az", "bg", "bn", "ca", "da", "de", "el", "eo", "es", "et", "eu", "fi", "fy", "gl", "gu", "hu", "it", "kk", "ky", "lb", "mn", "mr", "ne", "nl", "or", "pa", "rm", "sq", "sw", "ta", "te", "tk", "tr", "ug", "ur", "uz"]) => {
             if (ops.n - 1.0).abs() < 1e-9 {
                 PluralCategory::One
             } else {
@@ -126,7 +121,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── English: one if i=1 and v=0 ──────────────────────────────────────
-        "en" => {
+        _ if crate::locale_util::lang_eq(lang, "en") => {
             if ops.i == 1 && ops.v == 0 {
                 PluralCategory::One
             } else {
@@ -135,7 +130,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Portuguese: one if n=1 ───────────────────────────────────────────
-        "pt" => {
+        _ if crate::locale_util::lang_eq(lang, "pt") => {
             if (ops.n - 1.0).abs() < 1e-9 {
                 PluralCategory::One
             } else {
@@ -144,7 +139,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 2: French-style — one if i=0 or i=1 ───────────────────────
-        "fr" | "ff" | "hy" | "kab" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["fr", "ff", "hy", "kab"]) => {
             if (ops.i == 0 || ops.i == 1) && ops.v == 0 {
                 PluralCategory::One
             } else {
@@ -153,7 +148,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 3: Slavic 3-way (Russian/Ukrainian/Belarusian) ────────────
-        "ru" | "uk" | "be" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["ru", "uk", "be"]) => {
             if ops.v == 0 {
                 let i10 = ops.i % 10;
                 let i100 = ops.i % 100;
@@ -172,7 +167,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 4: South Slavic (Serbian/Croatian/Bosnian) ────────────────
-        "hr" | "sr" | "bs" | "sh" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["hr", "sr", "bs", "sh"]) => {
             let i10 = ops.i % 10;
             let i100 = ops.i % 100;
             if ops.v == 0 {
@@ -197,7 +192,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 5: Polish ─────────────────────────────────────────────────
-        "pl" => {
+        _ if crate::locale_util::lang_eq(lang, "pl") => {
             if (ops.n - 1.0).abs() < 1e-9 {
                 PluralCategory::One
             } else if ops.v == 0 {
@@ -220,7 +215,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 6: Czech / Slovak ─────────────────────────────────────────
-        "cs" | "sk" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["cs", "sk"]) => {
             if (ops.n - 1.0).abs() < 1e-9 && ops.v == 0 {
                 PluralCategory::One
             } else if ops.n >= 2.0 && ops.n <= 4.0 && ops.v == 0 {
@@ -233,7 +228,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 7: Arabic — 6 forms ────────────────────────────────────────
-        "ar" | "ckb" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["ar", "ckb"]) => {
             if ops.v == 0 {
                 let n100 = ops.i % 100;
                 if ops.i == 0 {
@@ -255,7 +250,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 8: Latvian ────────────────────────────────────────────────
-        "lv" | "prg" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["lv", "prg"]) => {
             if ops.v == 0 {
                 let i10 = ops.i % 10;
                 let i100 = ops.i % 100;
@@ -272,7 +267,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 9: Lithuanian ─────────────────────────────────────────────
-        "lt" => {
+        _ if crate::locale_util::lang_eq(lang, "lt") => {
             if ops.v != 0 {
                 PluralCategory::Many
             } else {
@@ -289,7 +284,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 10: Romanian ──────────────────────────────────────────────
-        "ro" | "mo" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["ro", "mo"]) => {
             if (ops.n - 1.0).abs() < 1e-9 && ops.v == 0 {
                 PluralCategory::One
             } else if ops.v == 0 {
@@ -305,7 +300,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 11: Hebrew ────────────────────────────────────────────────
-        "he" | "iw" => {
+        _ if crate::locale_util::lang_matches_any(lang, &["he", "iw"]) => {
             if ops.v == 0 {
                 if ops.i == 1 {
                     PluralCategory::One
@@ -322,7 +317,7 @@ pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
         }
 
         // ── Family 12: Macedonian ─────────────────────────────────────────────
-        "mk" => {
+        _ if crate::locale_util::lang_eq(lang, "mk") => {
             if ops.v == 0 && (ops.i % 10 == 1 || ops.i == 11) {
                 PluralCategory::One
             } else {

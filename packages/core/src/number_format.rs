@@ -18,66 +18,105 @@ pub enum NumberStyle {
 
 /// Returns (decimal_sep, grouping_sep) for the given locale language tag.
 fn separators(locale: &str) -> (char, char) {
-    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
-    match lang.to_lowercase().as_str() {
-        // Period decimal, comma grouping (English-like)
-        "en" | "zh" | "ja" | "ko" | "th" | "vi" | "hi" | "ms" | "fil" | "sw" | "af" | "my"
-        | "km" | "lo" | "bn" | "gu" | "kn" | "ml" | "mr" | "ne" | "or" | "pa" | "si" | "ta"
-        | "te" | "ur" => ('.', ','),
-        // Comma decimal, period grouping (Continental European)
-        "de" | "nl" | "da" | "sv" | "nb" | "fi" | "et" | "lv" | "lt" | "hu" | "hr" | "sr"
-        | "bs" | "mk" | "sq" | "sk" | "cs" | "pl" | "ro" | "bg" | "ru" | "uk" | "be" | "ka"
-        | "hy" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" | "id" => (',', '.'),
-        // Comma decimal, space grouping (French-like)
-        "fr" | "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "tr" | "ar" | "he" | "fa"
-        | "el" => (',', '\u{202f}'),
-        _ => ('.', ','),
+    let lang = crate::locale_util::lang_subtag(locale);
+    if crate::locale_util::lang_matches_any(
+        lang,
+        &[
+            "en", "zh", "ja", "ko", "th", "vi", "hi", "ms", "fil", "sw", "af", "my", "km", "lo",
+            "bn", "gu", "kn", "ml", "mr", "ne", "or", "pa", "si", "ta", "te", "ur",
+        ],
+    ) {
+        ('.', ',')
+    } else if crate::locale_util::lang_matches_any(
+        lang,
+        &[
+            "de", "nl", "da", "sv", "nb", "fi", "et", "lv", "lt", "hu", "hr", "sr", "bs", "mk",
+            "sq", "sk", "cs", "pl", "ro", "bg", "ru", "uk", "be", "ka", "hy", "az", "kk", "ky",
+            "uz", "tk", "mn", "id",
+        ],
+    ) {
+        (',', '.')
+    } else if crate::locale_util::lang_matches_any(
+        lang,
+        &[
+            "fr", "es", "it", "pt", "ca", "gl", "eu", "eo", "tr", "ar", "he", "fa", "el",
+        ],
+    ) {
+        (',', '\u{202f}')
+    } else {
+        ('.', ',')
     }
+}
+
+#[inline]
+fn currency_eq(code: &str, tag: &str) -> bool {
+    code.eq_ignore_ascii_case(tag)
 }
 
 /// Returns `(symbol, is_prefix)` where `prefix=true` means the symbol precedes the amount.
 fn currency_symbol(currency_code: &str, locale: &str) -> (&'static str, bool) {
-    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
-    match (
-        currency_code.to_uppercase().as_str(),
-        lang.to_lowercase().as_str(),
-    ) {
-        ("USD", _) => ("$", true),
-        ("CAD", _) => ("CA$", true),
-        ("AUD", _) => ("A$", true),
-        ("GBP", _) => ("£", true),
-        ("JPY", _) => ("¥", true),
-        ("CNY", _) => ("¥", true),
-        ("KRW", _) => ("₩", true),
-        ("INR", _) => ("₹", true),
-        ("BRL", _) => ("R$", true),
-        ("MXN", _) => ("MX$", true),
-        ("CHF", _) => ("Fr", true),
-        ("SEK", "sv") | ("SEK", _) => ("kr", false),
-        ("NOK", "nb") | ("NOK", _) => ("kr", false),
-        ("DKK", "da") | ("DKK", _) => ("kr", false),
-        ("EUR", "de")
-        | ("EUR", "nl")
-        | ("EUR", "fi")
-        | ("EUR", "et")
-        | ("EUR", "lv")
-        | ("EUR", "lt") => ("€", false),
-        ("EUR", _) => ("€", true),
-        ("RUB", _) => ("₽", false),
-        ("PLN", _) => ("zł", false),
-        ("CZK", _) => ("Kč", false),
-        ("HUF", _) => ("Ft", false),
-        ("RON", _) => ("lei", false),
-        ("TRY", _) => ("₺", true),
-        ("ILS", _) => ("₪", true),
-        ("SAR", _) => ("﷼", true),
-        ("AED", _) => ("د.إ", true),
-        ("THB", _) => ("฿", true),
-        ("SGD", _) => ("S$", true),
-        ("HKD", _) => ("HK$", true),
-        ("NZD", _) => ("NZ$", true),
-        ("ZAR", _) => ("R", true),
-        _ => ("$", true),
+    let lang = crate::locale_util::lang_subtag(locale);
+    if currency_eq(currency_code, "USD") {
+        ("$", true)
+    } else if currency_eq(currency_code, "CAD") {
+        ("CA$", true)
+    } else if currency_eq(currency_code, "AUD") {
+        ("A$", true)
+    } else if currency_eq(currency_code, "GBP") {
+        ("£", true)
+    } else if currency_eq(currency_code, "JPY") || currency_eq(currency_code, "CNY") {
+        ("¥", true)
+    } else if currency_eq(currency_code, "KRW") {
+        ("₩", true)
+    } else if currency_eq(currency_code, "INR") {
+        ("₹", true)
+    } else if currency_eq(currency_code, "BRL") {
+        ("R$", true)
+    } else if currency_eq(currency_code, "MXN") {
+        ("MX$", true)
+    } else if currency_eq(currency_code, "CHF") {
+        ("Fr", true)
+    } else if currency_eq(currency_code, "SEK")
+        || currency_eq(currency_code, "NOK")
+        || currency_eq(currency_code, "DKK")
+    {
+        ("kr", false)
+    } else if currency_eq(currency_code, "EUR") {
+        if crate::locale_util::lang_matches_any(lang, &["de", "nl", "fi", "et", "lv", "lt"]) {
+            ("€", false)
+        } else {
+            ("€", true)
+        }
+    } else if currency_eq(currency_code, "RUB") {
+        ("₽", false)
+    } else if currency_eq(currency_code, "PLN") {
+        ("zł", false)
+    } else if currency_eq(currency_code, "CZK") {
+        ("Kč", false)
+    } else if currency_eq(currency_code, "HUF") {
+        ("Ft", false)
+    } else if currency_eq(currency_code, "RON") {
+        ("lei", false)
+    } else if currency_eq(currency_code, "TRY") {
+        ("₺", true)
+    } else if currency_eq(currency_code, "ILS") {
+        ("₪", true)
+    } else if currency_eq(currency_code, "SAR") {
+        ("﷼", true)
+    } else if currency_eq(currency_code, "AED") {
+        ("د.إ", true)
+    } else if currency_eq(currency_code, "THB") {
+        ("฿", true)
+    } else if currency_eq(currency_code, "SGD") {
+        ("S$", true)
+    } else if currency_eq(currency_code, "HKD") {
+        ("HK$", true)
+    } else if currency_eq(currency_code, "NZD") {
+        ("NZ$", true)
+    } else if currency_eq(currency_code, "ZAR") {
+        ("R", true)
+    } else {
+        ("$", true)
     }
 }
 
@@ -87,9 +126,9 @@ pub fn format_currency(value: f64, locale: &str, currency_code: &str) -> String 
     let (symbol, is_prefix) = currency_symbol(currency_code, locale);
     let (decimal_sep, group_sep) = separators(locale);
 
-    let no_decimal = matches!(
-        currency_code.to_uppercase().as_str(),
-        "JPY" | "KRW" | "VND" | "CLP" | "IDR" | "HUF" | "RWF" | "UGX"
+    let no_decimal = crate::locale_util::lang_matches_any(
+        currency_code,
+        &["JPY", "KRW", "VND", "CLP", "IDR", "HUF", "RWF", "UGX"],
     );
 
     let abs_val = if value < 0.0 { -value } else { value };
