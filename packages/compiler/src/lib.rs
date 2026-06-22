@@ -234,6 +234,16 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
     Ok(result)
 }
 
+/// FNV-1a 64-bit hash for translation keys. Deterministic, fast, collision-free.
+pub fn fnv1a_64(data: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in data {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
 /// Internal: read translations from a source directory, parse ICU, resolve refs.
 /// Returns a map of locale → compiled MessageNode AST.
 ///
@@ -375,6 +385,14 @@ mod key_ref_tests {
             MessageParser::new("$t(a)").parse().unwrap());
 
         resolve_key_refs(&mut translations);
+    }
+
+    #[test]
+    fn fnv1a_is_deterministic() {
+        assert_eq!(fnv1a_64(b"hello"), fnv1a_64(b"hello"));
+        assert_ne!(fnv1a_64(b"hello"), fnv1a_64(b"world"));
+        assert_eq!(fnv1a_64(b""), 0xcbf29ce484222325);
+        assert_eq!(fnv1a_64(b"a"), 0xaf63dc4c8601ec8c);
     }
 
     #[test]
