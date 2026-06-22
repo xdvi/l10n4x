@@ -107,12 +107,12 @@ impl TranslationStore {
 static STORE: AtomicPtr<TranslationStore> = AtomicPtr::new(core::ptr::null_mut());
 
 // Function pointer type for missing key notifications.
-type MissingKeyFn = fn(locale: &str, key: &str);
+type MissingKeyFn = fn(locale: &str, key_hash: u64);
 
 static MISSING_KEY_HANDLER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Installs a callback invoked whenever a key is not found in any locale or fallback.
-/// The callback receives the originally requested locale and the missing key.
+/// The callback receives the originally requested locale and the missing key hash.
 /// Pass `clear_missing_key_handler` to remove the handler.
 ///
 /// # Safety
@@ -126,11 +126,11 @@ pub fn clear_missing_key_handler() {
     MISSING_KEY_HANDLER.store(core::ptr::null_mut(), Ordering::Release);
 }
 
-fn call_missing_key_handler(locale: &str, key: &str) {
+fn call_missing_key_handler(locale: &str, key_hash: u64) {
     let ptr = MISSING_KEY_HANDLER.load(Ordering::Acquire);
     if !ptr.is_null() {
         let f: MissingKeyFn = unsafe { core::mem::transmute(ptr) };
-        f(locale, key);
+        f(locale, key_hash);
     }
 }
 
@@ -270,9 +270,9 @@ pub fn clear_translations() {
     emit_locale_changed("*");
 }
 
-/// Returns `true` if `key` exists in `locale` or the configured fallback locale.
-/// When `context` is `Some("male")`, it first tries `key_male` then `key`.
-pub fn key_exists(locale: &str, key: &str, context: Option<&str>) -> bool {
+/// Returns `true` if `key_hash` exists in `locale` or the configured fallback locale.
+/// When `context_hash` is `Some(...)`, it first tries the context hash then `key_hash`.
+pub fn key_exists(locale: &str, key_hash: u64, context_hash: Option<u64>) -> bool {
     let chain = get_fallback_chain();
     read_store(|store| {
         let mut candidates = alloc::vec![locale];
@@ -283,18 +283,18 @@ pub fn key_exists(locale: &str, key: &str, context: Option<&str>) -> bool {
             candidates.push(fb.as_ref());
         }
         for loc in candidates {
-            let check_key = |k: &str| -> bool {
+            let check_key = |kh: u64| -> bool {
                 if let Some(buf) = store.lookup(loc) {
                     if let Ok(reader) = BinaryFormatReader::new(buf) {
-                        if reader.lookup(crate::binary_format::fnv1a_64(k.as_bytes())).is_some() { return true; }
+                        if reader.lookup(kh).is_some() { return true; }
                     }
                 }
                 false
             };
-            if let Some(ctx) = context {
-                if check_key(&alloc::format!("{}_{}", key, ctx)) { return true; }
+            if let Some(ctx_hash) = context_hash {
+                if check_key(ctx_hash) { return true; }
             }
-            if check_key(key) { return true; }
+            if check_key(key_hash) { return true; }
         }
         false
     })
@@ -408,23 +408,22 @@ pub(crate) fn emit_locale_changed(locale: &str) {
     }
 }
 
-/// Attempts to translate `key` from `locale` in `store`, writing to `writer`.
+/// Attempts to translate `key_hash` from `locale` in `store`, writing to `writer`.
 /// Returns `true` if translation succeeded.
 #[inline]
 fn try_locale<W: core::fmt::Write>(
     store: &TranslationStore,
     locale: &str,
-    key: &str,
-    context: Option<&str>,
+    key_hash: u64,
+    context_hash: Option<u64>,
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> bool {
     // Try context suffix first: key_male → key
-    if let Some(ctx) = context {
-        let ctx_key = alloc::format!("{}_{}", key, ctx);
+    if let Some(ctx_hash) = context_hash {
         if let Some(buf) = store.lookup(locale) {
             if let Ok(reader) = BinaryFormatReader::new(buf) {
-                if let Some(bytecode) = reader.lookup(crate::binary_format::fnv1a_64(ctx_key.as_bytes())) {
+                if let Some(bytecode) = reader.lookup(ctx_hash) {
                     if format_message(bytecode, locale, params, writer).is_ok() {
                         return true;
                     }
@@ -435,7 +434,7 @@ fn try_locale<W: core::fmt::Write>(
     }
     if let Some(buf) = store.lookup(locale) {
         if let Ok(reader) = BinaryFormatReader::new(buf) {
-            if let Some(bytecode) = reader.lookup(crate::binary_format::fnv1a_64(key.as_bytes())) {
+            if let Some(bytecode) = reader.lookup(key_hash) {
                 if format_message(bytecode, locale, params, writer).is_ok() {
                     return true;
                 }
@@ -446,12 +445,12 @@ fn try_locale<W: core::fmt::Write>(
     false
 }
 
-/// Helper function to translate a key directly into a caller-provided Writer.
-/// When `context` is `Some("male")`, it first tries `key_male` then falls back to `key`.
+/// Helper function to translate a key hash directly into a caller-provided Writer.
+/// When `context_hash` is `Some(...)`, it first tries the context hash then falls back to `key_hash`.
 pub fn translate_to_writer<W: core::fmt::Write>(
     locale: &str,
-    key: &str,
-    context: Option<&str>,
+    key_hash: u64,
+    context_hash: Option<u64>,
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> CoreResult<()> {
@@ -459,20 +458,20 @@ pub fn translate_to_writer<W: core::fmt::Write>(
 
     #[cfg(feature = "std")]
     {
-        log::debug!("translate: locale={}, key={}", locale, key);
+        log::debug!("translate: locale={}, key_hash={:#x}", locale, key_hash);
     }
 
     let chain = get_fallback_chain();
 
     let success = read_store(|store| {
         // 1. Try exact locale match
-        if try_locale(store, locale, key, context, params, writer) {
+        if try_locale(store, locale, key_hash, context_hash, params, writer) {
             return Some(());
         }
 
         // 2. BCP-47 subtag negotiation: en-US → en
         if let Some(parent) = subtag_parent(locale) {
-            if parent != locale && try_locale(store, parent, key, context, params, writer) {
+            if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer) {
                 return Some(());
             }
         }
@@ -484,7 +483,7 @@ pub fn translate_to_writer<W: core::fmt::Write>(
             if let Some(parent) = subtag_parent(locale) {
                 if fb_str == parent { continue; }
             }
-            if try_locale(store, fb_str, key, context, params, writer) {
+            if try_locale(store, fb_str, key_hash, context_hash, params, writer) {
                 return Some(());
             }
         }
@@ -496,20 +495,28 @@ pub fn translate_to_writer<W: core::fmt::Write>(
         Ok(())
     } else {
         crate::metrics::inc_cache_misses();
-        call_missing_key_handler(locale, key);
-        writer
-            .write_str(key)
-            .map_err(|_| crate::CoreError::IoError("Failed to write key fallback"))?;
+        call_missing_key_handler(locale, key_hash);
+        let _ = core::write!(writer, "{:#x}", key_hash);
         Ok(())
     }
 }
 
-/// Translates a key for a given locale, dynamically interpolating parameters,
+/// Translates a key hash for a given locale, dynamically interpolating parameters,
 /// and returning an allocated String.
-pub fn translate(locale: &str, key: &str, context: Option<&str>, params: &[(&str, &str)]) -> String {
+pub fn translate(locale: &str, key_hash: u64, context_hash: Option<u64>, params: &[(&str, &str)]) -> String {
     let mut buf = String::new();
-    let _ = translate_to_writer(locale, key, context, params, &mut buf);
+    let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut buf);
     buf
+}
+
+#[cfg(test)]
+fn hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.bytes() {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
 }
 
 #[cfg(test)]
@@ -558,9 +565,9 @@ mod missing_key_tests {
     static MISSING_KEY_MUTEX: Mutex<()> = Mutex::new(());
     static HANDLER_CALLED: AtomicBool = AtomicBool::new(false);
 
-    fn test_handler(locale: &str, key: &str) {
+    fn test_handler(locale: &str, key_hash: u64) {
         HANDLER_CALLED.store(true, Ordering::SeqCst);
-        let _ = (locale, key);
+        let _ = (locale, key_hash);
     }
 
     #[test]
@@ -570,7 +577,7 @@ mod missing_key_tests {
         HANDLER_CALLED.store(false, Ordering::SeqCst);
         set_missing_key_handler(test_handler);
         let mut buf = alloc::string::String::new();
-        let _ = translate_to_writer("xx", "nonexistent.key", None, &[], &mut buf);
+        let _ = translate_to_writer("xx", hash("nonexistent.key"), None, &[], &mut buf);
         assert!(HANDLER_CALLED.load(Ordering::SeqCst), "handler should have been called");
         clear_missing_key_handler();
     }
@@ -582,7 +589,7 @@ mod missing_key_tests {
         HANDLER_CALLED.store(false, Ordering::SeqCst);
         set_missing_key_handler(test_handler);
         let mut buf = alloc::string::String::new();
-        let _ = translate_to_writer("zz", "nonexistent", None, &[], &mut buf);
+        let _ = translate_to_writer("zz", hash("nonexistent"), None, &[], &mut buf);
         assert!(HANDLER_CALLED.load(Ordering::SeqCst), "handler should be called for missing key");
         clear_missing_key_handler();
     }
@@ -746,7 +753,6 @@ mod store_extra_tests {
         });
     }
 
-    use core::sync::atomic::{AtomicBool, Ordering};
     use std::sync::Mutex;
     static EXTRA_MUTEX: Mutex<()> = Mutex::new(());
     fn lock_extra() -> std::sync::MutexGuard<'static, ()> {
@@ -772,7 +778,7 @@ mod store_extra_tests {
     fn key_exists_returns_false_without_data() {
         let _lock = lock_extra();
         clear_translations();
-        assert!(!key_exists("en", "some.key", None));
+        assert!(!key_exists("en", hash("some.key"), None));
     }
 
     #[test]
@@ -806,8 +812,8 @@ mod store_extra_tests {
     fn translate_key_not_found_returns_key() {
         let _lock = lock_extra();
         clear_translations();
-        let result = translate("xx", "missing.key", None, &[]);
-        assert_eq!(result, "missing.key");
+        let result = translate("xx", hash("missing.key"), None, &[]);
+        assert_eq!(result, alloc::format!("{:#x}", hash("missing.key")));
     }
 
     #[test]
@@ -829,7 +835,7 @@ mod store_extra_tests {
         let _lock = lock_extra();
         clear_translations();
         load_locale_with_key("en", "greeting", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
-        assert!(key_exists("en", "greeting", None), "should find existing key");
+        assert!(key_exists("en", hash("greeting"), None), "should find existing key");
     }
 
     #[test]
@@ -838,7 +844,7 @@ mod store_extra_tests {
         clear_translations();
         load_locale_with_key("en", "greeting", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
         assert!(
-            key_exists("en-US", "greeting", None),
+            key_exists("en-US", hash("greeting"), None),
             "should find key via subtag parent 'en'"
         );
     }
@@ -849,7 +855,7 @@ mod store_extra_tests {
         clear_translations();
         load_locale_with_key("en", "greeting_male", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
         assert!(
-            key_exists("en", "greeting", Some("male")),
+            key_exists("en", hash("greeting"), Some(hash("greeting_male"))),
             "should find context-suffixed key"
         );
     }
@@ -860,7 +866,7 @@ mod store_extra_tests {
         clear_translations();
         let val: Vec<u8> = vec![0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd'];
         load_locale_with_key("en", "greeting", &val);
-        let result = translate("en-US", "greeting", None, &[]);
+        let result = translate("en-US", hash("greeting"), None, &[]);
         assert_eq!(result, "Hello World", "should resolve via parent en");
     }
 
@@ -873,7 +879,7 @@ mod store_extra_tests {
         let val: Vec<u8> = vec![0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd'];
         load_locale_with_key("fr", "greeting", &val);
         set_fallback_chain(&["fr"]);
-        let result = translate("en-US", "greeting", None, &[]);
+        let result = translate("en-US", hash("greeting"), None, &[]);
         assert_eq!(result, "Hello World", "should resolve via fallback fr since fr != parent en");
         set_fallback_chain(&["en"]);
     }
@@ -884,9 +890,9 @@ mod store_extra_tests {
         clear_translations();
         load_locale_with_key("en", "broken", &[0xFF]);
         let before = crate::metrics::format_errors();
-        let result = translate("en", "broken", None, &[]);
+        let result = translate("en", hash("broken"), None, &[]);
         let after = crate::metrics::format_errors();
-        assert_eq!(result, "broken", "bad bytecode falls through to key-as-text");
+        assert_eq!(result, alloc::format!("{:#x}", hash("broken")), "bad bytecode falls through to key-as-text");
         assert!(after > before, "format_errors should increase on bad bytecode");
     }
 
@@ -896,9 +902,9 @@ mod store_extra_tests {
         clear_translations();
         load_locale_with_key("en", "broken_male", &[0xFF]);
         let before = crate::metrics::format_errors();
-        let result = translate("en", "broken", Some("male"), &[]);
+        let result = translate("en", hash("broken"), Some(hash("broken_male")), &[]);
         let after = crate::metrics::format_errors();
-        assert_eq!(result, "broken", "bad context bytecode falls through");
+        assert_eq!(result, alloc::format!("{:#x}", hash("broken")), "bad context bytecode falls through");
         assert!(after >= before, "format_errors should increase for bad context bytecode");
     }
 
@@ -920,15 +926,15 @@ mod store_extra_tests {
         data.extend_from_slice(&index_offset.to_be_bytes());
         data.extend_from_slice(&1u32.to_be_bytes());
         data.extend_from_slice(val);
-        let hash = crate::binary_format::fnv1a_64(b"greeting");
-        data.extend_from_slice(&hash.to_be_bytes());
+        let kh = crate::binary_format::fnv1a_64(b"greeting");
+        data.extend_from_slice(&kh.to_be_bytes());
         data.extend_from_slice(&val_offset.to_be_bytes());
         data.extend_from_slice(&(val.len() as u32).to_be_bytes());
 
         let static_data: &'static [u8] = Box::leak(data.into_boxed_slice());
         assert!(load_static_bytes("en", static_data, true));
 
-        let result = translate("en", "greeting", None, &[]);
+        let result = translate("en", hash("greeting"), None, &[]);
         assert_eq!(result, "Hello", "should translate from static L10N data");
     }
 

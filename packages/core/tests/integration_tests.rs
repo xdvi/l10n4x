@@ -142,7 +142,7 @@ fn test_translate_helper_and_macro() {
 
     let result = translate(
         "en",
-        "hello",
+        fnv1a_64(b"hello"),
         None,
         l10n4x_core::l10n_params! { "name" => "Diego" },
     );
