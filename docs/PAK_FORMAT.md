@@ -4,6 +4,10 @@ All multi-byte integers are **big-endian**.
 
 ## Signed container (`L10P`)
 
+Two header formats exist. The parser autodetects which one is used.
+
+### Old format (v1, flags = 0)
+
 | Offset | Size | Field |
 |--------|------|-------|
 | 0 | 4 | Magic `L10P` |
@@ -11,6 +15,19 @@ All multi-byte integers are **big-endian**.
 | 8 | 4 | Payload length (N) |
 | 12 | N | zstd-compressed inner `L10N` binary |
 | 12+N | 64 | Ed25519 signature over bytes `[0..12+N)` |
+
+### New format (v1, flags bit 0 = has_parent)
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | Magic `L10P` |
+| 4 | 4 | Version `1` |
+| 8 | 4 | Flags (bit 0 = has_parent_locale) |
+| 12 | 4 | Payload length (N) |
+| 16 | 1 | Parent locale length (only if bit 0 set) |
+| 17 | * | Parent locale UTF-8 (only if bit 0 set) |
+| ... | N | zstd-compressed inner `L10N` binary |
+| ...+N | 64 | Ed25519 signature over bytes `[0..parent_end+N)` |
 
 Signature verification is **mandatory** at runtime. Unsigned or tampered paks are rejected.
 
