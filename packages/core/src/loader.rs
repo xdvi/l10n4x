@@ -5,12 +5,14 @@ use alloc::string::ToString;
 use alloc::sync::Arc;
 
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
-pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
+/// Takes ownership of `bytes` to avoid an extra allocation (caller typically has a `Vec<u8>`
+/// from `decompress_pak`).
+pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     crate::metrics::inc_locale_loads();
     let (mut new_vec, fallback_chain) = read_store(|store| {
         ((*store.locales).clone(), alloc::sync::Arc::clone(&store.fallback_chain))
     });
-    let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes.to_vec())));
+    let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
         Ok(pos) => new_vec[pos] = entry,
         Err(pos) => new_vec.insert(pos, entry),
@@ -26,7 +28,7 @@ pub fn load_raw_bytes(locale_str: &str, bytes: &[u8]) -> bool {
 /// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
 pub fn load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> bool {
     match decompress_pak(pak_bytes) {
-        Ok(decompressed) => load_raw_bytes(locale_str, &decompressed),
+        Ok(decompressed) => load_raw_bytes(locale_str, decompressed),
         Err(_) => false,
     }
 }
@@ -96,14 +98,14 @@ mod tests {
     fn load_raw_bytes_success() {
         clear_translations();
         let bytes = make_l10n_bytes();
-        assert!(load_raw_bytes("test", &bytes));
+        assert!(load_raw_bytes("test", bytes));
     }
 
     #[test]
     fn load_raw_bytes_then_locale_loaded() {
         clear_translations();
         let bytes = make_l10n_bytes();
-        load_raw_bytes("test-loc", &bytes);
+        load_raw_bytes("test-loc", bytes);
         assert!(locale_loaded("test-loc"));
     }
 
@@ -113,8 +115,8 @@ mod tests {
         let bytes1 = make_l10n_bytes();
         let mut bytes2 = make_l10n_bytes();
         bytes2.push(0xFF);
-        assert!(load_raw_bytes("dup", &bytes1));
-        assert!(load_raw_bytes("dup", &bytes2));
+        assert!(load_raw_bytes("dup", bytes1));
+        assert!(load_raw_bytes("dup", bytes2));
     }
 
     #[test]
