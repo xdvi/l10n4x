@@ -19,6 +19,9 @@ pub struct Config {
     /// When true, wraps signed `.pak` files in an optional `L10E` AES-GCM envelope.
     #[serde(default)]
     pub encrypt: bool,
+    /// zstd compression level (1-22, default 8).
+    #[serde(default = "default_compression_level")]
+    pub compression_level: i32,
     /// Env var holding the 32-byte AES key (build + runtime, only when `encrypt` is true).
     #[serde(default = "default_encrypt_key_env")]
     pub encrypt_key_env: String,
@@ -33,6 +36,10 @@ fn default_encrypt_key_env() -> String {
 
 fn default_signing_key_env() -> String {
     "L10N4X_SIGNING_KEY".to_string()
+}
+
+fn default_compression_level() -> i32 {
+    8
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -285,6 +292,7 @@ mod config_io_and_env_tests {
             signing_key_env: "SIGN_KEY".to_string(),
             verify_public_key: None,
             encrypt: false,
+            compression_level: 8,
             encrypt_key_env: "ENC_KEY".to_string(),
             cors_origins: None,
             targets: vec![],
@@ -325,6 +333,7 @@ mod config_io_and_env_tests {
             signing_key_env: "TEST_SIGN_KEY_ENV".to_string(),
             verify_public_key: None,
             encrypt: false,
+            compression_level: 8,
             encrypt_key_env: "TEST_ENC_KEY_ENV".to_string(),
             cors_origins: None,
             targets: vec![],

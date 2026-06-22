@@ -220,6 +220,7 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
         Path::new(&config.source_dir),
         Path::new(&config.output_dir),
         config.encrypt,
+        config.compression_level,
     )
     .map_err(|e| anyhow::anyhow!("Compilation failed: {}", e))?;
 
@@ -1218,6 +1219,7 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         signing_key_env: "L10N4X_SIGNING_KEY".to_string(),
         verify_public_key: None,
         encrypt: false,
+        compression_level: 8,
         encrypt_key_env: "L10N4X_ENCRYPT_KEY".to_string(),
         cors_origins: None,
         targets,
