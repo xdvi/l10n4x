@@ -6,19 +6,15 @@ use std::path::Path;
 
 pub fn generate(
     out_dir: &Path,
-    sorted_keys: &[String],
+    key_pairs: &[(u64, String)],
     _options: &Value,
     ctx: &GenerateContext<'_>,
     _params_map: &HashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     let mut key_definitions = String::new();
-    for k in sorted_keys {
-        key_definitions.push_str(&format!("  | \"{}\"\n", k));
-    }
-    if key_definitions.is_empty() {
-        key_definitions = "  | string".to_string();
-    } else {
-        key_definitions = key_definitions.trim_end().to_string();
+    for (hash, name) in key_pairs {
+        let pascal_name = crate::generator::to_pascal_case(name);
+        key_definitions.push_str(&format!("export const {} = 0x{:016x} as const;\n", pascal_name, hash));
     }
 
     let service = format!(
@@ -31,9 +27,9 @@ import {{
   initializeI18n,
 }} from './generated';
 
-export type LocaleKey =
-{keys};
+export type LocaleKey = number;
 
+{keys}
 @Injectable({{ providedIn: 'root' }})
 export class I18nService {{
   private readonly _locale = new BehaviorSubject<string>('{fallback}');
@@ -153,20 +149,20 @@ mod tests {
     #[test]
     fn generates_service_with_keys() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["welcome.title".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "welcome.title".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n.service.ts")).unwrap();
         assert!(content.contains("I18nService"));
-        assert!(content.contains("welcome.title"));
+        assert!(content.contains("export const WelcomeTitle = 0xabcdef0123456789 as const;"));
     }
 
     #[test]
     fn generates_all_angular_artifacts() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["k".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "k".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         assert!(dir.path().join("i18n.service.ts").exists());
         assert!(dir.path().join("i18n.pipe.ts").exists());
         assert!(dir.path().join("i18n.module.ts").exists());

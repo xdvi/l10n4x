@@ -95,25 +95,21 @@ export function useTranslation(initialLocale = _FALLBACK_LOCALE): UseTranslation
 
 pub fn generate(
     out_dir: &Path,
-    sorted_keys: &[String],
+    key_pairs: &[(u64, String)],
     options: &Value,
     ctx: &GenerateContext<'_>,
     params_map: &std::collections::HashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     let mut key_definitions = String::new();
-    for k in sorted_keys {
-        key_definitions.push_str(&format!("  | \"{}\"\n", k));
-    }
-    if key_definitions.is_empty() {
-        key_definitions = "  | string".to_string();
-    } else {
-        key_definitions = key_definitions.trim_end().to_string();
+    for (hash, name) in key_pairs {
+        let pascal_name = crate::generator::to_pascal_case(name);
+        key_definitions.push_str(&format!("export const {} = 0x{:016x} as const;\n", pascal_name, hash));
     }
 
     // Build typed t() overloads for keys that have parameters
     let mut typed_overloads = String::new();
-    for k in sorted_keys {
-        if let Some(param_names) = params_map.get(k) {
+    for (_, name) in key_pairs {
+        if let Some(param_names) = params_map.get(name) {
             if !param_names.is_empty() {
                 let params_type: String = param_names
                     .iter()
@@ -121,8 +117,7 @@ pub fn generate(
                     .collect::<Vec<_>>()
                     .join(";\n");
                 typed_overloads.push_str(&format!(
-                    "export function t(locale: string, key: \"{key}\", params: {{\n{params}\n}}): string;\n",
-                    key = k,
+                    "export function t(locale: string, key: number, params: {{\n{params}\n}}): string;\n",
                     params = params_type
                 ));
             }
@@ -233,32 +228,35 @@ mod tests {
     #[test]
     fn generates_type_definitions() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["welcome.title".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "welcome.title".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &serde_json::Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &serde_json::Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
-        assert!(content.contains("\"welcome.title\""));
+        assert!(content.contains("export const WelcomeTitle = 0xabcdef0123456789 as const;"));
         assert!(content.contains("export function t("));
     }
 
     #[test]
     fn key_definitions_are_typed() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["a.b".to_string(), "c.d".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![
+            (0xabcdef0123456789, "a.b".to_string()),
+            (0x123456789abcdef0, "c.d".to_string()),
+        ];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
-        assert!(content.contains("a.b"));
-        assert!(content.contains("c.d"));
+        assert!(content.contains("export const AB = 0xabcdef0123456789 as const;"));
+        assert!(content.contains("export const CD = 0x123456789abcdef0 as const;"));
     }
 
     #[test]
     fn generates_with_params() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["greeting".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "greeting".to_string())];
         let mut params = HashMap::new();
         params.insert("greeting".to_string(), vec!["name".to_string()]);
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("name: string | number"));
     }
@@ -266,10 +264,10 @@ mod tests {
     #[test]
     fn generates_with_react() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["key".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "key".to_string())];
         let params = HashMap::new();
         let opts = serde_json::json!({"react": true});
-        generate(dir.path(), &sorted, &opts, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &opts, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("useTranslation"));
     }
@@ -277,9 +275,9 @@ mod tests {
     #[test]
     fn generates_with_encrypt() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["key".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "key".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx_encrypt(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx_encrypt(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("ENCRYPT_ENABLED"));
     }
@@ -287,10 +285,10 @@ mod tests {
     #[test]
     fn generates_empty_keys_fallback() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec![];
+        let key_pairs: Vec<(u64, String)> = vec![];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
-        assert!(content.contains("string"));
+        assert!(content.contains("number"));
     }
 }

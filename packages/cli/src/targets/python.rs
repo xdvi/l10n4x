@@ -4,14 +4,14 @@ use std::path::Path;
 
 pub fn generate(
     out_dir: &Path,
-    sorted_keys: &[String],
+    key_pairs: &[(u64, String)],
     _options: &Value,
     to_upper_snake_case: fn(&str) -> String,
 ) -> Result<(), anyhow::Error> {
     let mut key_definitions = String::new();
-    for k in sorted_keys {
-        let name = to_upper_snake_case(k);
-        key_definitions.push_str(&format!("    {} = \"{}\"\n", name, k));
+    for (hash, name) in key_pairs {
+        let def_name = to_upper_snake_case(name);
+        key_definitions.push_str(&format!("    {} = 0x{:016x}\n", def_name, hash));
     }
 
     let content = format!(
@@ -152,7 +152,7 @@ def clear() -> None:
 
 # ── Generated keys ────────────────────────────────────────────────────────────
 
-class LocaleKey(str, Enum):
+class LocaleKey(int, Enum):
 {key_definitions}
 "#,
         key_definitions = key_definitions
@@ -170,8 +170,8 @@ mod tests {
 
     fn run_generate(keys: &[&str]) -> String {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = keys.iter().map(|s| s.to_string()).collect();
-        generate(dir.path(), &sorted, &serde_json::Value::Null, |s| {
+        let key_pairs: Vec<(u64, String)> = keys.iter().enumerate().map(|(i, s)| (0xabcdef0123456789 + i as u64, s.to_string())).collect();
+        generate(dir.path(), &key_pairs, &serde_json::Value::Null, |s| {
             s.to_uppercase().replace('.', "_")
         })
         .unwrap();

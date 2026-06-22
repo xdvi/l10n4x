@@ -12,8 +12,9 @@ import init, {
 // Generated constants
 // ---------------------------------------------------------------------------
 
-export type LocaleKey =
-{{KEY_DEFINITIONS}};
+export type LocaleKey = number;
+
+{{KEY_DEFINITIONS}}
 
 export const L10nErrors = {
   OK: 0,

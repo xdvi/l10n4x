@@ -6,19 +6,15 @@ use std::path::Path;
 
 pub fn generate(
     out_dir: &Path,
-    sorted_keys: &[String],
+    key_pairs: &[(u64, String)],
     _options: &Value,
     ctx: &GenerateContext<'_>,
     _params_map: &HashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     let mut key_definitions = String::new();
-    for k in sorted_keys {
-        key_definitions.push_str(&format!("  | \"{}\"\n", k));
-    }
-    if key_definitions.is_empty() {
-        key_definitions = "  | string".to_string();
-    } else {
-        key_definitions = key_definitions.trim_end().to_string();
+    for (hash, name) in key_pairs {
+        let pascal_name = crate::generator::to_pascal_case(name);
+        key_definitions.push_str(&format!("export const {} = 0x{:016x} as const;\n", pascal_name, hash));
     }
 
     let content = format!(
@@ -32,9 +28,9 @@ import {{
 
 const FALLBACK_LOCALE = "{fallback}"
 
-export type LocaleKey =
-{keys}
+export type LocaleKey = number
 
+{keys}
 export function useI18n(initialLocale = FALLBACK_LOCALE) {{
   const locale = ref(initialLocale)
   const isReady = ref(false)
@@ -88,23 +84,26 @@ mod tests {
     #[test]
     fn generates_vue_composable() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["welcome.title".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "welcome.title".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("useI18n.ts")).unwrap();
         assert!(content.contains("useI18n"));
-        assert!(content.contains("welcome.title"));
+        assert!(content.contains("export const WelcomeTitle = 0xabcdef0123456789 as const;"));
     }
 
     #[test]
     fn generates_locale_key_type() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["a.b".to_string(), "c.d".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![
+            (0xabcdef0123456789, "a.b".to_string()),
+            (0x123456789abcdef0, "c.d".to_string()),
+        ];
         let params = HashMap::new();
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), &params).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("useI18n.ts")).unwrap();
-        assert!(content.contains("a.b"));
-        assert!(content.contains("c.d"));
+        assert!(content.contains("export const AB = 0xabcdef0123456789 as const;"));
+        assert!(content.contains("export const CD = 0x123456789abcdef0 as const;"));
         assert!(content.contains("LocaleKey"));
     }
 }

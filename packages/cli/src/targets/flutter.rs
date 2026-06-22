@@ -56,16 +56,16 @@ fn dart_decrypt_key_lookup(encrypt: bool) -> String {
 
 pub fn generate(
     out_dir: &Path,
-    sorted_keys: &[String],
+    key_pairs: &[(u64, String)],
     _options: &Value,
     ctx: &GenerateContext<'_>,
     to_lower_camel_case: fn(&str) -> String,
 ) -> Result<(), anyhow::Error> {
     let mut dart_definitions = String::new();
     let mut dart_helpers = String::new();
-    for k in sorted_keys {
-        let key_var = to_lower_camel_case(k);
-        dart_definitions.push_str(&format!("  static const String {} = '{}';\n", key_var, k));
+    for (hash, name) in key_pairs {
+        let key_var = to_lower_camel_case(name);
+        dart_definitions.push_str(&format!("  static const int {} = 0x{:016x};\n", key_var, hash));
         dart_helpers.push_str(&format!(
             "  String {}({{Map<String, String>? args}}) => t(L10nKeys.{}, args: args);\n",
             key_var, key_var
@@ -122,8 +122,11 @@ mod tests {
     #[test]
     fn generates_key_definitions() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["common.welcome".to_string(), "user.name".to_string()];
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), |s| {
+        let key_pairs: Vec<(u64, String)> = vec![
+            (0xabcdef0123456789, "common.welcome".to_string()),
+            (0x123456789abcdef0, "user.name".to_string()),
+        ];
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), |s| {
             let pascal: String = s.split('.').map(|part| {
                 let mut c = part.chars();
                 match c.next() {
@@ -138,7 +141,7 @@ mod tests {
             }
         }).unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
-        assert!(content.contains("static const String"));
+        assert!(content.contains("static const int"));
         assert!(content.contains("commonWelcome"));
         assert!(content.contains("userName"));
     }
@@ -146,8 +149,8 @@ mod tests {
     #[test]
     fn generates_helper_methods() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["greeting".to_string()];
-        generate(dir.path(), &sorted, &Value::Null, &test_ctx(), |s| {
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "greeting".to_string())];
+        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), |s| {
             let mut chars = s.chars();
             match chars.next() {
                 None => String::new(),
@@ -161,11 +164,11 @@ mod tests {
     #[test]
     fn generates_bindings_with_encryption() {
         let dir = tempfile::tempdir().unwrap();
-        let sorted: Vec<String> = vec!["greeting".to_string()];
+        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "greeting".to_string())];
         let mut ctx = test_ctx();
         ctx.encrypt = true;
         ctx.encrypt_key_env = "TEST_ENCRYPT_KEY_ENV";
-        generate(dir.path(), &sorted, &Value::Null, &ctx, |s| s.to_string()).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &ctx, |s| s.to_string()).unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
         assert!(content.contains("l10n4c_set_decrypt_key"));
         assert!(content.contains("Platform.environment['TEST_ENCRYPT_KEY_ENV']"));

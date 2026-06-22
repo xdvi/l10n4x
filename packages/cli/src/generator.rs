@@ -47,7 +47,7 @@ pub fn to_lower_camel_case(s: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn generate_bindings(
     targets: &[Target],
-    keys: &HashSet<String>,
+    _keys: &HashSet<String>,
     fallback: &str,
     source_dir: &str,
     output_dir: &str,
@@ -65,8 +65,7 @@ pub fn generate_bindings(
         encrypt,
         encrypt_key_env,
     };
-    let mut sorted_keys: Vec<String> = keys.iter().cloned().collect();
-    sorted_keys.sort();
+    let key_pairs = l10n4x_compiler::compile_key_pairs(Path::new(source_dir))?;
 
     for target in targets {
         let out_dir = Path::new(&target.out_dir);
@@ -76,7 +75,7 @@ pub fn generate_bindings(
             "go" => {
                 targets::go::generate(
                     out_dir,
-                    &sorted_keys,
+                    &key_pairs,
                     &target.options,
                     &ctx,
                     to_pascal_case,
@@ -86,24 +85,24 @@ pub fn generate_bindings(
                 let params_map = l10n4x_compiler::extract_params_map(
                     std::path::Path::new(ctx.source_dir)
                 ).unwrap_or_default();
-                targets::typescript::generate(out_dir, &sorted_keys, &target.options, &ctx, &params_map)?;
+                targets::typescript::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "flutter" => {
                 targets::flutter::generate(
                     out_dir,
-                    &sorted_keys,
+                    &key_pairs,
                     &target.options,
                     &ctx,
                     to_lower_camel_case,
                 )?;
             }
             "c" => {
-                targets::c::generate(out_dir, &sorted_keys, &target.options, to_upper_snake_case)?;
+                targets::c::generate(out_dir, &key_pairs, &target.options, to_upper_snake_case)?;
             }
             "python" => {
                 targets::python::generate(
                     out_dir,
-                    &sorted_keys,
+                    &key_pairs,
                     &target.options,
                     to_upper_snake_case,
                 )?;
@@ -112,19 +111,19 @@ pub fn generate_bindings(
                 let params_map = l10n4x_compiler::extract_params_map(
                     std::path::Path::new(ctx.source_dir)
                 ).unwrap_or_default();
-                targets::vue::generate(out_dir, &sorted_keys, &target.options, &ctx, &params_map)?;
+                targets::vue::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "svelte" => {
                 let params_map = l10n4x_compiler::extract_params_map(
                     std::path::Path::new(ctx.source_dir)
                 ).unwrap_or_default();
-                targets::svelte::generate(out_dir, &sorted_keys, &target.options, &ctx, &params_map)?;
+                targets::svelte::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "angular" => {
                 let params_map = l10n4x_compiler::extract_params_map(
                     std::path::Path::new(ctx.source_dir)
                 ).unwrap_or_default();
-                targets::angular::generate(out_dir, &sorted_keys, &target.options, &ctx, &params_map)?;
+                targets::angular::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             other => {
                 println!("Warning: Unknown target type '{}' ignored.", other);
