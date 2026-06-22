@@ -15,6 +15,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
+/// Per-locale map of key hashes to parsed message nodes.
+pub type TranslationsMap = HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
+
 /// Recursively flattens a JSON Value into a flat string map.
 ///
 /// Arrays of primitives are stored as a single JSON literal at the array key
@@ -251,14 +254,13 @@ pub fn fnv1a_64(data: &[u8]) -> u64 {
 /// `compile_translations_to_bytes`.
 fn compile_pipeline(
     src_path: &Path,
-) -> Result<HashMap<String, HashMap<String, Vec<icu_parser::MessageNode>>>, CompileError> {
+) -> Result<TranslationsMap, CompileError> {
     if !src_path.is_dir() {
         return Err(CompileError::SourceNotADirectory);
     }
 
     let lang_dirs = fs::read_dir(src_path)?;
-    let mut all_translations: HashMap<String, HashMap<String, Vec<icu_parser::MessageNode>>> =
-        HashMap::new();
+    let mut all_translations: TranslationsMap = HashMap::new();
 
     for lang_entry in lang_dirs {
         let lang_entry = lang_entry?;
@@ -319,10 +321,46 @@ fn compile_pipeline(
 
         resolve_key_refs(&mut parsed_translations);
 
-        all_translations.insert(lang, parsed_translations);
+        let hashed: HashMap<u64, Vec<icu_parser::MessageNode>> = parsed_translations
+            .into_iter()
+            .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
+            .collect();
+        all_translations.insert(lang, hashed);
     }
 
     Ok(all_translations)
+}
+
+/// Returns sorted (hash, original_key_name) for all keys across all locales.
+pub fn compile_key_pairs(src_path: &Path) -> Result<Vec<(u64, String)>, CompileError> {
+    if !src_path.is_dir() {
+        return Err(CompileError::SourceNotADirectory);
+    }
+    let mut seen: HashMap<String, u64> = HashMap::new();
+    for lang_entry in fs::read_dir(src_path)? {
+        let lang_entry = lang_entry?;
+        let lang_path = lang_entry.path();
+        if !lang_path.is_dir() { continue; }
+        for file_entry in fs::read_dir(&lang_path)? {
+            let file_entry = file_entry?;
+            let file_path = file_entry.path();
+            if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
+                let file_name = file_path.file_stem().and_then(|s| s.to_str())
+                    .ok_or(CompileError::InvalidFileName)?.to_string();
+                let content = fs::read_to_string(&file_path)?;
+                let parsed: Value = serde_json::from_str(&content)?;
+                let mut raw_flat = HashMap::new();
+                flatten_value(file_name, &parsed, &mut raw_flat);
+                for k in raw_flat.keys() {
+                    let hash = fnv1a_64(k.as_bytes());
+                    seen.entry(k.clone()).or_insert(hash);
+                }
+            }
+        }
+    }
+    let mut pairs: Vec<(u64, String)> = seen.into_iter().map(|(k, h)| (h, k)).collect();
+    pairs.sort_by_key(|(h, _)| *h);
+    Ok(pairs)
 }
 
 /// Compiles translations from a source directory into raw L10N binary bytes.
