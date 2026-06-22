@@ -162,7 +162,7 @@ fn resolve_single(
 /// Extracts the BCP-47 parent locale by stripping the last subtag.
 fn bcp47_parent(locale: &str) -> Option<&str> {
     locale
-        .rfind(|c: char| c == '-' || c == '_')
+        .rfind(|c: char| ['-', '_'].contains(&c))
         .filter(|&pos| pos > 0)
         .map(|pos| &locale[..pos])
 }
