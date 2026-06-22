@@ -53,7 +53,11 @@ enum Commands {
         dry_run: bool,
     },
     /// Validate translation keys consistency across language files
-    Validate,
+    Validate {
+        /// Print each missing key with its expected source file path
+        #[arg(long)]
+        report_misses: bool,
+    },
     /// Start the hot-reload development server and watch locales
     Dev {
         /// Flutter Web proxy mode
@@ -133,7 +137,11 @@ fn get_flat_keys_for_lang_dir(lang_dir: &Path) -> Result<HashSet<String>, anyhow
     Ok(merged_keys)
 }
 
-fn validate_keys(source_dir: &str) -> Result<HashSet<String>, anyhow::Error> {
+fn source_file_for_key(key: &str) -> &str {
+    key.split('.').next().unwrap_or("unknown")
+}
+
+fn validate_keys(source_dir: &str, report_misses: bool) -> Result<HashSet<String>, anyhow::Error> {
     let path = Path::new(source_dir);
     if !path.is_dir() {
         anyhow::bail!("Source directory '{}' does not exist.", source_dir);
@@ -171,10 +179,22 @@ fn validate_keys(source_dir: &str) -> Result<HashSet<String>, anyhow::Error> {
         let missing: Vec<&String> = all_keys.iter().filter(|k| !keys.contains(*k)).collect();
         if !missing.is_empty() {
             has_mismatches = true;
-            eprintln!(
-                "Error: Language '{}' is missing translation keys: {:?}",
-                lang, missing
-            );
+            if report_misses {
+                eprintln!("Error: Language '{}' is missing keys:", lang);
+                for k in &missing {
+                    eprintln!(
+                        "  '{}' → expected in '{}/{}.json'",
+                        k,
+                        lang,
+                        source_file_for_key(k)
+                    );
+                }
+            } else {
+                eprintln!(
+                    "Error: Language '{}' is missing translation keys: {:?}",
+                    lang, missing
+                );
+            }
         }
     }
 
@@ -193,7 +213,7 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
     let config = load_config()?;
 
     // 1. Validate consistency
-    let keys = validate_keys(&config.source_dir)?;
+    let keys = validate_keys(&config.source_dir, false)?;
 
     if dry_run {
         println!(
@@ -216,11 +236,44 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
         }
     }
 
-    l10n4x_compiler::compile_translations(
+    let bundle_mode = match config.bundles.mode.as_str() {
+        "modular" => l10n4x_compiler::BundleMode::Modular,
+        _ => l10n4x_compiler::BundleMode::Monolith,
+    };
+
+    let compile_options = {
+        #[cfg(feature = "debug-keys")]
+        {
+            l10n4x_compiler::CompileOptions {
+                encrypt: config.encrypt,
+                compression_level: config.compression_level,
+                bundle_mode,
+                preload: config.bundles.preload.clone(),
+                embed_debug_keys: config.debug_keys,
+            }
+        }
+        #[cfg(not(feature = "debug-keys"))]
+        {
+            l10n4x_compiler::CompileOptions {
+                encrypt: config.encrypt,
+                compression_level: config.compression_level,
+                bundle_mode,
+                preload: config.bundles.preload.clone(),
+            }
+        }
+    };
+
+    if config.debug_keys {
+        #[cfg(not(feature = "debug-keys"))]
+        eprintln!(
+            "Warning: debugKeys is enabled in config but this CLI build lacks the debug-keys feature."
+        );
+    }
+
+    l10n4x_compiler::compile_with_options(
         Path::new(&config.source_dir),
         Path::new(&config.output_dir),
-        config.encrypt,
-        config.compression_level,
+        compile_options,
     )
     .map_err(|e| anyhow::anyhow!("Compilation failed: {}", e))?;
 
@@ -749,7 +802,7 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
             }
         }
     } else {
-        match validate_keys(&config.source_dir) {
+        match validate_keys(&config.source_dir, false) {
             Ok(keys) => {
                 let mut v: Vec<_> = keys.into_iter().collect();
                 v.sort();
@@ -1010,7 +1063,7 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
     let ref_keys: std::collections::HashSet<String> = if ref_path.is_dir() {
         get_flat_keys_for_lang_dir(&ref_path)?.into_iter().collect()
     } else {
-        validate_keys(&config.source_dir)?.into_iter().collect()
+        validate_keys(&config.source_dir, false)?.into_iter().collect()
     };
 
     let mut coverages: Vec<LocaleCoverage> = Vec::new();
@@ -1360,6 +1413,8 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         compression_level: 8,
         encrypt_key_env: "L10N4X_ENCRYPT_KEY".to_string(),
         cors_origins: None,
+        debug_keys: false,
+        bundles: config::BundlesConfig::default(),
         targets,
     };
 
@@ -1636,9 +1691,9 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Build { dry_run } => {
             build_project(dry_run)?;
         }
-        Commands::Validate => {
+        Commands::Validate { report_misses } => {
             let config = load_config()?;
-            validate_keys(&config.source_dir)?;
+            validate_keys(&config.source_dir, report_misses)?;
         }
         Commands::Dev { flutter_web, port } => {
             run_dev_server(port, flutter_web).await?;
@@ -1679,7 +1734,7 @@ async fn main() -> Result<(), anyhow::Error> {
                 );
             }
             let config = load_config()?;
-            let keys = validate_keys(&config.source_dir)?;
+            let keys = validate_keys(&config.source_dir, false)?;
             let filtered: Vec<Target> = config
                 .targets
                 .into_iter()

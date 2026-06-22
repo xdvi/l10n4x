@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct BundlesConfig {
+    /// `monolith` (default) or `modular`.
+    #[serde(default = "default_bundle_mode")]
+    pub mode: String,
+    /// How to split modular bundles (`file` = one `.pak` per JSON source file).
+    #[serde(default = "default_split_by")]
+    pub split_by: String,
+    /// Namespaces loaded at startup via `init_modular` (modular mode only).
+    #[serde(default)]
+    pub preload: Vec<String>,
+}
+
+fn default_bundle_mode() -> String {
+    "monolith".to_string()
+}
+
+fn default_split_by() -> String {
+    "file".to_string()
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
@@ -27,6 +49,11 @@ pub struct Config {
     pub encrypt_key_env: String,
     #[serde(default)]
     pub cors_origins: Option<Vec<String>>,
+    /// Embed hash→key debug table in `.pak` files (requires `debug-keys` build feature).
+    #[serde(default)]
+    pub debug_keys: bool,
+    #[serde(default)]
+    pub bundles: BundlesConfig,
     pub targets: Vec<Target>,
 }
 
@@ -300,6 +327,8 @@ mod config_io_and_env_tests {
             compression_level: 8,
             encrypt_key_env: "ENC_KEY".to_string(),
             cors_origins: None,
+            debug_keys: false,
+            bundles: BundlesConfig::default(),
             targets: vec![],
         };
         save_config(&cfg).unwrap();
@@ -341,6 +370,8 @@ mod config_io_and_env_tests {
             compression_level: 8,
             encrypt_key_env: "TEST_ENC_KEY_ENV".to_string(),
             cors_origins: None,
+            debug_keys: false,
+            bundles: BundlesConfig::default(),
             targets: vec![],
         };
 
