@@ -2,9 +2,11 @@ extern crate alloc;
 use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 use crate::store::{
-    emit_locale_changed, lazy_cache_mut, offset_maps_mut, read_store, swap_store, StoreData,
-    TranslationStore,
+    build_store, emit_locale_changed, lazy_cache_mut, offset_maps_mut, read_store, store_snapshot,
+    StoreData, StoreSnapshot,
 };
+#[cfg(not(feature = "std"))]
+use crate::store::TranslationStore;
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -14,68 +16,238 @@ use std::collections::HashMap;
 #[cfg(feature = "std")]
 use std::sync::OnceLock;
 
+#[cfg(feature = "std")]
+enum LoadMode<'a> {
+    Replace,
+    Namespace(&'a str),
+}
+
+#[cfg(feature = "std")]
+fn merge_debug_keys(
+    snap: &mut StoreSnapshot,
+    bytes: &[u8],
+    replace: bool,
+) -> CoreResult<()> {
+    #[cfg(feature = "debug-keys")]
+    {
+        let reader = crate::binary_format::BinaryFormatReader::new(bytes)?;
+        let table = reader.debug_key_table();
+        if table.is_empty() {
+            return Ok(());
+        }
+        if replace {
+            snap.debug_keys = None;
+        }
+        let dk = snap
+            .debug_keys
+            .get_or_insert_with(|| Arc::new(HashMap::new()));
+        let map = Arc::make_mut(dk);
+        for (hash, name) in table {
+            map.insert(hash, Arc::from(name.as_str()));
+        }
+    }
+    #[cfg(not(feature = "debug-keys"))]
+    let _ = (snap, bytes, replace);
+    Ok(())
+}
+
+#[cfg(feature = "std")]
+fn record_namespace(snap: &mut StoreSnapshot, locale_hash: u64, namespace: &str) {
+    let ns_map = snap
+        .loaded_namespaces
+        .get_or_insert_with(|| Arc::new(HashMap::new()));
+    let map = Arc::make_mut(ns_map);
+    let list = map.entry(locale_hash).or_insert_with(|| Arc::from([]));
+    let mut names: Vec<Arc<str>> = list.iter().cloned().collect();
+    if !names.iter().any(|n| n.as_ref() == namespace) {
+        names.push(Arc::from(namespace));
+        names.sort_by(|a, b| a.as_ref().cmp(b.as_ref()));
+        map.insert(locale_hash, Arc::from(names.into_boxed_slice()));
+    }
+}
+
+#[cfg(feature = "std")]
+fn apply_l10n_to_snapshot(
+    snap: &mut StoreSnapshot,
+    locale_str: &str,
+    bytes: Vec<u8>,
+    mode: LoadMode<'_>,
+) -> CoreResult<()> {
+    crate::binary_format::BinaryFormatReader::new(&bytes)?;
+    let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+
+    let (final_bytes, replace_debug, namespace_name) = match mode {
+        LoadMode::Replace => {
+            lazy_cache_mut(&mut snap.lazy_cache).remove(&locale_hash);
+            let ns_map = snap
+                .loaded_namespaces
+                .get_or_insert_with(|| Arc::new(HashMap::new()));
+            Arc::make_mut(ns_map).remove(&locale_hash);
+            (bytes, true, None)
+        }
+        LoadMode::Namespace(namespace) => {
+            let existing = snap
+                .locales
+                .binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str))
+                .ok()
+                .and_then(|idx| match &snap.locales[idx].1 {
+                    StoreData::Owned(buf) => Some(buf.as_slice()),
+                    StoreData::Static(buf, _) => Some(*buf),
+                    #[cfg(feature = "std")]
+                    StoreData::Lazy(_) => None,
+                });
+            let merged = match existing {
+                Some(prev) => crate::binary_format::merge_l10n_buffers(prev, &bytes)?,
+                None => bytes,
+            };
+            (merged, false, Some(namespace))
+        }
+    };
+
+    if let Some(namespace) = namespace_name {
+        record_namespace(snap, locale_hash, namespace);
+    }
+
+    let reader = crate::binary_format::BinaryFormatReader::new(&final_bytes)?;
+    offset_maps_mut(&mut snap.offset_maps).insert(locale_hash, Arc::new(reader.to_offsets()));
+    merge_debug_keys(snap, &final_bytes, replace_debug)?;
+
+    let entry = (
+        locale_str.to_string(),
+        StoreData::Owned(Arc::new(final_bytes)),
+    );
+    let new_vec = Arc::make_mut(&mut snap.locales);
+    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
+        Ok(pos) => new_vec[pos] = entry,
+        Err(pos) => new_vec.insert(pos, entry),
+    }
+    Ok(())
+}
+
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
-/// Takes ownership of `bytes` to avoid an extra allocation (caller typically has a `Vec<u8>`
-/// from `decompress_pak`).
 pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
+    try_load_raw_bytes(locale_str, bytes).is_ok()
+}
+
+/// Loads raw L10N bytes, replacing any existing locale bundle (monolith mode).
+pub fn try_load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> CoreResult<()> {
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut locales, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
-            (
-                Arc::clone(&store.locales),
-                Arc::clone(&store.fallback_chain),
-                store.lazy_cache.clone(),
-                store.offset_maps.clone(),
-            )
-        });
-        let new_vec = Arc::make_mut(&mut locales);
-        let lazy = lazy_cache_mut(&mut lazy_cache);
-        let offset_map = offset_maps_mut(&mut offset_maps);
-        let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-        let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(&bytes) {
-            Arc::new(reader.to_offsets())
-        } else {
-            Arc::new(HashMap::new())
-        };
-        let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
-        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-            Ok(pos) => {
-                lazy.remove(&locale_hash);
-                offset_map.insert(locale_hash, offset_arc);
-                new_vec[pos] = entry;
-            }
-            Err(pos) => {
-                offset_map.insert(locale_hash, offset_arc);
-                new_vec.insert(pos, entry);
-            }
-        }
-        swap_store(TranslationStore {
-            locales,
-            fallback_chain,
-            lazy_cache,
-            offset_maps,
-        });
+        let mut snap = read_store(store_snapshot);
+        apply_l10n_to_snapshot(&mut snap, locale_str, bytes, LoadMode::Replace)?;
+        crate::store::swap_store(build_store(snap));
         emit_locale_changed(locale_str);
-        true
+        Ok(())
     }
     #[cfg(not(feature = "std"))]
     {
         let (mut locales, fallback_chain) =
             read_store(|store| (Arc::clone(&store.locales), Arc::clone(&store.fallback_chain)));
+        crate::binary_format::BinaryFormatReader::new(&bytes)?;
         let new_vec = Arc::make_mut(&mut locales);
         let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
         match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
             Ok(pos) => new_vec[pos] = entry,
             Err(pos) => new_vec.insert(pos, entry),
         }
-        swap_store(TranslationStore {
+        crate::store::swap_store(TranslationStore {
             locales,
             fallback_chain,
         });
         emit_locale_changed(locale_str);
-        true
+        Ok(())
     }
+}
+
+/// Merges a namespace bundle into an existing locale (modular bundle mode).
+#[cfg(feature = "std")]
+pub fn try_load_namespace_bytes(
+    locale_str: &str,
+    namespace: &str,
+    bytes: Vec<u8>,
+) -> CoreResult<()> {
+    crate::metrics::inc_locale_loads();
+    let mut snap = read_store(store_snapshot);
+    apply_l10n_to_snapshot(
+        &mut snap,
+        locale_str,
+        bytes,
+        LoadMode::Namespace(namespace),
+    )?;
+    crate::store::swap_store(build_store(snap));
+    emit_locale_changed(locale_str);
+    Ok(())
+}
+
+/// Merges a signed namespace `.pak` into `locale_str`.
+#[cfg(feature = "std")]
+pub fn try_load_namespace_pak(
+    locale_str: &str,
+    namespace: &str,
+    pak_bytes: &[u8],
+) -> CoreResult<()> {
+    let decompressed = decompress_pak(pak_bytes)?;
+    try_load_namespace_bytes(locale_str, namespace, decompressed)
+}
+
+/// Merges a signed namespace `.pak` from raw bytes; returns `true` on success.
+#[cfg(feature = "std")]
+pub fn load_namespace_pak(locale_str: &str, namespace: &str, pak_bytes: &[u8]) -> bool {
+    try_load_namespace_pak(locale_str, namespace, pak_bytes).is_ok()
+}
+
+/// Loads a namespace `.pak` from disk into `locale_str`.
+#[cfg(feature = "std")]
+pub fn try_load_namespace_locale(
+    locale_str: &str,
+    namespace: &str,
+    path_str: &str,
+) -> CoreResult<()> {
+    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    try_load_namespace_pak(locale_str, namespace, &bytes)
+}
+
+/// Loads a namespace `.pak` from disk; returns `true` on success.
+#[cfg(feature = "std")]
+pub fn load_namespace_locale(locale_str: &str, namespace: &str, path_str: &str) -> bool {
+    try_load_namespace_locale(locale_str, namespace, path_str).is_ok()
+}
+
+/// Loads preload namespaces listed in `namespaces.json` under `base_dir`.
+#[cfg(feature = "std")]
+pub fn init_modular(base_dir: &str, locale: &str) -> CoreResult<()> {
+    let manifest_path = std::path::Path::new(base_dir).join("namespaces.json");
+    let raw = std::fs::read_to_string(&manifest_path)
+        .map_err(|_| crate::CoreError::IoError("namespaces.json read failed"))?;
+    let manifest: NamespaceManifest = serde_json::from_str(&raw)
+        .map_err(|_| crate::CoreError::InvalidFormat("invalid namespaces.json"))?;
+    let preload = manifest
+        .preload
+        .or(manifest.locales.get(locale).cloned())
+        .unwrap_or_default();
+    for ns in preload {
+        let path = std::path::Path::new(base_dir)
+            .join(locale)
+            .join(format!("{ns}.pak"));
+        let path_str = path
+            .to_str()
+            .ok_or(crate::CoreError::InvalidFormat("invalid pak path"))?;
+        try_load_namespace_locale(locale, &ns, path_str)?;
+    }
+    Ok(())
+}
+
+/// Manifest emitted by `l10n4x build` in modular bundle mode.
+#[cfg(feature = "std")]
+#[derive(serde::Deserialize)]
+pub struct NamespaceManifest {
+    /// Global preload list (overridden per locale when `locales` entry exists).
+    #[serde(default)]
+    pub preload: Option<Vec<String>>,
+    /// Per-locale namespace lists available for lazy loading.
+    #[serde(default)]
+    pub locales: HashMap<String, Vec<String>>,
 }
 
 /// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
@@ -83,44 +255,29 @@ pub fn load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> bool {
     try_load_pak_bytes(locale_str, pak_bytes).is_ok()
 }
 
-/// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
+/// Decompresses and loads a `.pak` for `locale_str`, replacing any existing bundle.
 pub fn try_load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     let decompressed = decompress_pak(pak_bytes)?;
-    if load_raw_bytes(locale_str, decompressed) {
-        Ok(())
-    } else {
-        Err(crate::CoreError::IoError(
-            "failed to load decompressed bytes",
-        ))
-    }
+    try_load_raw_bytes(locale_str, decompressed)
 }
 
-/// Verifies signature and stores the zstd payload without decompressing.
-/// Decompression is deferred until the first `translate` call for the locale.
-/// Only available under `feature = "std"`.
+/// Stores compressed `.pak` bytes for lazy decompression on first lookup.
 #[cfg(feature = "std")]
 pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
     try_load_pak_lazy(locale_str, pak_bytes).is_ok()
 }
 
-/// Verifies signature and stores the zstd payload without decompressing.
+/// Verifies signature and stores compressed bytes for lazy decompression.
 #[cfg(feature = "std")]
 pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     crate::metrics::inc_locale_loads();
     let signed = crate::envelope::open_outer(pak_bytes)?;
     let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
     crate::integrity::verify(message, signature)?;
-    let (mut locales, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
-        (
-            Arc::clone(&store.locales),
-            Arc::clone(&store.fallback_chain),
-            store.lazy_cache.clone(),
-            store.offset_maps.clone(),
-        )
-    });
-    let new_vec = Arc::make_mut(&mut locales);
-    let lazy = lazy_cache_mut(&mut lazy_cache);
-    let offset_map = offset_maps_mut(&mut offset_maps);
+    let mut snap = read_store(store_snapshot);
+    let new_vec = Arc::make_mut(&mut snap.locales);
+    let lazy = lazy_cache_mut(&mut snap.lazy_cache);
+    let offset_map = offset_maps_mut(&mut snap.offset_maps);
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
     let entry = (
         locale_str.to_string(),
@@ -143,35 +300,30 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
             new_vec.insert(pos, entry);
         }
     }
-    swap_store(TranslationStore {
-        locales,
-        fallback_chain,
-        lazy_cache,
-        offset_maps,
-    });
+    crate::store::swap_store(build_store(snap));
     emit_locale_changed(locale_str);
     Ok(())
 }
 
-/// Decompresses and loads a single `.pak` file for a given locale (requires std).
+/// Loads a monolith `{locale}.pak` from disk; returns `true` on success.
 #[cfg(feature = "std")]
 pub fn load_pak_locale(locale_str: &str, path_str: &str) -> bool {
     try_load_pak_locale(locale_str, path_str).is_ok()
 }
 
-/// Decompresses and loads a single `.pak` file for a given locale (requires std).
+/// Loads a monolith `.pak` from disk, replacing the locale bundle.
 #[cfg(feature = "std")]
 pub fn try_load_pak_locale(locale_str: &str, path_str: &str) -> CoreResult<()> {
     let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
     try_load_pak_bytes(locale_str, &bytes)
 }
 
-/// Convenience wrapper around [`crate::store::load_static_bytes`].
+/// Loads compile-time embedded L10N bytes; returns `true` on success.
 pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
     try_load_static_bytes(locale_str, data, already_verified).is_ok()
 }
 
-/// Loads a static (compile-time embedded) L10N buffer into the global store.
+/// Loads compile-time embedded L10N bytes into the store.
 pub fn try_load_static_bytes(
     locale_str: &str,
     data: &'static [u8],
@@ -185,19 +337,17 @@ pub fn try_load_static_bytes(
     }
 }
 
-/// Scans a directory for all `.pak` files and automatically loads them (requires std).
+/// Scans a directory for monolith `{locale}.pak` files (legacy layout).
 #[cfg(feature = "std")]
 pub fn load_pak_directory(dir_path_str: &str) -> bool {
     let path = std::path::Path::new(dir_path_str);
     if !path.is_dir() {
         return false;
     }
-
     let entries = match std::fs::read_dir(path) {
         Ok(e) => e,
         Err(_) => return false,
     };
-
     let mut loaded_any = false;
     for entry in entries.flatten() {
         let file_path = entry.path();
@@ -211,71 +361,58 @@ pub fn load_pak_directory(dir_path_str: &str) -> bool {
             }
         }
     }
-
     loaded_any
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::store::{clear_translations, locale_loaded};
+    use crate::binary_format::{fnv1a_64, pack_l10n, merge_l10n_buffers, RUNTIME_VERSION};
+    use crate::store::{clear_translations, locale_loaded, namespace_loaded};
+    use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
-    fn make_l10n_bytes() -> Vec<u8> {
-        let mut buf = Vec::new();
-        buf.extend_from_slice(b"L10N");
-        buf.extend_from_slice(&1u32.to_be_bytes());
-        buf.extend_from_slice(&16u32.to_be_bytes());
-        buf.extend_from_slice(&0u32.to_be_bytes());
-        buf
+    fn make_l10n_with_key(key: &str, val: &[u8]) -> Vec<u8> {
+        let mut entries = BTreeMap::new();
+        entries.insert(fnv1a_64(key.as_bytes()), val.to_vec());
+        pack_l10n(&entries, RUNTIME_VERSION, None)
     }
 
     #[test]
     fn load_raw_bytes_success() {
         clear_translations();
-        let bytes = make_l10n_bytes();
-        assert!(load_raw_bytes("test", bytes));
+        assert!(load_raw_bytes("test", pack_l10n(&BTreeMap::new(), RUNTIME_VERSION, None)));
     }
 
     #[test]
-    fn load_raw_bytes_then_locale_loaded() {
+    fn load_namespace_merges_keys() {
         clear_translations();
-        let bytes = make_l10n_bytes();
-        load_raw_bytes("test-loc", bytes);
-        assert!(locale_loaded("test-loc"));
+        let common = make_l10n_with_key("common.welcome", b"hi");
+        let auth = make_l10n_with_key("auth.login", b"login");
+        assert!(load_raw_bytes("en", common));
+        assert!(try_load_namespace_bytes("en", "auth", auth).is_ok());
+        assert!(namespace_loaded("en", "auth"));
+        assert!(locale_loaded("en"));
     }
 
     #[test]
-    fn load_raw_bytes_overwrites_existing_locale() {
+    fn load_raw_bytes_overwrites_monolith_namespaces() {
         clear_translations();
-        let bytes1 = make_l10n_bytes();
-        let mut bytes2 = make_l10n_bytes();
-        bytes2.push(0xFF);
-        assert!(load_raw_bytes("dup", bytes1));
-        assert!(load_raw_bytes("dup", bytes2));
+        let a = make_l10n_with_key("a", b"1");
+        let b = make_l10n_with_key("b", b"2");
+        try_load_namespace_bytes("en", "auth", a).unwrap();
+        assert!(namespace_loaded("en", "auth"));
+        load_raw_bytes("en", b);
+        assert!(!namespace_loaded("en", "auth"));
     }
 
     #[test]
-    fn load_pak_bytes_invalid_fails() {
-        let result = load_pak_bytes("xx", b"not a pak");
-        assert!(!result);
-    }
-
-    #[test]
-    fn try_load_pak_bytes_invalid_returns_err() {
-        let result = try_load_pak_bytes("xx", b"not a pak");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn load_pak_locale_nonexistent_file() {
-        let result = load_pak_locale("xx", "/nonexistent/path.pak");
-        assert!(!result);
-    }
-
-    #[test]
-    fn load_pak_directory_rejects_file_path() {
-        let result = load_pak_directory("/dev/null");
-        assert!(!result);
+    fn merge_l10n_preserves_both_keys() {
+        let a = make_l10n_with_key("a", b"1");
+        let b = make_l10n_with_key("b", b"2");
+        let merged = merge_l10n_buffers(&a, &b).unwrap();
+        let reader = crate::binary_format::BinaryFormatReader::new(&merged).unwrap();
+        assert!(reader.lookup(fnv1a_64(b"a")).is_some());
+        assert!(reader.lookup(fnv1a_64(b"b")).is_some());
     }
 }

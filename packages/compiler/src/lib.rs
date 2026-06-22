@@ -6,7 +6,7 @@ pub mod binary_writer;
 pub mod icu_parser;
 pub mod signing;
 
-use binary_writer::write_binary_format;
+use binary_writer::{write_binary_format, write_binary_format_with_keys};
 use icu_parser::MessageParser;
 use l10n4x_core::envelope;
 use l10n4x_core::pak::{build_unsigned, seal};
@@ -17,6 +17,42 @@ use std::path::Path;
 
 /// Per-locale map of key hashes to parsed message nodes.
 pub type TranslationsMap = HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
+/// Per-locale namespace → hashed nodes (modular bundle mode).
+pub type ModularTranslationsMap =
+    HashMap<String, HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>>;
+
+/// Bundle output strategy for `compile_translations`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BundleMode {
+    /// One `{locale}.pak` per locale (default).
+    Monolith,
+    /// `{locale}/{namespace}.pak` per JSON source file.
+    Modular,
+}
+
+/// Compilation options for `compile_with_options`.
+#[derive(Clone, Debug)]
+pub struct CompileOptions {
+    pub encrypt: bool,
+    pub compression_level: i32,
+    pub bundle_mode: BundleMode,
+    pub preload: Vec<String>,
+    #[cfg(feature = "debug-keys")]
+    pub embed_debug_keys: bool,
+}
+
+impl Default for CompileOptions {
+    fn default() -> Self {
+        Self {
+            encrypt: false,
+            compression_level: 8,
+            bundle_mode: BundleMode::Monolith,
+            preload: Vec::new(),
+            #[cfg(feature = "debug-keys")]
+            embed_debug_keys: false,
+        }
+    }
+}
 
 /// Recursively flattens a JSON Value into a flat string map.
 ///
@@ -161,19 +197,67 @@ fn resolve_single(
     resolving.remove(&key);
 }
 
+fn write_signed_pak(
+    binary_bytes: Vec<u8>,
+    parent: Option<&str>,
+    encrypt: bool,
+    compression_level: i32,
+) -> Result<Vec<u8>, CompileError> {
+    let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
+        .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
+    let unsigned = build_unsigned(&compressed_bytes, parent);
+    let signature = signing::sign(&unsigned)?;
+    let signed = seal(&unsigned, &signature);
+    if encrypt {
+        envelope::wrap_encrypted(&signed)
+            .map_err(|e| CompileError::CoreIntegrityError(e.to_string()))
+    } else {
+        Ok(signed)
+    }
+}
+
 /// Compiles directories of JSON localization files into signed `.pak` files.
-/// When `encrypt` is true, wraps each pak in an optional `L10E` AES-GCM envelope.
 pub fn compile_translations(
     src_path: &Path,
     out_path: &Path,
     encrypt: bool,
     compression_level: i32,
 ) -> Result<(), CompileError> {
-    let compiled = compile_pipeline(src_path)?;
+    compile_with_options(
+        src_path,
+        out_path,
+        CompileOptions {
+            encrypt,
+            compression_level,
+            ..CompileOptions::default()
+        },
+    )
+}
 
+/// Compiles with bundle mode, preload manifest, and optional debug key tables.
+pub fn compile_with_options(
+    src_path: &Path,
+    out_path: &Path,
+    options: CompileOptions,
+) -> Result<(), CompileError> {
     if !out_path.exists() {
         fs::create_dir_all(out_path)?;
     }
+
+    match options.bundle_mode {
+        BundleMode::Monolith => compile_monolith(src_path, out_path, &options),
+        BundleMode::Modular => compile_modular(src_path, out_path, &options),
+    }
+}
+
+fn compile_monolith(
+    src_path: &Path,
+    out_path: &Path,
+    options: &CompileOptions,
+) -> Result<(), CompileError> {
+    let compiled = compile_pipeline(src_path)?;
+    #[cfg(feature = "debug-keys")]
+    let key_pairs = compile_key_pairs(src_path).ok();
 
     let mut sorted_locales: Vec<&String> = compiled.keys().collect();
     sorted_locales.sort();
@@ -191,25 +275,92 @@ pub fn compile_translations(
             };
         let effective_parent = parent.filter(|p| compiled.contains_key(*p));
 
-        let binary_bytes = write_binary_format(&to_write);
-
-        let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
-            .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
-
-        let unsigned = build_unsigned(&compressed_bytes, effective_parent);
-        let signature = signing::sign(&unsigned)?;
-        let signed = seal(&unsigned, &signature);
-        let pak_bytes = if encrypt {
-            envelope::wrap_encrypted(&signed)
-                .map_err(|e| CompileError::CoreIntegrityError(e.to_string()))?
+        #[cfg(feature = "debug-keys")]
+        let key_names = if options.embed_debug_keys {
+            key_pairs.as_ref().map(|pairs| {
+                pairs
+                    .iter()
+                    .filter(|(hash, _)| to_write.contains_key(hash))
+                    .map(|(hash, name)| (*hash, name.clone()))
+                    .collect::<HashMap<u64, String>>()
+            })
         } else {
-            signed
+            None
         };
+        #[cfg(not(feature = "debug-keys"))]
+        let key_names: Option<HashMap<u64, String>> = None;
 
-        let pak_file_path = out_path.join(format!("{}.pak", locale));
-        fs::write(pak_file_path, pak_bytes)?;
+        let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
+        let pak_bytes = write_signed_pak(
+            binary_bytes,
+            effective_parent,
+            options.encrypt,
+            options.compression_level,
+        )?;
+        fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+    }
+    Ok(())
+}
+
+fn compile_modular(
+    src_path: &Path,
+    out_path: &Path,
+    options: &CompileOptions,
+) -> Result<(), CompileError> {
+    let compiled = compile_pipeline_modular(src_path)?;
+    let mut manifest_locales: HashMap<String, Vec<String>> = HashMap::new();
+
+    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
+    sorted_locales.sort();
+    for locale in sorted_locales {
+        let namespaces = &compiled[locale];
+        let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
+        sorted_ns.sort();
+        let mut ns_list = Vec::new();
+        let locale_dir = out_path.join(locale.as_str());
+        fs::create_dir_all(&locale_dir)?;
+
+        for namespace in sorted_ns {
+            ns_list.push(namespace.clone());
+            let nodes = &namespaces[namespace];
+            #[cfg(feature = "debug-keys")]
+            let key_names = if options.embed_debug_keys {
+                let file_path = src_path.join(locale).join(format!("{namespace}.json"));
+                compile_namespace_key_names(&file_path, namespace)
+                    .ok()
+                    .map(|all| {
+                        all.into_iter()
+                            .filter(|(hash, _)| nodes.contains_key(hash))
+                            .collect::<HashMap<u64, String>>()
+                    })
+            } else {
+                None
+            };
+            #[cfg(not(feature = "debug-keys"))]
+            let key_names: Option<HashMap<u64, String>> = None;
+
+            let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
+            let pak_bytes = write_signed_pak(
+                binary_bytes,
+                None,
+                options.encrypt,
+                options.compression_level,
+            )?;
+            fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+        }
+        ns_list.sort();
+        manifest_locales.insert(locale.clone(), ns_list);
     }
 
+    let manifest = serde_json::json!({
+        "version": 1,
+        "preload": options.preload,
+        "locales": manifest_locales,
+    });
+    fs::write(
+        out_path.join("namespaces.json"),
+        serde_json::to_string_pretty(&manifest).map_err(CompileError::from)?,
+    )?;
     Ok(())
 }
 
@@ -317,22 +468,7 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             continue;
         }
 
-        let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
-        for (k, template) in raw_flat_translations {
-            if let Some(interval_cases) = icu_parser::parse_interval_plural(&template) {
-                let nodes = vec![icu_parser::MessageNode::Plural {
-                    var: "count".to_string(),
-                    ordinal: false,
-                    cases: interval_cases,
-                }];
-                parsed_translations.insert(k, nodes);
-            } else {
-                let parser = MessageParser::new(&template);
-                let nodes = parser.parse().map_err(CompileError::TemplateParseError)?;
-                parsed_translations.insert(k, nodes);
-            }
-        }
-
+        let mut parsed_translations = parse_flat_translations(raw_flat_translations)?;
         resolve_key_refs(&mut parsed_translations);
 
         let hashed: HashMap<u64, Vec<icu_parser::MessageNode>> = parsed_translations
@@ -340,6 +476,107 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
             .collect();
         all_translations.insert(lang, hashed);
+    }
+
+    Ok(all_translations)
+}
+
+fn parse_flat_translations(
+    raw_flat: HashMap<String, String>,
+) -> Result<HashMap<String, Vec<icu_parser::MessageNode>>, CompileError> {
+    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
+    for (k, template) in raw_flat {
+        if let Some(interval_cases) = icu_parser::parse_interval_plural(&template) {
+            let nodes = vec![icu_parser::MessageNode::Plural {
+                var: "count".to_string(),
+                ordinal: false,
+                cases: interval_cases,
+            }];
+            parsed_translations.insert(k, nodes);
+        } else {
+            let parser = MessageParser::new(&template);
+            let nodes = parser.parse().map_err(CompileError::TemplateParseError)?;
+            parsed_translations.insert(k, nodes);
+        }
+    }
+    Ok(parsed_translations)
+}
+
+fn compile_namespace_file(
+    file_path: &Path,
+    namespace: &str,
+) -> Result<HashMap<u64, Vec<icu_parser::MessageNode>>, CompileError> {
+    let content = fs::read_to_string(file_path)?;
+    let parsed_json: Value = serde_json::from_str(&content)?;
+    let mut raw_flat_translations = HashMap::new();
+    flatten_value(namespace.to_string(), &parsed_json, &mut raw_flat_translations);
+    let mut parsed_translations = parse_flat_translations(raw_flat_translations)?;
+    resolve_key_refs(&mut parsed_translations);
+    Ok(parsed_translations
+        .into_iter()
+        .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
+        .collect())
+}
+
+#[cfg(feature = "debug-keys")]
+fn compile_namespace_key_names(
+    file_path: &Path,
+    namespace: &str,
+) -> Result<HashMap<u64, String>, CompileError> {
+    let content = fs::read_to_string(file_path)?;
+    let parsed_json: Value = serde_json::from_str(&content)?;
+    let mut raw_flat = HashMap::new();
+    flatten_value(namespace.to_string(), &parsed_json, &mut raw_flat);
+    Ok(raw_flat
+        .into_iter()
+        .map(|(k, _)| (fnv1a_64(k.as_bytes()), k))
+        .collect())
+}
+
+fn compile_pipeline_modular(src_path: &Path) -> Result<ModularTranslationsMap, CompileError> {
+    if !src_path.is_dir() {
+        return Err(CompileError::SourceNotADirectory);
+    }
+
+    let mut all_translations: ModularTranslationsMap = HashMap::new();
+
+    for lang_entry in fs::read_dir(src_path)? {
+        let lang_entry = lang_entry?;
+        let lang_path = lang_entry.path();
+        if !lang_path.is_dir() {
+            continue;
+        }
+
+        let lang = lang_path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or(CompileError::InvalidDirectoryName)?
+            .to_string();
+
+        let mut namespaces: HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>> =
+            HashMap::new();
+        let mut file_count = 0;
+
+        for file_entry in fs::read_dir(&lang_path)? {
+            let file_entry = file_entry?;
+            let file_path = file_entry.path();
+            if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
+                let namespace = file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or(CompileError::InvalidFileName)?
+                    .to_string();
+                let hashed = compile_namespace_file(&file_path, &namespace)?;
+                namespaces.insert(namespace, hashed);
+                file_count += 1;
+            }
+        }
+
+        if file_count == 0 {
+            continue;
+        }
+
+        all_translations.insert(lang, namespaces);
     }
 
     Ok(all_translations)
@@ -623,6 +860,38 @@ mod tests {
         // Empty dir — should succeed but produce nothing
         let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_ok());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn compile_modular_emits_namespace_paks() {
+        use std::fs;
+        let tmp = std::env::temp_dir().join("l10n4x_test_modular");
+        let _ = fs::remove_dir_all(&tmp);
+        let en_dir = tmp.join("en");
+        fs::create_dir_all(&en_dir).unwrap();
+        fs::write(en_dir.join("common.json"), r#"{"welcome": "Hello"}"#).unwrap();
+        fs::write(en_dir.join("auth.json"), r#"{"login": "Sign in"}"#).unwrap();
+
+        let seed = [22u8; 32];
+        let _ = crate::signing::set_signing_key(&seed);
+
+        let out = tmp.join("out");
+        compile_with_options(
+            &tmp,
+            &out,
+            CompileOptions {
+                bundle_mode: BundleMode::Modular,
+                compression_level: 6,
+                ..CompileOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert!(out.join("en").join("common.pak").is_file());
+        assert!(out.join("en").join("auth.pak").is_file());
+        assert!(out.join("namespaces.json").is_file());
+
         let _ = fs::remove_dir_all(&tmp);
     }
 
