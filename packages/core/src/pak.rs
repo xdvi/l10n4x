@@ -1,4 +1,4 @@
-//! Outer `.pak` container: DEFLATE payload + Ed25519 signature (v1).
+//! Outer `.pak` container: zstd payload + Ed25519 signature (v1).
 //!
 //! # Layout (big-endian)
 //!
@@ -7,7 +7,7 @@
 //! | 0      | 4    | Magic `L10P` |
 //! | 4      | 4    | Version (`1`) |
 //! | 8      | 4    | Payload length |
-//! | 12     | N    | DEFLATE-compressed inner `L10N` binary |
+//! | 12     | N    | zstd-compressed inner `L10N` binary |
 //! | 12+N   | 64   | Ed25519 signature over bytes `[0..12+N)` |
 
 extern crate alloc;
@@ -88,8 +88,29 @@ pub fn decompress_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
 pub fn decompress_signed_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
     let (message, compressed, signature) = parse_signed(data)?;
     integrity::verify(message, signature)?;
-    miniz_oxide::inflate::decompress_to_vec(compressed)
-        .map_err(|_| crate::CoreError::IoError("Pak decompression failed"))
+    use ruzstd::frame_decoder::BlockDecodingStrategy;
+    use ruzstd::io::Read;
+
+    let mut decoder = ruzstd::FrameDecoder::new();
+    let mut reader = compressed;
+    decoder
+        .reset(&mut reader)
+        .map_err(|_| crate::CoreError::IoError("zstd decompression: init failed"))?;
+    decoder
+        .decode_blocks(&mut reader, BlockDecodingStrategy::All)
+        .map_err(|_| crate::CoreError::IoError("zstd decompression: decode failed"))?;
+    let mut output = Vec::new();
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = decoder
+            .read(&mut buf)
+            .map_err(|_| crate::CoreError::IoError("zstd decompression: read failed"))?;
+        if n == 0 {
+            break;
+        }
+        output.extend_from_slice(&buf[..n]);
+    }
+    Ok(output)
 }
 
 #[cfg(test)]
