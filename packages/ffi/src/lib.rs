@@ -24,14 +24,19 @@ mod error;
 
 pub use error::*;
 
+use std::cell::RefCell;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
+use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::encryption;
 use l10n4x_core::integrity;
 use l10n4x_core::loader::{load_pak_directory, try_load_pak_locale, try_load_static_bytes};
 use l10n4x_core::metrics;
-use l10n4x_core::store::{clear_translations, get_fallback_locale, set_fallback_locale};
+use l10n4x_core::store::{
+    clear_translations, get_fallback_locale, set_fallback_locale, translate_to_writer_with_status,
+    TranslateStatus,
+};
 
 /// C-compatible function pointer type for the missing key callback.
 pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key_hash: u64);
@@ -67,6 +72,77 @@ struct TranslateOutcome {
     locale_loaded: bool,
 }
 
+#[derive(Clone)]
+struct CachedTranslate {
+    locale: String,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+    text: String,
+    key_found: bool,
+    locale_loaded: bool,
+}
+
+thread_local! {
+    static LAST_TRANSLATE: RefCell<Option<CachedTranslate>> = const { RefCell::new(None) };
+}
+
+fn hash_params(params: &[(&str, &str)]) -> u64 {
+    let mut h = 0xcbf29ce484222325u64;
+    for (key, value) in params {
+        h ^= fnv1a_64(key.as_bytes());
+        h = h.wrapping_mul(0x100000001b3);
+        h ^= fnv1a_64(value.as_bytes());
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+fn cache_lookup(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+) -> Option<TranslateOutcome> {
+    LAST_TRANSLATE.with(|cell| {
+        let cached = cell.borrow();
+        let entry = cached.as_ref()?;
+        if entry.locale == locale
+            && entry.key_hash == key_hash
+            && entry.context_hash == context_hash
+            && entry.params_key == params_key
+        {
+            Some(TranslateOutcome {
+                text: entry.text.clone(),
+                key_found: entry.key_found,
+                locale_loaded: entry.locale_loaded,
+            })
+        } else {
+            None
+        }
+    })
+}
+
+fn cache_store(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+    outcome: &TranslateOutcome,
+) {
+    LAST_TRANSLATE.with(|cell| {
+        *cell.borrow_mut() = Some(CachedTranslate {
+            locale: locale.to_string(),
+            key_hash,
+            context_hash,
+            params_key,
+            text: outcome.text.clone(),
+            key_found: outcome.key_found,
+            locale_loaded: outcome.locale_loaded,
+        });
+    });
+}
+
 fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
     if ptr.is_null() {
         return Err(L10N4C_INVALID_PARAMS);
@@ -82,21 +158,30 @@ fn resolve_translation(
     context_hash: Option<u64>,
     params: &[(&str, &str)],
 ) -> TranslateOutcome {
-    let locale_loaded = l10n4x_core::store::locale_loaded(locale);
-    let key_found = l10n4x_core::store::key_exists(locale, key_hash, context_hash);
+    let params_key = hash_params(params);
+    if let Some(cached) = cache_lookup(locale, key_hash, context_hash, params_key) {
+        return cached;
+    }
+
     let mut resolved = String::new();
-    let _ = l10n4x_core::store::translate_to_writer(
+    let status = translate_to_writer_with_status(
         locale,
         key_hash,
         context_hash,
         params,
         &mut resolved,
-    );
-    TranslateOutcome {
+    )
+    .unwrap_or(TranslateStatus {
+        key_found: false,
+        locale_loaded: false,
+    });
+    let outcome = TranslateOutcome {
         text: resolved,
-        key_found,
-        locale_loaded,
-    }
+        key_found: status.key_found,
+        locale_loaded: status.locale_loaded,
+    };
+    cache_store(locale, key_hash, context_hash, params_key, &outcome);
+    outcome
 }
 
 fn outcome_status(outcome: &TranslateOutcome) -> i32 {
