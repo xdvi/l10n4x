@@ -155,6 +155,7 @@ pub fn compile_translations(
     src_path: &Path,
     out_path: &Path,
     encrypt: bool,
+    compression_level: i32,
 ) -> Result<(), CompileError> {
     let compiled = compile_pipeline(src_path)?;
 
@@ -165,7 +166,8 @@ pub fn compile_translations(
     for (locale, nodes) in &compiled {
         let binary_bytes = write_binary_format(nodes);
 
-        let compressed_bytes = miniz_oxide::deflate::compress_to_vec(&binary_bytes, 6);
+        let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
+            .map_err(|e| CompileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
 
         let unsigned = build_unsigned(&compressed_bytes);
         let signature = signing::sign(&unsigned)
@@ -521,7 +523,7 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
         let out = tmp.join("out");
         // Empty dir — should succeed but produce nothing
-        let result = compile_translations(&tmp, &out, false);
+        let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_ok());
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -540,7 +542,7 @@ mod tests {
         let _ = crate::signing::set_signing_key(&seed);
 
         let out = tmp.join("out");
-        let result = compile_translations(&tmp, &out, false);
+        let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_ok());
         assert!(out.join("en.pak").is_file());
 
@@ -563,7 +565,7 @@ mod tests {
         l10n4x_core::encryption::set_decrypt_key(&enc_key);
 
         let out = tmp.join("out");
-        let result = compile_translations(&tmp, &out, true);
+        let result = compile_translations(&tmp, &out, true, 6);
         assert!(result.is_ok());
         let pak = fs::read(out.join("en.pak")).unwrap();
         assert_eq!(&pak[0..4], b"L10E");
@@ -584,7 +586,7 @@ mod tests {
         let _ = crate::signing::set_signing_key(&seed);
 
         let out = tmp.join("out");
-        let result = compile_translations(&tmp, &out, false);
+        let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_ok());
 
         let _ = fs::remove_dir_all(&tmp);
@@ -596,7 +598,7 @@ mod tests {
         let tmp = std::env::temp_dir().join("l10n4x_test_file.txt");
         fs::write(&tmp, "not a dir").unwrap();
         let out = std::env::temp_dir().join("l10n4x_out");
-        let result = compile_translations(&tmp, &out, false);
+        let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_err());
         let _ = fs::remove_file(&tmp);
     }

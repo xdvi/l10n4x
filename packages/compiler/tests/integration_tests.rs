@@ -78,7 +78,7 @@ fn test_compression_ratio_estimate() {
     }
 
     let uncompressed = write_binary_format(&translations);
-    let compressed = miniz_oxide::deflate::compress_to_vec(&uncompressed, 6);
+    let compressed = zstd::encode_all(&uncompressed[..], 8).unwrap();
 
     let uncompressed_len = uncompressed.len();
     let compressed_len = compressed.len();
