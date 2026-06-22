@@ -42,12 +42,16 @@ pub mod number_format;
 pub mod pak;
 /// CLDR-accurate plural rule resolution for 120+ locales.
 pub mod plural_rules;
+pub(crate) mod locale_util;
 pub(crate) mod reclaim;
 /// Locale-aware relative time formatting (seconds ago, in X days, etc.).
 pub mod reltime;
 /// Thread-safe RCU store swap and lookup management.
 pub mod store;
-pub use store::{init_embedded, load_static_bytes, locale_parent, StoreData};
+pub use store::{
+    init_embedded, load_static_bytes, locale_parent, translate_to_writer_with_status,
+    TranslateStatus, StoreData,
+};
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 

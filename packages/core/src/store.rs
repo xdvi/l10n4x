@@ -15,7 +15,7 @@ use core::sync::atomic::AtomicUsize;
 #[cfg(feature = "std")]
 use std::cell::RefCell;
 #[cfg(feature = "std")]
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 #[cfg(feature = "std")]
 use std::sync::OnceLock;
 
@@ -30,6 +30,7 @@ thread_local! {
 #[cfg(feature = "std")]
 thread_local! {
     static TRANSLATE_CACHE: RefCell<HashMap<(u64, u64), String>> = RefCell::new(HashMap::new());
+    static TRANSLATE_CACHE_ORDER: RefCell<VecDeque<(u64, u64)>> = const { RefCell::new(VecDeque::new()) };
 }
 
 #[cfg(feature = "std")]
@@ -46,17 +47,29 @@ fn cache_translate(locale: &str, key_hash: u64, params: &[(&str, &str)]) -> Opti
 }
 
 #[cfg(feature = "std")]
-fn cache_insert(locale: &str, key_hash: u64, params: &[(&str, &str)], result: &str) {
-    if !params.is_empty() {
+fn cache_insert(locale: &str, key_hash: u64, params: &[(&str, &str)], result: &str, key_found: bool) {
+    if !key_found || !params.is_empty() {
         return;
     }
     let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+    let cache_key = (locale_hash, key_hash);
     TRANSLATE_CACHE.with(|cell| {
         let mut cache = cell.borrow_mut();
-        if cache.len() >= TRANSLATE_CACHE_CAPACITY {
-            cache.clear();
-        }
-        cache.insert((locale_hash, key_hash), result.to_string());
+        TRANSLATE_CACHE_ORDER.with(|order_cell| {
+            let mut order = order_cell.borrow_mut();
+            if cache.len() >= TRANSLATE_CACHE_CAPACITY && !cache.contains_key(&cache_key) {
+                let evict_count = TRANSLATE_CACHE_CAPACITY / 4;
+                for _ in 0..evict_count {
+                    if let Some(old_key) = order.pop_front() {
+                        cache.remove(&old_key);
+                    }
+                }
+            }
+            if !cache.contains_key(&cache_key) {
+                order.push_back(cache_key);
+            }
+            cache.insert(cache_key, result.to_string());
+        });
     });
 }
 
@@ -420,39 +433,141 @@ pub fn clear_translations() {
     emit_locale_changed("*");
 }
 
-/// Returns `true` if `key_hash` exists in `locale` or the configured fallback locale.
-/// When `context_hash` is `Some(...)`, it first tries the context hash then `key_hash`.
-pub fn key_exists(locale: &str, key_hash: u64, context_hash: Option<u64>) -> bool {
-    let chain = get_fallback_chain();
-    read_store(|store| {
-        let mut candidates = alloc::vec![locale];
-        if let Some(p) = locale_parent(locale) {
-            candidates.push(p);
+/// Outcome metadata for a translation request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TranslateStatus {
+    /// `true` when the key was resolved in the requested locale or fallback chain.
+    pub key_found: bool,
+    /// `true` when the requested locale has loaded translation data.
+    pub locale_loaded: bool,
+}
+
+#[cfg(feature = "std")]
+fn offset_map_for_locale<'a>(
+    store: &'a TranslationStore,
+    locale: &str,
+) -> Option<&'a HashMap<u64, (u32, u32)>> {
+    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+    let lazy_offsets = store
+        .lazy_cache
+        .get(&locale_hash)
+        .and_then(|entry| entry.get().map(|(_, offsets)| offsets.as_ref()));
+    store
+        .offset_maps
+        .get(&locale_hash)
+        .filter(|m| !m.is_empty())
+        .map(|arc| arc.as_ref())
+        .or(lazy_offsets)
+}
+
+fn hash_present_in_locale(
+    store: &TranslationStore,
+    locale: &str,
+    key_hash: u64,
+) -> bool {
+    let Some(buf) = store.lookup(locale) else {
+        return false;
+    };
+    #[cfg(feature = "std")]
+    if let Some(map) = offset_map_for_locale(store, locale) {
+        if map.contains_key(&key_hash) {
+            return true;
         }
-        for fb in chain.iter() {
-            candidates.push(fb.as_ref());
+    }
+    if let Ok(reader) = BinaryFormatReader::new(buf) {
+        return reader.lookup(key_hash).is_some();
+    }
+    false
+}
+
+fn key_exists_in_store(
+    store: &TranslationStore,
+    chain: &[Arc<str>],
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+) -> bool {
+    if let Some(ctx_hash) = context_hash {
+        if hash_present_in_locale(store, locale, ctx_hash) {
+            return true;
         }
-        for loc in candidates {
-            let check_key = |kh: u64| -> bool {
-                if let Some(buf) = store.lookup(loc) {
-                    if let Ok(reader) = BinaryFormatReader::new(buf) {
-                        if reader.lookup(kh).is_some() {
-                            return true;
-                        }
-                    }
-                }
-                false
-            };
+    }
+    if hash_present_in_locale(store, locale, key_hash) {
+        return true;
+    }
+    if let Some(parent) = locale_parent(locale) {
+        if parent != locale {
             if let Some(ctx_hash) = context_hash {
-                if check_key(ctx_hash) {
+                if hash_present_in_locale(store, parent, ctx_hash) {
                     return true;
                 }
             }
-            if check_key(key_hash) {
+            if hash_present_in_locale(store, parent, key_hash) {
                 return true;
             }
         }
-        false
+    }
+    for fb in chain.iter() {
+        let fb_str: &str = fb.as_ref();
+        if fb_str == locale {
+            continue;
+        }
+        if let Some(parent) = locale_parent(locale) {
+            if fb_str == parent {
+                continue;
+            }
+        }
+        if let Some(ctx_hash) = context_hash {
+            if hash_present_in_locale(store, fb_str, ctx_hash) {
+                return true;
+            }
+        }
+        if hash_present_in_locale(store, fb_str, key_hash) {
+            return true;
+        }
+    }
+    false
+}
+
+fn resolve_translate_in_store<W: core::fmt::Write>(
+    store: &TranslationStore,
+    chain: &[Arc<str>],
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+    writer: &mut W,
+) -> bool {
+    if try_locale(store, locale, key_hash, context_hash, params, writer) {
+        return true;
+    }
+    if let Some(parent) = locale_parent(locale) {
+        if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer) {
+            return true;
+        }
+    }
+    for fb in chain.iter() {
+        let fb_str: &str = fb.as_ref();
+        if fb_str == locale {
+            continue;
+        }
+        if let Some(parent) = locale_parent(locale) {
+            if fb_str == parent {
+                continue;
+            }
+        }
+        if try_locale(store, fb_str, key_hash, context_hash, params, writer) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Returns `true` if `key_hash` exists in `locale` or the configured fallback locale.
+/// When `context_hash` is `Some(...)`, it first tries the context hash then `key_hash`.
+pub fn key_exists(locale: &str, key_hash: u64, context_hash: Option<u64>) -> bool {
+    read_store(|store| {
+        key_exists_in_store(store, &store.fallback_chain, locale, key_hash, context_hash)
     })
 }
 
@@ -475,14 +590,15 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut new_vec, fallback_chain, _lazy_cache, mut offset_maps) = read_store(|store| {
+        let (mut locales, fallback_chain, _lazy_cache, mut offset_maps) = read_store(|store| {
             (
-                (*store.locales).clone(),
+                Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
                 store.lazy_cache.clone(),
                 store.offset_maps.clone(),
             )
         });
+        let new_vec = Arc::make_mut(&mut locales);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
             Arc::new(reader.to_offsets())
@@ -499,7 +615,7 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             Err(pos) => new_vec.insert(pos, entry),
         }
         swap_store(TranslationStore {
-            locales: Arc::new(new_vec),
+            locales,
             fallback_chain,
             lazy_cache: _lazy_cache,
             offset_maps,
@@ -509,8 +625,9 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     }
     #[cfg(not(feature = "std"))]
     {
-        let (mut new_vec, fallback_chain) =
-            read_store(|store| ((*store.locales).clone(), Arc::clone(&store.fallback_chain)));
+        let (mut locales, fallback_chain) =
+            read_store(|store| (Arc::clone(&store.locales), Arc::clone(&store.fallback_chain)));
+        let new_vec = Arc::make_mut(&mut locales);
         let entry = (
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
@@ -520,7 +637,7 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             Err(pos) => new_vec.insert(pos, entry),
         }
         swap_store(TranslationStore {
-            locales: Arc::new(new_vec),
+            locales,
             fallback_chain,
         });
         emit_locale_changed(locale_str);
@@ -637,8 +754,10 @@ fn try_locale<W: core::fmt::Write>(
                 .filter(|m| !m.is_empty())
                 .or(lazy_offsets);
             if let Some(map) = map {
+                let mut used_offset_map = false;
                 if let Some(ctx_hash) = context_hash {
                     if let Some(&(off, len)) = map.get(&ctx_hash) {
+                        used_offset_map = true;
                         let start = off as usize;
                         let end = start + (len as usize);
                         if end <= buf.len()
@@ -650,6 +769,7 @@ fn try_locale<W: core::fmt::Write>(
                     }
                 }
                 if let Some(&(off, len)) = map.get(&key_hash) {
+                    used_offset_map = true;
                     let start = off as usize;
                     let end = start + (len as usize);
                     if end <= buf.len()
@@ -658,6 +778,9 @@ fn try_locale<W: core::fmt::Write>(
                         return true;
                     }
                     crate::metrics::inc_format_errors();
+                }
+                if used_offset_map {
+                    return false;
                 }
             }
         }
@@ -682,6 +805,49 @@ fn try_locale<W: core::fmt::Write>(
     false
 }
 
+/// Translates a key hash into `writer` and returns lookup metadata in a single store read.
+/// When `context_hash` is `Some(...)`, it first tries the context hash then falls back to `key_hash`.
+pub fn translate_to_writer_with_status<W: core::fmt::Write>(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+    writer: &mut W,
+) -> CoreResult<TranslateStatus> {
+    crate::metrics::inc_total_translations();
+
+    #[cfg(feature = "std")]
+    {
+        log::debug!("translate: locale={}, key_hash={:#x}", locale, key_hash);
+    }
+
+    let status = read_store(|store| {
+        let locale_loaded = store.lookup(locale).is_some();
+        let found = resolve_translate_in_store(
+            store,
+            &store.fallback_chain,
+            locale,
+            key_hash,
+            context_hash,
+            params,
+            writer,
+        );
+        TranslateStatus {
+            key_found: found,
+            locale_loaded,
+        }
+    });
+
+    if status.key_found {
+        crate::metrics::inc_cache_hits();
+    } else {
+        crate::metrics::inc_cache_misses();
+        call_missing_key_handler(locale, key_hash);
+        let _ = core::write!(writer, "{:#x}", key_hash);
+    }
+    Ok(status)
+}
+
 /// Helper function to translate a key hash directly into a caller-provided Writer.
 /// When `context_hash` is `Some(...)`, it first tries the context hash then falls back to `key_hash`.
 pub fn translate_to_writer<W: core::fmt::Write>(
@@ -691,56 +857,8 @@ pub fn translate_to_writer<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> CoreResult<()> {
-    crate::metrics::inc_total_translations();
-
-    #[cfg(feature = "std")]
-    {
-        log::debug!("translate: locale={}, key_hash={:#x}", locale, key_hash);
-    }
-
-    let chain = get_fallback_chain();
-
-    let success = read_store(|store| {
-        // 1. Try exact locale match
-        if try_locale(store, locale, key_hash, context_hash, params, writer) {
-            return Some(());
-        }
-
-        // 2. BCP-47 subtag negotiation: en-US → en
-        if let Some(parent) = locale_parent(locale) {
-            if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer)
-            {
-                return Some(());
-            }
-        }
-
-        // 3. Walk the configured fallback chain
-        for fb in chain.iter() {
-            let fb_str: &str = fb.as_ref();
-            if fb_str == locale {
-                continue;
-            }
-            if let Some(parent) = locale_parent(locale) {
-                if fb_str == parent {
-                    continue;
-                }
-            }
-            if try_locale(store, fb_str, key_hash, context_hash, params, writer) {
-                return Some(());
-            }
-        }
-        None
-    });
-
-    if success.is_some() {
-        crate::metrics::inc_cache_hits();
-        Ok(())
-    } else {
-        crate::metrics::inc_cache_misses();
-        call_missing_key_handler(locale, key_hash);
-        let _ = core::write!(writer, "{:#x}", key_hash);
-        Ok(())
-    }
+    translate_to_writer_with_status(locale, key_hash, context_hash, params, writer)?;
+    Ok(())
 }
 
 /// Translates a key hash for a given locale, dynamically interpolating parameters,
@@ -759,13 +877,18 @@ pub fn translate(
                 return cached;
             }
         }
-        let result = TRANSLATE_BUF.with(|cell| {
+        let (result, key_found) = TRANSLATE_BUF.with(|cell| {
             let mut guard = cell.borrow_mut();
             guard.clear();
-            let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut *guard);
-            (*guard).clone()
+            let status =
+                translate_to_writer_with_status(locale, key_hash, context_hash, params, &mut *guard)
+                    .unwrap_or(TranslateStatus {
+                        key_found: false,
+                        locale_loaded: false,
+                    });
+            (guard.clone(), status.key_found)
         });
-        cache_insert(locale, key_hash, params, &result);
+        cache_insert(locale, key_hash, params, &result, key_found);
         result
     }
     #[cfg(not(feature = "std"))]
@@ -1308,17 +1431,29 @@ mod store_extra_tests {
     fn translate_cache_hit_returns_same_value() {
         let _lock = lock_extra();
         clear_translations();
-        // Load empty L10N block so translate() finds the locale but misses the key
+        load_locale_with_key("en", "cache_test", b"cached-value");
+        let key_hash = hash("cache_test");
+        let r1 = translate("en", key_hash, None, &[]);
+        let r2 = translate("en", key_hash, None, &[]);
+        assert_eq!(r1, "cached-value");
+        assert_eq!(r1, r2);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn translate_cache_skips_missing_keys() {
+        let _lock = lock_extra();
+        clear_translations();
         let buf = vec![
             b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
             0x00, 0x00,
         ];
         assert!(crate::loader::load_raw_bytes("en", buf));
-        // First call: cache miss, returns hex hash
-        let r1 = translate("en", hash("cache_test"), None, &[]);
-        // Second call: should hit cache
-        let r2 = translate("en", hash("cache_test"), None, &[]);
+        let key_hash = hash("missing.cache");
+        let r1 = translate("en", key_hash, None, &[]);
+        let r2 = translate("en", key_hash, None, &[]);
         assert_eq!(r1, r2);
+        assert!(r1.starts_with("0x"));
     }
 
     #[cfg(feature = "std")]

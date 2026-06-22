@@ -18,14 +18,15 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let (mut new_vec, fallback_chain, mut _lazy_cache, mut offset_maps) = read_store(|store| {
+        let (mut locales, fallback_chain, mut _lazy_cache, mut offset_maps) = read_store(|store| {
             (
-                (*store.locales).clone(),
+                Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
                 store.lazy_cache.clone(),
                 store.offset_maps.clone(),
             )
         });
+        let new_vec = Arc::make_mut(&mut locales);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(&bytes) {
             Arc::new(reader.to_offsets())
@@ -45,7 +46,7 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
             }
         }
         swap_store(TranslationStore {
-            locales: Arc::new(new_vec),
+            locales,
             fallback_chain,
             lazy_cache: _lazy_cache,
             offset_maps,
@@ -55,15 +56,16 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     }
     #[cfg(not(feature = "std"))]
     {
-        let (mut new_vec, fallback_chain) =
-            read_store(|store| ((*store.locales).clone(), Arc::clone(&store.fallback_chain)));
+        let (mut locales, fallback_chain) =
+            read_store(|store| (Arc::clone(&store.locales), Arc::clone(&store.fallback_chain)));
+        let new_vec = Arc::make_mut(&mut locales);
         let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
         match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
             Ok(pos) => new_vec[pos] = entry,
             Err(pos) => new_vec.insert(pos, entry),
         }
         swap_store(TranslationStore {
-            locales: Arc::new(new_vec),
+            locales,
             fallback_chain,
         });
         emit_locale_changed(locale_str);
@@ -103,18 +105,19 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     let signed = crate::envelope::open_outer(pak_bytes)?;
     let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
     crate::integrity::verify(message, signature)?;
-    let (mut new_vec, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
+    let (mut locales, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
         (
-            (*store.locales).clone(),
+            Arc::clone(&store.locales),
             Arc::clone(&store.fallback_chain),
             store.lazy_cache.clone(),
             store.offset_maps.clone(),
         )
     });
+    let new_vec = Arc::make_mut(&mut locales);
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
     let entry = (
         locale_str.to_string(),
-        StoreData::Lazy(Arc::new(compressed.to_vec())),
+        StoreData::Lazy(Arc::new(Vec::from(compressed))),
     );
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
         Ok(pos) => {
@@ -135,7 +138,7 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
         }
     }
     swap_store(TranslationStore {
-        locales: Arc::new(new_vec),
+        locales,
         fallback_chain,
         lazy_cache,
         offset_maps,

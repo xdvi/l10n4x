@@ -1,4 +1,5 @@
 extern crate alloc;
+use alloc::collections::BTreeMap;
 use alloc::string::String;
 
 use crate::date_format::{format_date, DateStyle};
@@ -82,6 +83,28 @@ pub enum PluralCategory {
     Other,
 }
 
+#[inline]
+fn param_value<'a>(
+    params: &[(&'a str, &'a str)],
+    index: Option<&BTreeMap<&'a str, &'a str>>,
+    name: &str,
+) -> Option<&'a str> {
+    if let Some(map) = index {
+        return map.get(name).copied();
+    }
+    if params.len() == 1 {
+        return if params[0].0 == name {
+            Some(params[0].1)
+        } else {
+            None
+        };
+    }
+    params
+        .iter()
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| *v)
+}
+
 /// Formats a bytecode compiled message into the provided writer, dynamically
 /// interpolating variables and evaluating plural/select rules.
 pub fn format_message<W: core::fmt::Write>(
@@ -95,6 +118,15 @@ pub fn format_message<W: core::fmt::Write>(
         let text = core::str::from_utf8(bytecode).map_err(|_| core::fmt::Error)?;
         return writer.write_str(text);
     }
+    let param_index = if params.len() > 1 {
+        let mut map = BTreeMap::new();
+        for (k, v) in params {
+            map.insert(*k, *v);
+        }
+        Some(map)
+    } else {
+        None
+    };
     let mut pos = 0;
     while pos < bytecode.len() {
         if pos + 1 > bytecode.len() {
@@ -131,7 +163,7 @@ pub fn format_message<W: core::fmt::Write>(
                 let var_name = core::str::from_utf8(&bytecode[pos..pos + len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += len;
-                if let Some((_, val)) = params.iter().find(|(k, _)| *k == var_name) {
+                if let Some(val) = param_value(params, param_index.as_ref(), var_name) {
                     writer.write_str(val)?;
                 } else {
                     writer.write_str("{")?;
@@ -157,7 +189,7 @@ pub fn format_message<W: core::fmt::Write>(
                 }
                 let flags = bytecode[pos];
                 pos += 1;
-                if let Some((_, val)) = params.iter().find(|(k, _)| *k == var_name) {
+                if let Some(val) = param_value(params, param_index.as_ref(), var_name) {
                     if flags & 0x01 == 0 {
                         writer.write_str(&html_escape(val))?;
                     } else {
@@ -190,11 +222,8 @@ pub fn format_message<W: core::fmt::Write>(
                     u16::from_be_bytes(bytecode[pos..pos + 2].try_into().unwrap()) as usize;
                 pos += 2;
 
-                let param_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("0");
+                let param_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("0");
                 let parsed_i: i64 = param_val.parse().unwrap_or(0);
                 let cat = get_ordinal_category(locale, parsed_i);
 
@@ -279,11 +308,8 @@ pub fn format_message<W: core::fmt::Write>(
                 pos += 2;
 
                 // Lookup parameter value
-                let param_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("0");
+                let param_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("0");
                 let parsed_val: f64 = param_val.parse().unwrap_or(0.0);
 
                 let cat = get_plural_category(locale, parsed_val);
@@ -378,11 +404,8 @@ pub fn format_message<W: core::fmt::Write>(
                 pos += 2;
 
                 // Lookup parameter value
-                let param_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("");
+                let param_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("");
 
                 let mut best_case_pos = None;
                 let mut best_case_len = None;
@@ -449,10 +472,8 @@ pub fn format_message<W: core::fmt::Write>(
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
 
-                let param_val: f64 = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| v.parse::<f64>().unwrap_or(0.0))
+                let param_val: f64 = param_value(params, param_index.as_ref(), var_name)
+                    .map(|v| v.parse::<f64>().unwrap_or(0.0))
                     .unwrap_or(0.0);
 
                 if pos + 1 > bytecode.len() {
@@ -513,11 +534,8 @@ pub fn format_message<W: core::fmt::Write>(
                     _ => DateStyle::Date,
                 };
 
-                let raw_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("");
+                let raw_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("");
 
                 let formatted = format_date(raw_val, locale, style);
                 writer.write_str(&formatted)?;

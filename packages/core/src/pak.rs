@@ -166,7 +166,7 @@ pub(crate) fn decompress_zstd_payload(compressed: &[u8]) -> CoreResult<Vec<u8>> 
     decoder
         .decode_blocks(&mut reader, BlockDecodingStrategy::All)
         .map_err(|_| crate::CoreError::IoError("zstd decompression: decode failed"))?;
-    let mut output = Vec::new();
+    let mut output = Vec::with_capacity(compressed.len().saturating_mul(4).max(4096));
     let mut buf = [0u8; 4096];
     loop {
         let n = decoder
