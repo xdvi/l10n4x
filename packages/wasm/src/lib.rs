@@ -49,54 +49,52 @@ pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> 
 }
 
 #[wasm_bindgen]
-pub fn l10n4x_translate(locale: &str, key: &str) -> String {
-    l10n4x_core::store::translate(locale, key, None, &[])
+pub fn l10n4x_translate(locale: &str, key_hash: u64) -> String {
+    l10n4x_core::store::translate(locale, key_hash, None, &[])
 }
 
 #[wasm_bindgen]
 pub fn l10n4x_translate_with_params(
     locale: &str,
-    key: &str,
+    key_hash: u64,
     param_keys: Vec<String>,
     param_values: Vec<String>,
 ) -> String {
     if param_keys.len() != param_values.len() {
-        return key.to_string();
+        return format!("{:#x}", key_hash);
     }
     let params: Vec<(&str, &str)> = param_keys
         .iter()
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    l10n4x_core::store::translate(locale, key, None, &params)
+    l10n4x_core::store::translate(locale, key_hash, None, &params)
 }
 
 /// Translates a key with context suffix support (e.g. `friend_male` → key = `friend`).
 #[wasm_bindgen]
-pub fn l10n4x_translate_with_context(locale: &str, key: &str, context: Option<String>) -> String {
-    let ctx = context.as_deref();
-    l10n4x_core::store::translate(locale, key, ctx, &[])
+pub fn l10n4x_translate_with_context(locale: &str, key_hash: u64, context_hash: u64) -> String {
+    l10n4x_core::store::translate(locale, key_hash, Some(context_hash), &[])
 }
 
 /// Translate with context and parameters.
 #[wasm_bindgen]
 pub fn l10n4x_translate_with_context_and_params(
     locale: &str,
-    key: &str,
-    context: Option<String>,
+    key_hash: u64,
+    context_hash: u64,
     param_keys: Vec<String>,
     param_values: Vec<String>,
 ) -> String {
-    let ctx = context.as_deref();
     if param_keys.len() != param_values.len() {
-        return key.to_string();
+        return format!("{:#x}", key_hash);
     }
     let params: Vec<(&str, &str)> = param_keys
         .iter()
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    l10n4x_core::store::translate(locale, key, ctx, &params)
+    l10n4x_core::store::translate(locale, key_hash, Some(context_hash), &params)
 }
 
 #[wasm_bindgen]
@@ -136,8 +134,8 @@ pub fn l10n4x_locale_loaded(locale: &str) -> bool {
 
 /// Returns `true` if `key` exists in `locale` or the configured fallback chain.
 #[wasm_bindgen]
-pub fn l10n4x_key_exists(locale: &str, key: &str) -> bool {
-    l10n4x_core::store::key_exists(locale, key, None)
+pub fn l10n4x_key_exists(locale: &str, key_hash: u64) -> bool {
+    l10n4x_core::store::key_exists(locale, key_hash, None)
 }
 
 /// Returns the list of locale codes that are currently loaded in memory.
@@ -159,7 +157,7 @@ mod export_tests {
     #[test]
     fn key_exists_returns_false_without_pak() {
         super::l10n4x_clear();
-        assert!(!super::l10n4x_key_exists("en", "any.key"));
+        assert!(!super::l10n4x_key_exists("en", 0));
     }
 
     #[test]
