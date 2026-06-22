@@ -36,7 +36,7 @@ fn install_test_keys() {
 
 /// Compile test fixtures from JSON → .pak using the compiler crate.
 fn compile_fixtures(src: &Path, out: &Path, encrypt: bool) {
-    l10n4x_compiler::compile_translations(src, out, encrypt).unwrap();
+    l10n4x_compiler::compile_translations(src, out, encrypt, 8).unwrap();
 }
 
 fn translate_helper(

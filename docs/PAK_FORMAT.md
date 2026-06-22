@@ -9,7 +9,7 @@ All multi-byte integers are **big-endian**.
 | 0 | 4 | Magic `L10P` |
 | 4 | 4 | Version `1` |
 | 8 | 4 | Payload length (N) |
-| 12 | N | DEFLATE-compressed inner `L10N` binary |
+| 12 | N | zstd-compressed inner `L10N` binary |
 | 12+N | 64 | Ed25519 signature over bytes `[0..12+N)` |
 
 Signature verification is **mandatory** at runtime. Unsigned or tampered paks are rejected.
