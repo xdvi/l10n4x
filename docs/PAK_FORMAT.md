@@ -47,4 +47,9 @@ Inside the decompressed `L10N` block, the value of each key is a sequence of opc
 | `0x02` | Variable | `[u32: var_name_len][var_name_bytes]` |
 | `0x03` | Plural | `[u32: var_name_len][var_name_bytes][u16: case_count][cases...]` |
 | `0x04` | Select | `[u32: var_name_len][var_name_bytes][u16: case_count][cases...]` |
-| `0x05` | Number | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=decimal, `0x01`=percent, `0x02`=integer |
+| `0x05` | Number | `[u32: var_name_len][var_name_bytes][u8: style][style extras]` where style: `0x00`=decimal, `0x01`=percent, `0x02`=integer, `0x03`=currency (`[u32: code_len][code_bytes]`) |
+| `0x06` | Date/Time | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=date, `0x01`=time, `0x02`=datetime |
+| `0x07` | Variable w/ Default | `[u32: name_len][name_bytes][u32: default_len][default_bytes]` — writes param value if present, default otherwise |
+| `0x08` | Relative Time | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=auto, `0x01`=seconds, `0x02`=minutes, `0x03`=hours, `0x04`=days, `0x05`=weeks, `0x06`=months, `0x07`=years |
+| `0x09` | List Format | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=conjunction (and), `0x01`=disjunction (or), `0x02`=unit (commas only) |
+| `0x0A` | Ordinal Plural | Same encoding as `0x03` but selects from CLDR ordinal rules instead of cardinal |
