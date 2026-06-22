@@ -219,7 +219,7 @@ fn test_parser_number_style_currency() {
     let parser = MessageParser::new("{price, number, currency}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if var == "price" && code == "")
+        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if var == "price" && code.is_empty())
     );
 }
 
@@ -441,9 +441,8 @@ fn test_adversarial_nested_braces_in_expression() {
     assert_eq!(nodes.len(), 1);
     // Expression with nested braces should parse without panicking
     // The inner brace is included in the expression string
-    match &nodes[0] {
-        MessageNode::Variable(v) => assert!(v.contains("x") || v.contains("y") || v.contains("z")),
-        _ => {}
+    if let MessageNode::Variable(v) = &nodes[0] {
+        assert!(v.contains("x") || v.contains("y") || v.contains("z"));
     }
 }
 
@@ -732,7 +731,7 @@ when * y {second}
 when * * {all}"#;
     let nodes = MessageParser::new(input).parse().unwrap();
     match &nodes[0] {
-        MessageNode::Select { var, cases } => {
+        MessageNode::Select { var, cases: _ } => {
             assert_eq!(var, "b");
         }
         other => panic!("Expected Select, got {:?}", other),

@@ -320,7 +320,7 @@ mod config_io_and_env_tests {
     #[test]
     fn decode_base64_wrong_decoded_length() {
         // base64 of 31 zero bytes produces 44 chars but decodes to 31 bytes
-        let thirty_one_bytes = general_purpose::STANDARD.encode(&[0u8; 31]);
+        let thirty_one_bytes = general_purpose::STANDARD.encode([0u8; 31]);
         assert_eq!(thirty_one_bytes.len(), 44);
         let result = decode_32_byte_key(&thirty_one_bytes, "test");
         assert!(result.is_err());

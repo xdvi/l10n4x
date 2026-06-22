@@ -72,9 +72,8 @@ struct TranslateOutcome {
     locale_loaded: bool,
 }
 
-#[derive(Clone)]
 struct CachedTranslate {
-    locale: String,
+    locale_hash: u64,
     key_hash: u64,
     context_hash: Option<u64>,
     params_key: u64,
@@ -83,8 +82,19 @@ struct CachedTranslate {
     locale_loaded: bool,
 }
 
+struct TranslateScratch {
+    locale: String,
+    param_pairs: Vec<(String, String)>,
+}
+
 thread_local! {
     static LAST_TRANSLATE: RefCell<Option<CachedTranslate>> = const { RefCell::new(None) };
+    static SCRATCH: RefCell<TranslateScratch> = const {
+        RefCell::new(TranslateScratch {
+            locale: String::new(),
+            param_pairs: Vec::new(),
+        })
+    };
 }
 
 fn hash_params(params: &[(&str, &str)]) -> u64 {
@@ -99,7 +109,7 @@ fn hash_params(params: &[(&str, &str)]) -> u64 {
 }
 
 fn cache_lookup(
-    locale: &str,
+    locale_hash: u64,
     key_hash: u64,
     context_hash: Option<u64>,
     params_key: u64,
@@ -107,7 +117,7 @@ fn cache_lookup(
     LAST_TRANSLATE.with(|cell| {
         let cached = cell.borrow();
         let entry = cached.as_ref()?;
-        if entry.locale == locale
+        if entry.locale_hash == locale_hash
             && entry.key_hash == key_hash
             && entry.context_hash == context_hash
             && entry.params_key == params_key
@@ -124,7 +134,7 @@ fn cache_lookup(
 }
 
 fn cache_store(
-    locale: &str,
+    locale_hash: u64,
     key_hash: u64,
     context_hash: Option<u64>,
     params_key: u64,
@@ -132,7 +142,7 @@ fn cache_store(
 ) {
     LAST_TRANSLATE.with(|cell| {
         *cell.borrow_mut() = Some(CachedTranslate {
-            locale: locale.to_string(),
+            locale_hash,
             key_hash,
             context_hash,
             params_key,
@@ -158,8 +168,9 @@ fn resolve_translation(
     context_hash: Option<u64>,
     params: &[(&str, &str)],
 ) -> TranslateOutcome {
+    let locale_hash = fnv1a_64(locale.as_bytes());
     let params_key = hash_params(params);
-    if let Some(cached) = cache_lookup(locale, key_hash, context_hash, params_key) {
+    if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, params_key) {
         return cached;
     }
 
@@ -180,7 +191,7 @@ fn resolve_translation(
         key_found: status.key_found,
         locale_loaded: status.locale_loaded,
     };
-    cache_store(locale, key_hash, context_hash, params_key, &outcome);
+    cache_store(locale_hash, key_hash, context_hash, params_key, &outcome);
     outcome
 }
 
@@ -210,12 +221,24 @@ fn write_to_c_buffer(s: &str, buf: *mut u8, max_len: usize) -> Result<usize, i32
     Ok(s.len())
 }
 
-fn parse_typed_params_owned(
+fn fill_locale_buf(locale_ptr: *const c_char, locale: &mut String) -> Result<(), i32> {
+    locale.clear();
+    if locale_ptr.is_null() {
+        locale.push_str(&get_fallback_locale());
+    } else {
+        locale.push_str(cstr_to_str(locale_ptr)?);
+    }
+    Ok(())
+}
+
+fn fill_typed_params(
     params: *const L10n4cParam,
     param_count: usize,
-) -> Result<Vec<(String, String)>, i32> {
+    storage: &mut Vec<(String, String)>,
+) -> Result<(), i32> {
+    storage.clear();
     if param_count == 0 {
-        return Ok(Vec::new());
+        return Ok(());
     }
     if params.is_null() {
         return Err(L10N4C_INVALID_PARAMS);
@@ -225,28 +248,43 @@ fn parse_typed_params_owned(
         .checked_mul(param_count)
         .ok_or(L10N4C_BUFFER_OVERFLOW)?;
 
+    storage.reserve(param_count);
     let slice = unsafe { std::slice::from_raw_parts(params, param_count) };
-    let mut out = Vec::with_capacity(param_count);
     for p in slice {
-        let key = cstr_to_str(p.key)?.to_string();
-        let value = cstr_to_str(p.value)?.to_string();
-        out.push((key, value));
+        let key = cstr_to_str(p.key)?;
+        let value = cstr_to_str(p.value)?;
+        storage.push((key.to_string(), value.to_string()));
     }
-    Ok(out)
+    Ok(())
 }
 
 fn translate_core(
     locale_ptr: *const c_char,
     key_hash: u64,
     context_hash: Option<u64>,
-    params: &[(&str, &str)],
+    params: Option<(*const L10n4cParam, usize)>,
 ) -> Result<TranslateOutcome, i32> {
-    let locale = if locale_ptr.is_null() {
-        get_fallback_locale().to_string()
-    } else {
-        cstr_to_str(locale_ptr)?.to_string()
-    };
-    Ok(resolve_translation(&locale, key_hash, context_hash, params))
+    SCRATCH.with(|scratch_cell| {
+        let mut scratch = scratch_cell.borrow_mut();
+        fill_locale_buf(locale_ptr, &mut scratch.locale)?;
+        match params {
+            None => Ok(resolve_translation(&scratch.locale, key_hash, context_hash, &[])),
+            Some((ptr, count)) => {
+                fill_typed_params(ptr, count, &mut scratch.param_pairs)?;
+                let refs: Vec<(&str, &str)> = scratch
+                    .param_pairs
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
+                Ok(resolve_translation(
+                    &scratch.locale,
+                    key_hash,
+                    context_hash,
+                    &refs,
+                ))
+            }
+        }
+    })
 }
 
 fn string_to_c(s: &str) -> *mut c_char {
@@ -398,7 +436,7 @@ pub extern "C" fn l10n4c_translate_required_size(
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let outcome = match translate_core(locale, key_hash, None, &[]) {
+    let outcome = match translate_core(locale, key_hash, None, None) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -420,7 +458,7 @@ pub extern "C" fn l10n4c_translate(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(locale, key_hash, None, &[]) {
+    let outcome = match translate_core(locale, key_hash, None, None) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -443,15 +481,7 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let outcome = match translate_core(locale, key_hash, None, &refs) {
+    let outcome = match translate_core(locale, key_hash, None, Some((params, param_count))) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -475,15 +505,7 @@ pub extern "C" fn l10n4c_translate_with_params(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let outcome = match translate_core(locale, key_hash, None, &refs) {
+    let outcome = match translate_core(locale, key_hash, None, Some((params, param_count))) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -496,7 +518,7 @@ pub extern "C" fn l10n4c_translate_with_params(
 /// Allocates and returns a translated string. Caller must free with [`l10n4c_free_string`].
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key_hash: u64) -> *mut c_char {
-    match translate_core(locale, key_hash, None, &[]) {
+    match translate_core(locale, key_hash, None, None) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -509,15 +531,7 @@ pub extern "C" fn l10n4c_translate_with_params_alloc(
     params: *const L10n4cParam,
     param_count: usize,
 ) -> *mut c_char {
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    match translate_core(locale, key_hash, None, &refs) {
+    match translate_core(locale, key_hash, None, Some((params, param_count))) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -534,7 +548,7 @@ pub extern "C" fn l10n4c_translate_with_context_required_size(
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let outcome = match translate_core(locale, key_hash, Some(context_hash), &[]) {
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), None) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -557,7 +571,7 @@ pub extern "C" fn l10n4c_translate_with_context(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(locale, key_hash, Some(context_hash), &[]) {
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), None) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -574,7 +588,7 @@ pub extern "C" fn l10n4c_translate_with_context_alloc(
     key_hash: u64,
     context_hash: u64,
 ) -> *mut c_char {
-    match translate_core(locale, key_hash, Some(context_hash), &[]) {
+    match translate_core(locale, key_hash, Some(context_hash), None) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -593,15 +607,12 @@ pub extern "C" fn l10n4c_translate_with_context_and_params_required_size(
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let outcome = match translate_core(locale, key_hash, Some(context_hash), &refs) {
+    let outcome = match translate_core(
+        locale,
+        key_hash,
+        Some(context_hash),
+        Some((params, param_count)),
+    ) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -626,15 +637,12 @@ pub extern "C" fn l10n4c_translate_with_context_and_params(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(e) => return e,
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    let outcome = match translate_core(locale, key_hash, Some(context_hash), &refs) {
+    let outcome = match translate_core(
+        locale,
+        key_hash,
+        Some(context_hash),
+        Some((params, param_count)),
+    ) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -653,15 +661,12 @@ pub extern "C" fn l10n4c_translate_with_context_and_params_alloc(
     params: *const L10n4cParam,
     param_count: usize,
 ) -> *mut c_char {
-    let parsed = match parse_typed_params_owned(params, param_count) {
-        Ok(p) => p,
-        Err(_) => return std::ptr::null_mut(),
-    };
-    let refs: Vec<(&str, &str)> = parsed
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_str()))
-        .collect();
-    match translate_core(locale, key_hash, Some(context_hash), &refs) {
+    match translate_core(
+        locale,
+        key_hash,
+        Some(context_hash),
+        Some((params, param_count)),
+    ) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -747,6 +752,58 @@ pub extern "C" fn l10n4c_register_formatter(
     L10N4C_OK
 }
 
+/// Clears all loaded translations from the global store.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_clear() {
+    clear_translations();
+}
+
+/// Writes comma-separated loaded locale codes into `out_buf` (up to `out_len` bytes).
+/// Returns the number of bytes written (excluding null terminator),
+/// or `L10N4C_BUFFER_TOO_SMALL` if the buffer is too small.
+/// On success, the buffer is null-terminated.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_get_loaded_locales(out_buf: *mut u8, out_len: usize) -> i32 {
+    if out_buf.is_null() || out_len == 0 {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let locales = l10n4x_core::store::read_store(|store| {
+        let codes: Vec<&str> = store.locales.iter().map(|(loc, _)| loc.as_str()).collect();
+        codes.join(",")
+    });
+    let bytes = locales.as_bytes();
+    let len = bytes.len();
+    if len + 1 > out_len {
+        return L10N4C_BUFFER_TOO_SMALL;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
+        *out_buf.add(len) = 0;
+    }
+    len as i32
+}
+
+/// Returns comma-separated metrics counters: total translations, cache hits,
+/// cache misses, locale loads, format errors — as a UTF-8 string.
+/// Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_get_metrics(out_buf: *mut u8, out_len: usize) -> i32 {
+    if out_buf.is_null() || out_len == 0 {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let s = metrics::metrics_string();
+    let bytes = s.as_bytes();
+    let len = bytes.len();
+    if len + 1 > out_len {
+        return L10N4C_BUFFER_TOO_SMALL;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
+        *out_buf.add(len) = 0;
+    }
+    len as i32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -804,31 +861,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_typed_params_null_with_count() {
-        let result = parse_typed_params_owned(std::ptr::null(), 1);
+    fn fill_typed_params_null_with_count() {
+        let mut pairs = Vec::new();
+        let result = fill_typed_params(std::ptr::null(), 1, &mut pairs);
         assert_eq!(result, Err(L10N4C_INVALID_PARAMS));
     }
 
     #[test]
-    fn parse_typed_params_zero_count() {
+    fn fill_typed_params_zero_count() {
         let param = L10n4cParam {
             key: std::ptr::null(),
             value: std::ptr::null(),
         };
-        let result = parse_typed_params_owned(&param, 0);
-        assert_eq!(result, Ok(vec![]));
+        let mut pairs = Vec::new();
+        let result = fill_typed_params(&param, 0, &mut pairs);
+        assert_eq!(result, Ok(()));
+        assert!(pairs.is_empty());
     }
 
     #[test]
-    fn parse_typed_params_success() {
+    fn fill_typed_params_success() {
         let k = CString::new("name").unwrap();
         let v = CString::new("John").unwrap();
         let param = L10n4cParam {
             key: k.as_ptr(),
             value: v.as_ptr(),
         };
-        let result = parse_typed_params_owned(&param, 1);
-        assert_eq!(result, Ok(vec![("name".to_string(), "John".to_string())]));
+        let mut pairs = Vec::new();
+        let result = fill_typed_params(&param, 1, &mut pairs);
+        assert_eq!(result, Ok(()));
+        assert_eq!(pairs, vec![("name".to_string(), "John".to_string())]);
     }
 
     #[test]
@@ -1031,56 +1093,4 @@ mod tests {
         let result = l10n4c_get_metrics(buf.as_mut_ptr(), 1);
         assert_eq!(result, L10N4C_BUFFER_TOO_SMALL);
     }
-}
-
-/// Clears all loaded translations from the global store.
-#[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_clear() {
-    clear_translations();
-}
-
-/// Writes comma-separated loaded locale codes into `out_buf` (up to `out_len` bytes).
-/// Returns the number of bytes written (excluding null terminator),
-/// or `L10N4C_BUFFER_TOO_SMALL` if the buffer is too small.
-/// On success, the buffer is null-terminated.
-#[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_get_loaded_locales(out_buf: *mut u8, out_len: usize) -> i32 {
-    if out_buf.is_null() || out_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let locales = l10n4x_core::store::read_store(|store| {
-        let codes: Vec<&str> = store.locales.iter().map(|(loc, _)| loc.as_str()).collect();
-        codes.join(",")
-    });
-    let bytes = locales.as_bytes();
-    let len = bytes.len();
-    if len + 1 > out_len {
-        return L10N4C_BUFFER_TOO_SMALL;
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
-        *out_buf.add(len) = 0;
-    }
-    len as i32
-}
-
-/// Returns comma-separated metrics counters: total translations, cache hits,
-/// cache misses, locale loads, format errors — as a UTF-8 string.
-/// Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
-#[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_get_metrics(out_buf: *mut u8, out_len: usize) -> i32 {
-    if out_buf.is_null() || out_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let s = metrics::metrics_string();
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    if len + 1 > out_len {
-        return L10N4C_BUFFER_TOO_SMALL;
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
-        *out_buf.add(len) = 0;
-    }
-    len as i32
 }

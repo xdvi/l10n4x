@@ -239,7 +239,7 @@ mod tests {
 
     #[test]
     fn integer_style_truncates_fraction() {
-        assert_eq!(format_number(3.14, "en", NumberStyle::Integer), "3");
+        assert_eq!(format_number(3.99, "en", NumberStyle::Integer), "3");
         assert_eq!(format_number(1234.9, "en", NumberStyle::Integer), "1,234");
     }
 
@@ -343,7 +343,7 @@ mod tests {
 
     #[test]
     fn number_rounding_two_decimals() {
-        assert_eq!(format_number(3.14159, "en", NumberStyle::Decimal), "3.14");
+        assert_eq!(format_number(12.3456, "en", NumberStyle::Decimal), "12.35");
     }
 
     #[test]

@@ -130,7 +130,7 @@ mod tests {
     fn debug_and_clone() {
         let e = CoreError::InvalidFormat("err");
         let _ = format!("{:?}", e);
-        let _ = e.clone();
+        let _ = e;
     }
 
     #[test]

@@ -1,11 +1,14 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use l10n4x_core::binary_format::fnv1a_64;
-use l10n4x_core::loader::load_raw_bytes;
+use l10n4x_core::integrity;
+use l10n4x_core::loader::{load_raw_bytes, try_load_pak_lazy};
+use l10n4x_core::pak::{build_unsigned, seal};
 use l10n4x_core::store::{
     clear_translations, key_exists, set_fallback_locale, swap_store, translate,
     translate_to_writer, translate_to_writer_with_status, StoreData, TranslationStore,
 };
-use std::sync::Arc;
+use l10n4x_compiler::signing;
+use std::sync::{Arc, OnceLock};
 
 fn make_binary_with_keys(entries: &[(&str, &[u8])]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -58,6 +61,29 @@ fn setup_locales() {
         ]),
     ));
     set_fallback_locale("en");
+}
+
+fn lazy_pak_bytes() -> &'static [u8] {
+    static PAK: OnceLock<Vec<u8>> = OnceLock::new();
+    PAK.get_or_init(|| {
+        let seed = [42u8; 32];
+        assert!(signing::set_signing_key(&seed));
+        let pubkey = signing::signing_public_key().unwrap();
+        assert!(integrity::set_verify_key(&pubkey));
+        let welcome_bc = [0x01, 0, 0, 0, 6, b'H', b'e', b'l', b'l', b'o', b'!'];
+        let l10n = make_binary_with_keys(&[("common.welcome", &welcome_bc)]);
+        let compressed = zstd::encode_all(l10n.as_slice(), 3).unwrap();
+        let unsigned = build_unsigned(&compressed, None);
+        let signature = signing::sign(&unsigned).unwrap();
+        seal(&unsigned, &signature)
+    })
+    .as_slice()
+}
+
+fn setup_lazy_locale() -> u64 {
+    clear_translations();
+    assert!(try_load_pak_lazy("lazy", lazy_pak_bytes()).is_ok());
+    fnv1a_64(b"common.welcome")
 }
 
 fn bench_lookup(c: &mut Criterion) {
@@ -144,6 +170,25 @@ fn bench_lookup(c: &mut Criterion) {
             .unwrap();
             black_box(status.key_found);
             black_box(buf.len());
+        });
+    });
+
+    let lazy_hash = setup_lazy_locale();
+    c.bench_function("lazy_cold_first_translate", |b| {
+        b.iter_batched(
+            setup_lazy_locale,
+            |key_hash| {
+                let _ = translate(black_box("lazy"), black_box(key_hash), None, black_box(&[]));
+            },
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    // Warm lazy decompression cache once, then measure steady-state.
+    let _ = translate("lazy", lazy_hash, None, &[]);
+    c.bench_function("lazy_steady_translate", |b| {
+        b.iter(|| {
+            let _ = translate(black_box("lazy"), black_box(lazy_hash), None, black_box(&[]));
         });
     });
 

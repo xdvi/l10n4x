@@ -133,10 +133,8 @@ fn test_translate_helper_and_macro() {
     data.extend_from_slice(&val_offset.to_be_bytes());
     data.extend_from_slice(&val_len.to_be_bytes());
 
-    let mut locales = Vec::new();
-    locales.push(("en".to_string(), StoreData::Owned(Arc::new(data))));
     let store = TranslationStore {
-        locales: Arc::new(locales),
+        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(data)))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: HashMap::new(),
         offset_maps: HashMap::new(),
@@ -156,10 +154,8 @@ fn test_translate_helper_and_macro() {
 #[cfg(feature = "std")]
 fn test_lock_free_concurrency_rcu() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    let mut locales = Vec::new();
-    locales.push(("en".to_string(), StoreData::Owned(Arc::new(vec![]))));
     let initial_store = TranslationStore {
-        locales: Arc::new(locales),
+        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: HashMap::new(),
         offset_maps: HashMap::new(),
@@ -178,10 +174,11 @@ fn test_lock_free_concurrency_rcu() {
             mock_data.extend_from_slice(&16u32.to_be_bytes()); // index offset
             mock_data.extend_from_slice(&0u32.to_be_bytes()); // count
 
-            let mut locales = Vec::new();
-            locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
             let store = TranslationStore {
-                locales: Arc::new(locales),
+                locales: Arc::new(vec![(
+                    "en".to_string(),
+                    StoreData::Owned(Arc::new(mock_data)),
+                )]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
                 lazy_cache: HashMap::new(),
                 offset_maps: HashMap::new(),
@@ -222,10 +219,8 @@ fn test_lock_free_concurrency_rcu() {
 #[cfg(feature = "std")]
 fn test_ebr_stress() {
     let _lock = TEST_MUTEX.lock().unwrap();
-    let mut locales = Vec::new();
-    locales.push(("en".to_string(), StoreData::Owned(Arc::new(vec![]))));
     let initial_store = TranslationStore {
-        locales: Arc::new(locales),
+        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: HashMap::new(),
         offset_maps: HashMap::new(),
@@ -245,14 +240,14 @@ fn test_ebr_stress() {
             mock_data.extend_from_slice(&16u32.to_be_bytes());
             mock_data.extend_from_slice(&0u32.to_be_bytes());
 
-            let mut locales = Vec::new();
-            locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
-            locales.push((
-                "es".to_string(),
-                StoreData::Owned(Arc::new(vec![count as u8])),
-            ));
             let store = TranslationStore {
-                locales: Arc::new(locales),
+                locales: Arc::new(vec![
+                    ("en".to_string(), StoreData::Owned(Arc::new(mock_data))),
+                    (
+                        "es".to_string(),
+                        StoreData::Owned(Arc::new(vec![count as u8])),
+                    ),
+                ]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
                 lazy_cache: HashMap::new(),
                 offset_maps: HashMap::new(),

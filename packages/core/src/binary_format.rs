@@ -41,7 +41,7 @@ impl<'a> BinaryFormatReader<'a> {
     }
 
     /// Performs binary search on the sorted u64 hash index to locate the bytecode.
-    /// Each index entry is 16 bytes: [hash:8B][val_offset:4B][val_len:4B].
+    /// Each index entry is 16 bytes: `\[hash:8B\]\[val_offset:4B\]\[val_len:4B\]`.
     pub fn lookup(&self, key_hash: u64) -> Option<&'a [u8]> {
         let index_offset = u32::from_be_bytes(self.data[8..12].try_into().unwrap()) as usize;
         let index_count = u32::from_be_bytes(self.data[12..16].try_into().unwrap()) as usize;

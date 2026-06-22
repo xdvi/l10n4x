@@ -2025,7 +2025,7 @@ mod formatter_unit_tests {
 
     #[test]
     fn adversarial_select_truncated_key_len_field() {
-        let mut bc = vec![
+        let bc = vec![
             0x04, 0x00, 0x00, 0x00, 0x01, b'x', 0x00, 0x01, 0x00, 0x00, 0x00,
         ];
         let mut out = String::new();
