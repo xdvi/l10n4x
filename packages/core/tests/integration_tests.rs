@@ -5,7 +5,6 @@ use l10n4x_core::plural_rules::get_plural_category;
 #[cfg(feature = "std")]
 use l10n4x_core::store::read_store;
 use l10n4x_core::store::{swap_store, translate, StoreData, TranslationStore};
-use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::thread;
@@ -136,8 +135,8 @@ fn test_translate_helper_and_macro() {
     let store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(data)))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: Arc::new(HashMap::new()),
-        offset_maps: Arc::new(HashMap::new()),
+        lazy_cache: None,
+        offset_maps: None,
     };
     swap_store(store);
 
@@ -157,8 +156,8 @@ fn test_lock_free_concurrency_rcu() {
     let initial_store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: Arc::new(HashMap::new()),
-        offset_maps: Arc::new(HashMap::new()),
+        lazy_cache: None,
+        offset_maps: None,
     };
     swap_store(initial_store);
 
@@ -180,8 +179,8 @@ fn test_lock_free_concurrency_rcu() {
                     StoreData::Owned(Arc::new(mock_data)),
                 )]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-                lazy_cache: Arc::new(HashMap::new()),
-                offset_maps: Arc::new(HashMap::new()),
+                lazy_cache: None,
+                offset_maps: None,
             };
             swap_store(store);
             thread::yield_now();
@@ -222,8 +221,8 @@ fn test_ebr_stress() {
     let initial_store = TranslationStore {
         locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: Arc::new(HashMap::new()),
-        offset_maps: Arc::new(HashMap::new()),
+        lazy_cache: None,
+        offset_maps: None,
     };
     swap_store(initial_store);
 
@@ -249,8 +248,8 @@ fn test_ebr_stress() {
                     ),
                 ]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-                lazy_cache: Arc::new(HashMap::new()),
-                offset_maps: Arc::new(HashMap::new()),
+                lazy_cache: None,
+                offset_maps: None,
             };
             swap_store(store);
             count = count.wrapping_add(1);

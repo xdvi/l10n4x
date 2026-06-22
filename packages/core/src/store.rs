@@ -165,6 +165,32 @@ type LazyDecompressCache = HashMap<u64, Arc<OnceLock<(Vec<u8>, OffsetMap)>>>;
 #[cfg(feature = "std")]
 type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
 
+/// Returns a mutable lazy-cache map, allocating `Arc` storage on first use.
+#[cfg(feature = "std")]
+pub(crate) fn lazy_cache_mut(cache: &mut Option<Arc<LazyDecompressCache>>) -> &mut LazyDecompressCache {
+    match cache {
+        Some(arc) => Arc::make_mut(arc),
+        None => {
+            *cache = Some(Arc::new(HashMap::new()));
+            Arc::make_mut(cache.as_mut().expect("lazy_cache just initialized"))
+        }
+    }
+}
+
+/// Returns a mutable offset-map table, allocating `Arc` storage on first use.
+#[cfg(feature = "std")]
+pub(crate) fn offset_maps_mut(
+    maps: &mut Option<Arc<HashMap<u64, OffsetMap>>>,
+) -> &mut HashMap<u64, OffsetMap> {
+    match maps {
+        Some(arc) => Arc::make_mut(arc),
+        None => {
+            *maps = Some(Arc::new(HashMap::new()));
+            Arc::make_mut(maps.as_mut().expect("offset_maps just initialized"))
+        }
+    }
+}
+
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 /// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
 /// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
@@ -173,12 +199,12 @@ pub struct TranslationStore {
     pub locales: Arc<Vec<(String, StoreData)>>,
     /// Ordered chain of fallback locale codes. The first match wins.
     pub fallback_chain: Arc<[Arc<str>]>,
-    /// Per-locale lazy decompression cache. Key: locale_hash.
+    /// Per-locale lazy decompression cache. Key: locale_hash. `None` when empty (no reload caches).
     #[cfg(feature = "std")]
-    pub lazy_cache: Arc<LazyDecompressCache>,
-    /// Per-locale O(1) offset maps. Key: locale_hash. Value: Arc<HashMap<key_hash -> (offset, len)>>.
+    pub lazy_cache: Option<Arc<LazyDecompressCache>>,
+    /// Per-locale O(1) offset maps. Key: locale_hash. `None` when empty.
     #[cfg(feature = "std")]
-    pub offset_maps: Arc<HashMap<u64, OffsetMap>>,
+    pub offset_maps: Option<Arc<HashMap<u64, OffsetMap>>>,
 }
 
 impl Default for TranslationStore {
@@ -187,9 +213,9 @@ impl Default for TranslationStore {
             locales: Arc::new(Vec::new()),
             fallback_chain: default_chain(),
             #[cfg(feature = "std")]
-            lazy_cache: Arc::new(HashMap::new()),
+            lazy_cache: None,
             #[cfg(feature = "std")]
-            offset_maps: Arc::new(HashMap::new()),
+            offset_maps: None,
         }
     }
 }
@@ -210,7 +236,8 @@ impl TranslationStore {
                 let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
                 let entry = self
                     .lazy_cache
-                    .get(&locale_hash)
+                    .as_ref()
+                    .and_then(|c| c.get(&locale_hash))
                     .expect("lazy_cache entry must exist for StoreData::Lazy locale");
                 let (decompressed, _) = entry.get_or_init(|| {
                     let output = crate::pak::decompress_zstd_payload(compressed.as_slice())
@@ -369,8 +396,8 @@ pub fn set_fallback_chain(chain: &[&str]) {
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                Arc::clone(&store.lazy_cache),
-                Arc::clone(&store.offset_maps),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
             )
         });
         swap_store(TranslationStore {
@@ -419,8 +446,8 @@ pub fn clear_translations() {
         swap_store(TranslationStore {
             locales: Arc::new(Vec::new()),
             fallback_chain: chain,
-            lazy_cache: Arc::new(HashMap::new()),
-            offset_maps: Arc::new(HashMap::new()),
+            lazy_cache: None,
+            offset_maps: None,
         });
     }
     #[cfg(not(feature = "std"))]
@@ -450,11 +477,13 @@ fn offset_map_for_locale<'a>(
     let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
     let lazy_offsets = store
         .lazy_cache
-        .get(&locale_hash)
+        .as_ref()
+        .and_then(|c| c.get(&locale_hash))
         .and_then(|entry| entry.get().map(|(_, offsets)| offsets.as_ref()));
     store
         .offset_maps
-        .get(&locale_hash)
+        .as_ref()
+        .and_then(|m| m.get(&locale_hash))
         .filter(|m| !m.is_empty())
         .map(|arc| arc.as_ref())
         .or(lazy_offsets)
@@ -594,12 +623,12 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                Arc::clone(&store.lazy_cache),
-                Arc::clone(&store.offset_maps),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
             )
         });
         let new_vec = Arc::make_mut(&mut locales);
-        let offset_map = Arc::make_mut(&mut offset_maps);
+        let offset_map = offset_maps_mut(&mut offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
             Arc::new(reader.to_offsets())
@@ -747,11 +776,13 @@ fn try_locale<W: core::fmt::Write>(
             let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
             let lazy_offsets = store
                 .lazy_cache
-                .get(&locale_hash)
+                .as_ref()
+                .and_then(|c| c.get(&locale_hash))
                 .and_then(|entry| entry.get().map(|(_, offsets)| offsets));
             let map = store
                 .offset_maps
-                .get(&locale_hash)
+                .as_ref()
+                .and_then(|m| m.get(&locale_hash))
                 .filter(|m| !m.is_empty())
                 .or(lazy_offsets);
             if let Some(map) = map {
@@ -1150,8 +1181,8 @@ mod store_extra_tests {
             swap_store(TranslationStore {
                 locales,
                 fallback_chain: chain,
-                lazy_cache: Arc::new(HashMap::new()),
-                offset_maps: Arc::new(HashMap::new()),
+                lazy_cache: None,
+                offset_maps: None,
             });
         }
         #[cfg(not(feature = "std"))]

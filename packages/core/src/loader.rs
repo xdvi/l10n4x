@@ -1,7 +1,10 @@
 extern crate alloc;
 use crate::error::CoreResult;
 use crate::pak::decompress_pak;
-use crate::store::{emit_locale_changed, read_store, swap_store, StoreData, TranslationStore};
+use crate::store::{
+    emit_locale_changed, lazy_cache_mut, offset_maps_mut, read_store, swap_store, StoreData,
+    TranslationStore,
+};
 use alloc::string::ToString;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -22,13 +25,13 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
             (
                 Arc::clone(&store.locales),
                 Arc::clone(&store.fallback_chain),
-                Arc::clone(&store.lazy_cache),
-                Arc::clone(&store.offset_maps),
+                store.lazy_cache.clone(),
+                store.offset_maps.clone(),
             )
         });
         let new_vec = Arc::make_mut(&mut locales);
-        let lazy = Arc::make_mut(&mut lazy_cache);
-        let offset_map = Arc::make_mut(&mut offset_maps);
+        let lazy = lazy_cache_mut(&mut lazy_cache);
+        let offset_map = offset_maps_mut(&mut offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(&bytes) {
             Arc::new(reader.to_offsets())
@@ -111,13 +114,13 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
         (
             Arc::clone(&store.locales),
             Arc::clone(&store.fallback_chain),
-            Arc::clone(&store.lazy_cache),
-            Arc::clone(&store.offset_maps),
+            store.lazy_cache.clone(),
+            store.offset_maps.clone(),
         )
     });
     let new_vec = Arc::make_mut(&mut locales);
-    let lazy = Arc::make_mut(&mut lazy_cache);
-    let offset_map = Arc::make_mut(&mut offset_maps);
+    let lazy = lazy_cache_mut(&mut lazy_cache);
+    let offset_map = offset_maps_mut(&mut offset_maps);
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
     let entry = (
         locale_str.to_string(),
