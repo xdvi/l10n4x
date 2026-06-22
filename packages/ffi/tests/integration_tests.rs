@@ -11,15 +11,16 @@ use std::fs;
 use std::path::Path;
 
 use l10n4c::{
-    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales, l10n4c_get_metrics,
+    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales,
     l10n4c_load_pak_directory, l10n4c_load_static_bytes, l10n4c_register_formatter,
     l10n4c_set_decrypt_key, l10n4c_set_fallback_chain, l10n4c_set_fallback_locale,
     l10n4c_set_missing_key_handler, l10n4c_set_verify_key, l10n4c_translate,
     l10n4c_translate_alloc, l10n4c_translate_required_size, l10n4c_translate_with_params,
     l10n4c_translate_with_params_alloc, l10n4c_translate_with_params_required_size,
-    L10n4cParam, L10N4C_BUFFER_TOO_SMALL, L10N4C_INVALID_PARAMS,
+    L10n4cParam, L10N4C_INVALID_PARAMS,
     L10N4C_KEY_NOT_FOUND, L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
 };
+use l10n4x_compiler::fnv1a_64;
 
 /// Install signing + verify keys for test fixtures.
 /// Compilation goes through `l10n4x_compiler`, which uses `l10n4x_core::integrity`
@@ -41,13 +42,13 @@ fn compile_fixtures(src: &Path, out: &Path, encrypt: bool) {
 
 fn translate_helper(
     locale: *const std::os::raw::c_char,
-    key: *const std::os::raw::c_char,
+    key_hash: u64,
 ) -> String {
     let mut size = 0usize;
-    let code = l10n4c_translate_required_size(locale, key, &mut size);
+    let code = l10n4c_translate_required_size(locale, key_hash, &mut size);
     assert!(code == L10N4C_OK || code == L10N4C_KEY_NOT_FOUND || code == L10N4C_LOCALE_NOT_LOADED);
     let mut buf = vec![0u8; size.max(1)];
-    let written_code = l10n4c_translate(locale, key, buf.as_mut_ptr(), buf.len());
+    let written_code = l10n4c_translate(locale, key_hash, buf.as_mut_ptr(), buf.len());
     assert!(
         written_code == L10N4C_OK
             || written_code == L10N4C_KEY_NOT_FOUND
@@ -60,7 +61,7 @@ fn translate_helper(
 
 fn translate_with_params_helper(
     locale: *const std::os::raw::c_char,
-    key: *const std::os::raw::c_char,
+    key_hash: u64,
     params: HashMap<&str, &str>,
 ) -> String {
     let strings: Vec<CString> = params
@@ -74,7 +75,7 @@ fn translate_with_params_helper(
             value: strings[i * 2 + 1].as_ptr(),
         });
     }
-    let ptr = l10n4c_translate_with_params_alloc(locale, key, c_params.as_ptr(), c_params.len());
+    let ptr = l10n4c_translate_with_params_alloc(locale, key_hash, c_params.as_ptr(), c_params.len());
     assert!(!ptr.is_null());
     let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
     l10n4c_free_string(ptr);
@@ -117,14 +118,14 @@ fn test_compiler_and_pak_loading() {
 
     let locale_es = CString::new("es").unwrap();
     let locale_en = CString::new("en").unwrap();
-    let key_unauth = CString::new("errors.unauthorized").unwrap();
+    let key_unauth = fnv1a_64(b"errors.unauthorized");
 
     assert_eq!(
-        translate_helper(locale_es.as_ptr(), key_unauth.as_ptr()),
+        translate_helper(locale_es.as_ptr(), key_unauth),
         "No autorizado por favor inicie sesión."
     );
     assert_eq!(
-        translate_helper(locale_en.as_ptr(), key_unauth.as_ptr()),
+        translate_helper(locale_en.as_ptr(), key_unauth),
         "Unauthorized please log in."
     );
 
@@ -162,9 +163,9 @@ fn test_fallback_locale() {
     let locale_fr = CString::new("fr").unwrap();
 
     // Fallback to "en" (default)
-    let key_fallback_only = CString::new("common.fallback_only").unwrap();
+    let key_fallback_only = fnv1a_64(b"common.fallback_only");
     assert_eq!(
-        translate_helper(locale_es.as_ptr(), key_fallback_only.as_ptr()),
+        translate_helper(locale_es.as_ptr(), key_fallback_only),
         "English only"
     );
 
@@ -172,9 +173,9 @@ fn test_fallback_locale() {
     let fallback_es = CString::new("es").unwrap();
     assert_eq!(l10n4c_set_fallback_locale(fallback_es.as_ptr()), L10N4C_OK);
 
-    let key_greeting = CString::new("common.greeting").unwrap();
+    let key_greeting = fnv1a_64(b"common.greeting");
     assert_eq!(
-        translate_helper(locale_fr.as_ptr(), key_greeting.as_ptr()),
+        translate_helper(locale_fr.as_ptr(), key_greeting),
         "¡Hola!"
     );
 
@@ -183,17 +184,18 @@ fn test_fallback_locale() {
     assert_eq!(l10n4c_set_fallback_locale(fallback_en.as_ptr()), L10N4C_OK);
 
     // Missing key returns key as fallback
-    let key_missing = CString::new("common.missing_key").unwrap();
+    let key_missing_hash = fnv1a_64(b"common.missing_key");
     let mut missing_size = 0usize;
     let missing_code =
-        l10n4c_translate_required_size(locale_es.as_ptr(), key_missing.as_ptr(), &mut missing_size);
+        l10n4c_translate_required_size(locale_es.as_ptr(), key_missing_hash, &mut missing_size);
     assert_eq!(missing_code, L10N4C_KEY_NOT_FOUND);
 
-    // Clear and verify empty state
+    // Clear and verify empty state - store uses {:#x} format for missing keys
     l10n4c_clear();
-    let key_unauth = CString::new("common.greeting").unwrap();
-    let post_clear = translate_helper(locale_en.as_ptr(), key_unauth.as_ptr());
-    assert_eq!(post_clear, "common.greeting");
+    let key_greeting_hash = fnv1a_64(b"common.greeting");
+    let expected_hex = format!("{:#x}", key_greeting_hash);
+    let post_clear = translate_helper(locale_en.as_ptr(), key_greeting_hash);
+    assert_eq!(post_clear, expected_hex);
 
     let _ = fs::remove_dir_all(temp_src);
     let _ = fs::remove_dir_all(temp_out);
@@ -224,13 +226,13 @@ fn test_variable_interpolation_and_plurals() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
-    let key_welcome = CString::new("common.welcome").unwrap();
-    let key_messages = CString::new("common.messages").unwrap();
+    let key_welcome = fnv1a_64(b"common.welcome");
+    let key_messages = fnv1a_64(b"common.messages");
 
     let mut welcome_params = HashMap::new();
     welcome_params.insert("name", "Diego");
     assert_eq!(
-        translate_with_params_helper(locale_en.as_ptr(), key_welcome.as_ptr(), welcome_params),
+        translate_with_params_helper(locale_en.as_ptr(), key_welcome, welcome_params),
         "Hello Diego!"
     );
 
@@ -242,7 +244,7 @@ fn test_variable_interpolation_and_plurals() {
         let mut p = HashMap::new();
         p.insert("count", count);
         assert_eq!(
-            translate_with_params_helper(locale_en.as_ptr(), key_messages.as_ptr(), p),
+            translate_with_params_helper(locale_en.as_ptr(), key_messages, p),
             expected
         );
     }
@@ -285,9 +287,9 @@ fn test_encrypted_pak_compile_and_load() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
-    let key = CString::new("common.greeting").unwrap();
+    let key_hash = fnv1a_64(b"common.greeting");
     assert_eq!(
-        translate_helper(locale_en.as_ptr(), key.as_ptr()),
+        translate_helper(locale_en.as_ptr(), key_hash),
         "Hello encrypted"
     );
 
@@ -313,8 +315,8 @@ fn test_alloc_api() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale = CString::new("en").unwrap();
-    let key = CString::new("common.greet").unwrap();
-    let ptr = l10n4c_translate_alloc(locale.as_ptr(), key.as_ptr());
+    let key_hash = fnv1a_64(b"common.greet");
+    let ptr = l10n4c_translate_alloc(locale.as_ptr(), key_hash);
     assert!(!ptr.is_null());
     let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
     assert_eq!(s, "Hi");
@@ -429,20 +431,20 @@ fn test_ffi_invalid_utf8() {
 fn test_ffi_buffer_overflow() {
     l10n4c_clear();
     let locale = CString::new("en").unwrap();
-    let key = CString::new("common.greet").unwrap();
+    let key_hash = fnv1a_64(b"common.greet");
     let dummy_param = L10n4cParam {
         key: std::ptr::null(),
         value: std::ptr::null(),
     };
     // Pass maximum usize to cause checked multiplication overflow
     let code =
-        l10n4c_translate_with_params_alloc(locale.as_ptr(), key.as_ptr(), &dummy_param, usize::MAX);
+        l10n4c_translate_with_params_alloc(locale.as_ptr(), key_hash, &dummy_param, usize::MAX);
     assert!(code.is_null());
 
     let mut out_size = 0usize;
     let size_code = l10n4c_translate_with_params_required_size(
         locale.as_ptr(),
-        key.as_ptr(),
+        key_hash,
         &dummy_param,
         usize::MAX,
         &mut out_size,
@@ -477,9 +479,9 @@ fn test_fallback_chain() {
 
     // Translate with explicit locale "fr" (not loaded) — should fallback through chain
     let locale_fr = CString::new("fr").unwrap();
-    let key = CString::new("common.greeting").unwrap();
+    let key_hash = fnv1a_64(b"common.greeting");
     assert_eq!(
-        translate_helper(locale_fr.as_ptr(), key.as_ptr()),
+        translate_helper(locale_fr.as_ptr(), key_hash),
         "Hola"
     );
 
@@ -497,7 +499,7 @@ fn test_missing_key_handler_callback() {
 
     static CALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
     static CALLED_LOCALE: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-    static CALLED_KEY: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+    static CALLED_KEY_HASH: std::sync::Mutex<Option<u64>> = std::sync::Mutex::new(None);
 
     // Reset
     CALLED.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -513,24 +515,23 @@ fn test_missing_key_handler_callback() {
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
-    unsafe extern "C" fn missing_key_cb(locale: *const std::os::raw::c_char, key: *const std::os::raw::c_char) {
+    unsafe extern "C" fn missing_key_cb(locale: *const std::os::raw::c_char, key_hash: u64) {
         let loc = unsafe { CStr::from_ptr(locale) }.to_str().unwrap_or("").to_string();
-        let k = unsafe { CStr::from_ptr(key) }.to_str().unwrap_or("").to_string();
         *CALLED_LOCALE.lock().unwrap() = Some(loc);
-        *CALLED_KEY.lock().unwrap() = Some(k);
+        *CALLED_KEY_HASH.lock().unwrap() = Some(key_hash);
         CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     unsafe { l10n4c_set_missing_key_handler(Some(missing_key_cb)) };
 
     let locale_en = CString::new("en").unwrap();
-    let missing_key = CString::new("common.nonexistent").unwrap();
+    let missing_key_hash = fnv1a_64(b"common.nonexistent");
     let mut buf = [0u8; 64];
-    l10n4c_translate(locale_en.as_ptr(), missing_key.as_ptr(), buf.as_mut_ptr(), 64);
+    l10n4c_translate(locale_en.as_ptr(), missing_key_hash, buf.as_mut_ptr(), 64);
 
     assert!(CALLED.load(std::sync::atomic::Ordering::SeqCst), "missing key handler should have been called");
     assert_eq!(*CALLED_LOCALE.lock().unwrap(), Some("en".to_string()));
-    assert_eq!(*CALLED_KEY.lock().unwrap(), Some("common.nonexistent".to_string()));
+    assert_eq!(*CALLED_KEY_HASH.lock().unwrap(), Some(fnv1a_64(b"common.nonexistent")));
 
     // Clear handler
     unsafe { l10n4c_set_missing_key_handler(None) };
@@ -570,9 +571,9 @@ fn test_register_custom_formatter_ffi() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
-    let key = CString::new("common.welcome").unwrap();
+    let key_hash = fnv1a_64(b"common.welcome");
     let mut buf = [0u8; 128];
-    let code = l10n4c_translate(locale_en.as_ptr(), key.as_ptr(), buf.as_mut_ptr(), 128);
+    let code = l10n4c_translate(locale_en.as_ptr(), key_hash, buf.as_mut_ptr(), 128);
     assert!(code == L10N4C_OK || code == L10N4C_KEY_NOT_FOUND);
 
     let _ = fs::remove_dir_all(temp_src);
@@ -623,7 +624,7 @@ fn test_translate_with_params_buffer_api() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
-    let key = CString::new("common.hello").unwrap();
+    let key_hash = fnv1a_64(b"common.hello");
     let param_name = CString::new("name").unwrap();
     let param_val = CString::new("World").unwrap();
     let c_param = l10n4c::L10n4cParam { key: param_name.as_ptr(), value: param_val.as_ptr() };
@@ -631,7 +632,7 @@ fn test_translate_with_params_buffer_api() {
     // Test required_size
     let mut out_size = 0usize;
     let size_code = l10n4c_translate_with_params_required_size(
-        locale_en.as_ptr(), key.as_ptr(),
+        locale_en.as_ptr(), key_hash,
         &c_param, 1,
         &mut out_size,
     );
@@ -641,7 +642,7 @@ fn test_translate_with_params_buffer_api() {
     // Test buffer translate
     let mut buf = vec![0u8; out_size.max(16)];
     let code = l10n4c_translate_with_params(
-        locale_en.as_ptr(), key.as_ptr(),
+        locale_en.as_ptr(), key_hash,
         &c_param, 1,
         buf.as_mut_ptr(), buf.len(),
     );

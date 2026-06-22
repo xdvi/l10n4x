@@ -34,17 +34,17 @@ use l10n4x_core::metrics;
 use l10n4x_core::store::{clear_translations, get_fallback_locale, load_static_bytes, set_fallback_locale};
 
 /// C-compatible function pointer type for the missing key callback.
-pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key: *const c_char);
+pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key_hash: u64);
 
 static C_MISSING_KEY_HANDLER: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
-fn c_missing_key_bridge(locale: &str, key: &str) {
+fn c_missing_key_bridge(locale: &str, key_hash: u64) {
     let ptr = C_MISSING_KEY_HANDLER.load(core::sync::atomic::Ordering::Acquire);
     if ptr.is_null() { return; }
     let f: L10n4cMissingKeyFn = unsafe { core::mem::transmute(ptr) };
-    if let (Ok(lc), Ok(kc)) = (CString::new(locale), CString::new(key)) {
-        unsafe { f(lc.as_ptr(), kc.as_ptr()); }
+    if let Ok(lc) = CString::new(locale) {
+        unsafe { f(lc.as_ptr(), key_hash); }
     }
 }
 
@@ -72,11 +72,11 @@ fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
         .map_err(|_| L10N4C_INVALID_ENCODING)
 }
 
-fn resolve_translation(locale: &str, key: &str, params: &[(&str, &str)]) -> TranslateOutcome {
+fn resolve_translation(locale: &str, key_hash: u64, params: &[(&str, &str)]) -> TranslateOutcome {
     let locale_loaded = l10n4x_core::store::locale_loaded(locale);
-    let key_found = l10n4x_core::store::key_exists(locale, key, None);
+    let key_found = l10n4x_core::store::key_exists(locale, key_hash, None);
     let mut resolved = String::new();
-    let _ = l10n4x_core::store::translate_to_writer(locale, key, None, params, &mut resolved);
+    let _ = l10n4x_core::store::translate_to_writer(locale, key_hash, None, params, &mut resolved);
     TranslateOutcome {
         text: resolved,
         key_found,
@@ -127,19 +127,15 @@ fn parse_typed_params_owned(
 
 fn translate_core(
     locale_ptr: *const c_char,
-    key_ptr: *const c_char,
+    key_hash: u64,
     params: &[(&str, &str)],
 ) -> Result<TranslateOutcome, i32> {
-    if key_ptr.is_null() {
-        return Err(L10N4C_INVALID_PARAMS);
-    }
-    let key = cstr_to_str(key_ptr)?;
     let locale = if locale_ptr.is_null() {
         get_fallback_locale().to_string()
     } else {
         cstr_to_str(locale_ptr)?.to_string()
     };
-    Ok(resolve_translation(&locale, key, params))
+    Ok(resolve_translation(&locale, key_hash, params))
 }
 
 fn string_to_c(s: &str) -> *mut c_char {
@@ -287,13 +283,13 @@ pub extern "C" fn l10n4c_load_pak_directory(dir_path: *const c_char) -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_required_size(
     locale: *const c_char,
-    key: *const c_char,
+    key_hash: u64,
     out_size: *mut usize,
 ) -> i32 {
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let outcome = match translate_core(locale, key, &[]) {
+    let outcome = match translate_core(locale, key_hash, &[]) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -317,11 +313,11 @@ pub extern "C" fn l10n4c_translate_required_size(
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate(
     locale: *const c_char,
-    key: *const c_char,
+    key_hash: u64,
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(locale, key, &[]) {
+    let outcome = match translate_core(locale, key_hash, &[]) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -344,7 +340,7 @@ pub extern "C" fn l10n4c_translate(
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_with_params_required_size(
     locale: *const c_char,
-    key: *const c_char,
+    key_hash: u64,
     params: *const L10n4cParam,
     param_count: usize,
     out_size: *mut usize,
@@ -360,7 +356,7 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let outcome = match translate_core(locale, key, &refs) {
+    let outcome = match translate_core(locale, key_hash, &refs) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -384,7 +380,7 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_with_params(
     locale: *const c_char,
-    key: *const c_char,
+    key_hash: u64,
     params: *const L10n4cParam,
     param_count: usize,
     buf: *mut u8,
@@ -398,7 +394,7 @@ pub extern "C" fn l10n4c_translate_with_params(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let outcome = match translate_core(locale, key, &refs) {
+    let outcome = match translate_core(locale, key_hash, &refs) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -418,8 +414,8 @@ pub extern "C" fn l10n4c_translate_with_params(
 
 /// Allocates and returns a translated string. Caller must free with [`l10n4c_free_string`].
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key: *const c_char) -> *mut c_char {
-    match translate_core(locale, key, &[]) {
+pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key_hash: u64) -> *mut c_char {
+    match translate_core(locale, key_hash, &[]) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -428,7 +424,7 @@ pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key: *const c_ch
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_with_params_alloc(
     locale: *const c_char,
-    key: *const c_char,
+    key_hash: u64,
     params: *const L10n4cParam,
     param_count: usize,
 ) -> *mut c_char {
@@ -440,7 +436,7 @@ pub extern "C" fn l10n4c_translate_with_params_alloc(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    match translate_core(locale, key, &refs) {
+    match translate_core(locale, key_hash, &refs) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -597,12 +593,6 @@ mod tests {
     }
 
     #[test]
-    fn translate_core_null_key() {
-        let result = translate_core(std::ptr::null(), std::ptr::null(), &[]);
-        assert!(result.is_err());
-    }
-
-    #[test]
     fn string_to_c_normal() {
         let ptr = string_to_c("hello");
         assert!(!ptr.is_null());
@@ -688,15 +678,13 @@ mod tests {
 
     #[test]
     fn translate_required_size_null_out() {
-        let key = CString::new("test").unwrap();
-        let result = l10n4c_translate_required_size(std::ptr::null(), key.as_ptr(), std::ptr::null_mut());
+        let result = l10n4c_translate_required_size(std::ptr::null(), 0, std::ptr::null_mut());
         assert_eq!(result, L10N4C_INVALID_PARAMS);
     }
 
     #[test]
     fn translate_null_buffer() {
-        let key = CString::new("test").unwrap();
-        let result = l10n4c_translate(std::ptr::null(), key.as_ptr(), std::ptr::null_mut(), 0);
+        let result = l10n4c_translate(std::ptr::null(), 0, std::ptr::null_mut(), 0);
         assert!(result == L10N4C_BUFFER_TOO_SMALL || result == L10N4C_KEY_NOT_FOUND || result == L10N4C_LOCALE_NOT_LOADED || result == L10N4C_INVALID_PARAMS);
     }
 
@@ -754,9 +742,8 @@ mod tests {
 
     #[test]
     fn translate_with_params_required_size_null_out() {
-        let key = CString::new("test").unwrap();
         let result = l10n4c_translate_with_params_required_size(
-            std::ptr::null(), key.as_ptr(),
+            std::ptr::null(), 0,
             std::ptr::null(), 0,
             std::ptr::null_mut(),
         );

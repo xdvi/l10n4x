@@ -53,21 +53,21 @@ void    l10n4c_clear(void);
 
 /* ── Translation (buffer-based) ───────────────────────────────────────────── */
 
-int32_t l10n4c_translate_required_size(const char *locale, const char *key, size_t *out_size);
-int32_t l10n4c_translate(const char *locale, const char *key, uint8_t *buf, size_t max_len);
+int32_t l10n4c_translate_required_size(const char *locale, uint64_t key_hash, size_t *out_size);
+int32_t l10n4c_translate(const char *locale, uint64_t key_hash, uint8_t *buf, size_t max_len);
 
 int32_t l10n4c_translate_with_params_required_size(
-    const char *locale, const char *key, const L10n4cParam *params, size_t param_count,
+    const char *locale, uint64_t key_hash, const L10n4cParam *params, size_t param_count,
     size_t *out_size);
 int32_t l10n4c_translate_with_params(
-    const char *locale, const char *key, const L10n4cParam *params, size_t param_count,
+    const char *locale, uint64_t key_hash, const L10n4cParam *params, size_t param_count,
     uint8_t *buf, size_t max_len);
 
 /* ── Translation (alloc-based — caller must free with l10n4c_free_string) ─ */
 
-char *l10n4c_translate_alloc(const char *locale, const char *key);
+char *l10n4c_translate_alloc(const char *locale, uint64_t key_hash);
 char *l10n4c_translate_with_params_alloc(
-    const char *locale, const char *key, const L10n4cParam *params, size_t param_count);
+    const char *locale, uint64_t key_hash, const L10n4cParam *params, size_t param_count);
 void  l10n4c_free_string(char *ptr);
 
 /* ── Custom Formatters ─────────────────────────────────────────────────────── */
@@ -87,7 +87,7 @@ int32_t l10n4c_register_formatter(const char *name, l10n4c_custom_formatter_fn f
 /* ── Callbacks ─────────────────────────────────────────────────────────────── */
 
 /** Callback type for missing translation key events. */
-typedef void (*l10n4c_missing_key_fn)(const char *locale, const char *key);
+typedef void (*l10n4c_missing_key_fn)(const char *locale, uint64_t key_hash);
 
 /**
  * Registers a callback invoked when a key is not found in any locale or fallback.
