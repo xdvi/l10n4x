@@ -10,8 +10,9 @@
 //! Translation lookups (`l10n4c_translate*`) are thread-safe: the underlying store uses
 //! lock-free RCU pointer swapping for concurrent reads.
 //!
-//! Load and clear operations are **not** thread-safe. Serialize them externally
-//! or restrict them to application startup/shutdown.
+//! Load and clear operations are thread-safe: writers are serialized internally
+//! while readers proceed lock-free via RCU. Multiple threads may call load/clear
+//! concurrently without external locking.
 //!
 //! # Memory management
 //!
@@ -32,7 +33,10 @@ use std::sync::Arc;
 use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::encryption;
 use l10n4x_core::integrity;
-use l10n4x_core::loader::{load_pak_directory, try_load_pak_locale, try_load_static_bytes};
+use l10n4x_core::loader::{
+    init_modular, load_pak_directory, try_load_namespace_locale, try_load_pak_locale,
+    try_load_static_bytes,
+};
 use l10n4x_core::metrics;
 use l10n4x_core::store::{
     clear_translations, get_fallback_locale, set_fallback_locale, translate_to_writer_with_status,
@@ -434,6 +438,48 @@ pub extern "C" fn l10n4c_load_static_bytes(
     let static_slice: &'static [u8] = unsafe { core::mem::transmute(slice) };
     let verified = already_verified != 0;
     match try_load_static_bytes(locale_str, static_slice, verified) {
+        Ok(()) => L10N4C_OK,
+        Err(e) => core_error_to_ffi(e),
+    }
+}
+
+/// Merges a namespace `.pak` into an existing locale (modular bundle mode).
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_load_namespace(
+    locale: *const c_char,
+    namespace: *const c_char,
+    file_path: *const c_char,
+) -> i32 {
+    let locale_str = match cstr_to_str(locale) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let namespace_str = match cstr_to_str(namespace) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let path_str = match cstr_to_str(file_path) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match try_load_namespace_locale(locale_str, namespace_str, path_str) {
+        Ok(()) => L10N4C_OK,
+        Err(e) => core_error_to_ffi(e),
+    }
+}
+
+/// Loads preload namespaces from `namespaces.json` under `base_dir` for `locale`.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_init_modular(base_dir: *const c_char, locale: *const c_char) -> i32 {
+    let base = match cstr_to_str(base_dir) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    let locale_str = match cstr_to_str(locale) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match init_modular(base, locale_str) {
         Ok(()) => L10N4C_OK,
         Err(e) => core_error_to_ffi(e),
     }

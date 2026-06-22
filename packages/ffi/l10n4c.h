@@ -23,6 +23,7 @@ extern "C" {
 #define L10N4C_NOT_INITIALIZED    10  /* Call l10n4c_load_pak_directory first        */
 #define L10N4C_DECRYPT_KEY_NOT_SET 11 /* Call l10n4c_set_decrypt_key first (L10E)    */
 #define L10N4C_BUFFER_OVERFLOW     12 /* Operation resulted in buffer overflow        */
+#define L10N4C_RUNTIME_TOO_OLD      13 /* Pak requires a newer runtime than this build  */
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
 
@@ -48,6 +49,9 @@ int32_t l10n4c_set_fallback_chain(const char **locales, size_t count);
 /* ── Loading (runtime only — compile with `l10n4x build` CLI) ─────────── */
 
 int32_t l10n4c_load_pak_locale(const char *locale, const char *file_path);
+int32_t l10n4c_load_namespace(const char *locale, const char *namespace,
+                                const char *file_path);
+int32_t l10n4c_init_modular(const char *base_dir, const char *locale);
 int32_t l10n4c_load_pak_directory(const char *dir_path);
 int32_t l10n4c_load_static_bytes(const char *locale, const uint8_t *data,
                                    size_t data_len, int32_t already_verified);

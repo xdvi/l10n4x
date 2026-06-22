@@ -34,6 +34,8 @@ pub const L10N4C_NOT_INITIALIZED: i32 = 10;
 pub const L10N4C_DECRYPT_KEY_NOT_SET: i32 = 11;
 /// Operation resulted in an integer buffer overflow.
 pub const L10N4C_BUFFER_OVERFLOW: i32 = 12;
+/// Inner L10N format requires a newer runtime than this library.
+pub const L10N4C_RUNTIME_TOO_OLD: i32 = 13;
 
 // Compile-time static assertions to verify existing error codes are not modified.
 const _: () = assert!(L10N4C_OK == 0);
@@ -49,6 +51,7 @@ const _: () = assert!(L10N4C_VERIFY_KEY_NOT_SET == 9);
 const _: () = assert!(L10N4C_NOT_INITIALIZED == 10);
 const _: () = assert!(L10N4C_DECRYPT_KEY_NOT_SET == 11);
 const _: () = assert!(L10N4C_BUFFER_OVERFLOW == 12);
+const _: () = assert!(L10N4C_RUNTIME_TOO_OLD == 13);
 
 /// Maps a [`l10n4x_core::CoreError`] to the corresponding FFI status code.
 pub fn core_error_to_ffi(err: l10n4x_core::CoreError) -> i32 {
@@ -60,6 +63,7 @@ pub fn core_error_to_ffi(err: l10n4x_core::CoreError) -> i32 {
         CoreError::KeyNotConfigured(_) => L10N4C_VERIFY_KEY_NOT_SET,
         CoreError::IoError(_) => L10N4C_IO_ERROR,
         CoreError::EncodingError => L10N4C_INVALID_ENCODING,
+        CoreError::RuntimeTooOld { .. } => L10N4C_RUNTIME_TOO_OLD,
         CoreError::InvalidFormat(_)
         | CoreError::InvalidMagic(_)
         | CoreError::BufferTooShort(_)
