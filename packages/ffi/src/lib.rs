@@ -31,7 +31,9 @@ use l10n4x_core::encryption;
 use l10n4x_core::integrity;
 use l10n4x_core::loader::{load_pak_directory, load_pak_locale};
 use l10n4x_core::metrics;
-use l10n4x_core::store::{clear_translations, get_fallback_locale, load_static_bytes, set_fallback_locale};
+use l10n4x_core::store::{
+    clear_translations, get_fallback_locale, load_static_bytes, set_fallback_locale,
+};
 
 /// C-compatible function pointer type for the missing key callback.
 pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key_hash: u64);
@@ -41,10 +43,14 @@ static C_MISSING_KEY_HANDLER: core::sync::atomic::AtomicPtr<()> =
 
 fn c_missing_key_bridge(locale: &str, key_hash: u64) {
     let ptr = C_MISSING_KEY_HANDLER.load(core::sync::atomic::Ordering::Acquire);
-    if ptr.is_null() { return; }
+    if ptr.is_null() {
+        return;
+    }
     let f: L10n4cMissingKeyFn = unsafe { core::mem::transmute(ptr) };
     if let Ok(lc) = CString::new(locale) {
-        unsafe { f(lc.as_ptr(), key_hash); }
+        unsafe {
+            f(lc.as_ptr(), key_hash);
+        }
     }
 }
 
@@ -465,7 +471,8 @@ pub unsafe extern "C" fn l10n4c_set_missing_key_handler(handler: Option<L10n4cMi
             l10n4x_core::store::set_missing_key_handler(c_missing_key_bridge);
         }
         None => {
-            C_MISSING_KEY_HANDLER.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+            C_MISSING_KEY_HANDLER
+                .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
             l10n4x_core::store::clear_missing_key_handler();
         }
     }
@@ -500,17 +507,24 @@ pub extern "C" fn l10n4c_register_formatter(
     let Some(f) = formatter else {
         return L10N4C_INVALID_PARAMS;
     };
-    l10n4x_core::formatter::register_formatter(&name_str, Box::new(move |value, locale, _options| {
-        let c_value = CString::new(value).unwrap_or_default();
-        let c_locale = CString::new(locale).unwrap_or_default();
-        let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), core::ptr::null()) };
-        if result.is_null() {
-            return value.to_string();
-        }
-        let s = unsafe { CStr::from_ptr(result) }.to_string_lossy().into_owned();
-        unsafe { let _ = CString::from_raw(result); }
-        s
-    }));
+    l10n4x_core::formatter::register_formatter(
+        &name_str,
+        Box::new(move |value, locale, _options| {
+            let c_value = CString::new(value).unwrap_or_default();
+            let c_locale = CString::new(locale).unwrap_or_default();
+            let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), core::ptr::null()) };
+            if result.is_null() {
+                return value.to_string();
+            }
+            let s = unsafe { CStr::from_ptr(result) }
+                .to_string_lossy()
+                .into_owned();
+            unsafe {
+                let _ = CString::from_raw(result);
+            }
+            s
+        }),
+    );
     L10N4C_OK
 }
 
@@ -578,7 +592,10 @@ mod tests {
 
     #[test]
     fn parse_typed_params_zero_count() {
-        let param = L10n4cParam { key: std::ptr::null(), value: std::ptr::null() };
+        let param = L10n4cParam {
+            key: std::ptr::null(),
+            value: std::ptr::null(),
+        };
         let result = parse_typed_params_owned(&param, 0);
         assert_eq!(result, Ok(vec![]));
     }
@@ -587,7 +604,10 @@ mod tests {
     fn parse_typed_params_success() {
         let k = CString::new("name").unwrap();
         let v = CString::new("John").unwrap();
-        let param = L10n4cParam { key: k.as_ptr(), value: v.as_ptr() };
+        let param = L10n4cParam {
+            key: k.as_ptr(),
+            value: v.as_ptr(),
+        };
         let result = parse_typed_params_owned(&param, 1);
         assert_eq!(result, Ok(vec![("name".to_string(), "John".to_string())]));
     }
@@ -598,7 +618,9 @@ mod tests {
         assert!(!ptr.is_null());
         let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
         assert_eq!(s, "hello");
-        unsafe { let _ = CString::from_raw(ptr); }
+        unsafe {
+            let _ = CString::from_raw(ptr);
+        }
     }
 
     #[test]
@@ -662,7 +684,9 @@ mod tests {
         assert!(!ptr.is_null());
         let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap();
         assert!(!s.is_empty());
-        unsafe { let _ = CString::from_raw(ptr); }
+        unsafe {
+            let _ = CString::from_raw(ptr);
+        }
     }
 
     #[test]
@@ -672,7 +696,9 @@ mod tests {
 
     #[test]
     fn set_missing_key_handler_null_clears() {
-        unsafe { l10n4c_set_missing_key_handler(None); }
+        unsafe {
+            l10n4c_set_missing_key_handler(None);
+        }
         // should not panic
     }
 
@@ -685,7 +711,12 @@ mod tests {
     #[test]
     fn translate_null_buffer() {
         let result = l10n4c_translate(std::ptr::null(), 0, std::ptr::null_mut(), 0);
-        assert!(result == L10N4C_BUFFER_TOO_SMALL || result == L10N4C_KEY_NOT_FOUND || result == L10N4C_LOCALE_NOT_LOADED || result == L10N4C_INVALID_PARAMS);
+        assert!(
+            result == L10N4C_BUFFER_TOO_SMALL
+                || result == L10N4C_KEY_NOT_FOUND
+                || result == L10N4C_LOCALE_NOT_LOADED
+                || result == L10N4C_INVALID_PARAMS
+        );
     }
 
     #[test]
@@ -743,8 +774,10 @@ mod tests {
     #[test]
     fn translate_with_params_required_size_null_out() {
         let result = l10n4c_translate_with_params_required_size(
-            std::ptr::null(), 0,
-            std::ptr::null(), 0,
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            0,
             std::ptr::null_mut(),
         );
         assert_eq!(result, L10N4C_INVALID_PARAMS);

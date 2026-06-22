@@ -100,15 +100,20 @@ pub fn l10n4x_translate_with_context_and_params(
 #[wasm_bindgen]
 pub fn l10n4x_register_formatter(name: &str, callback: js_sys::Function) {
     let cb = callback.clone();
-    l10n4x_core::formatter::register_formatter(name, Box::new(move |value: &str, _locale: &str, _options: &HashMap<String, String>| {
-        let this = wasm_bindgen::JsValue::UNDEFINED;
-        let arg1 = wasm_bindgen::JsValue::from_str(value);
-        let result = cb.call1(&this, &arg1);
-        match result {
-            Ok(val) => val.as_string().unwrap_or_else(|| value.to_string()),
-            Err(_) => value.to_string(),
-        }
-    }));
+    l10n4x_core::formatter::register_formatter(
+        name,
+        Box::new(
+            move |value: &str, _locale: &str, _options: &HashMap<String, String>| {
+                let this = wasm_bindgen::JsValue::UNDEFINED;
+                let arg1 = wasm_bindgen::JsValue::from_str(value);
+                let result = cb.call1(&this, &arg1);
+                match result {
+                    Ok(val) => val.as_string().unwrap_or_else(|| value.to_string()),
+                    Err(_) => value.to_string(),
+                }
+            },
+        ),
+    );
 }
 
 #[wasm_bindgen]

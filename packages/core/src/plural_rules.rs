@@ -47,28 +47,28 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
             let mod100 = value % 100;
             let mod10 = value % 10;
             if mod10 == 1 && mod100 != 11 {
-                PluralCategory::One   // 1st, 21st, 101st
+                PluralCategory::One // 1st, 21st, 101st
             } else if mod10 == 2 && mod100 != 12 {
-                PluralCategory::Two   // 2nd, 22nd, 102nd
+                PluralCategory::Two // 2nd, 22nd, 102nd
             } else if mod10 == 3 && mod100 != 13 {
-                PluralCategory::Few   // 3rd, 23rd, 103rd
+                PluralCategory::Few // 3rd, 23rd, 103rd
             } else {
                 PluralCategory::Other // 4th, 11th-13th, etc.
             }
         }
         // ── French: 1er, 2e ────────────────────────────────────────────────────
         "fr" | "ff" | "kab" => {
-            if value == 1 { PluralCategory::One } else { PluralCategory::Other }
+            if value == 1 {
+                PluralCategory::One
+            } else {
+                PluralCategory::Other
+            }
         }
         // ── Spanish, Italian, Portuguese: default ordinal ─────────────────────
-        "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "ro" | "mo" => {
-            PluralCategory::Other
-        }
+        "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "ro" | "mo" => PluralCategory::Other,
         // ── German, Dutch, Swedish: always other ──────────────────────────────
-        "de" | "nl" | "sv" | "da" | "nb" | "fi" | "et" | "lv" | "lt" | "hu"
-        | "af" | "sq" | "sw" | "tr" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" => {
-            PluralCategory::Other
-        }
+        "de" | "nl" | "sv" | "da" | "nb" | "fi" | "et" | "lv" | "lt" | "hu" | "af" | "sq"
+        | "sw" | "tr" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" => PluralCategory::Other,
         // ── Russian ordinals: one for 1, 2, 3, 4? Actually Russian ordinals
         //    follow same pattern as cardinals (1→One, 2-4→Few, 5+→Many, 11-14→Many)
         "ru" | "uk" | "be" => {
@@ -90,7 +90,11 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
         }
         // ── Default: n=1 → One, else Other ────────────────────────────────────
         _ => {
-            if value == 1 { PluralCategory::One } else { PluralCategory::Other }
+            if value == 1 {
+                PluralCategory::One
+            } else {
+                PluralCategory::Other
+            }
         }
     }
 }
@@ -99,23 +103,21 @@ pub fn get_ordinal_category(locale: &str, value: i64) -> PluralCategory {
 /// Locale matching is done on the first two characters (language subtag) in lowercase.
 pub fn get_plural_category(locale: &str, value: f64) -> PluralCategory {
     let ops = Ops::from(value);
-    let lang = locale
-        .split(['-', '_'])
-        .next()
-        .unwrap_or(locale);
+    let lang = locale.split(['-', '_']).next().unwrap_or(locale);
 
     match lang.to_lowercase().as_str() {
         // ── Family 0: invariable — always Other ──────────────────────────────
         // Japanese, Korean, Chinese, Vietnamese, Thai, Burmese, Indonesian, Khmer, Malay, Lao
-        "ja" | "ko" | "zh" | "vi" | "th" | "my" | "id" | "km" | "ms" | "lo"
-        | "bo" | "dz" | "ig" | "ii" | "jv" | "kde" | "kea" | "nqo" | "ses"
-        | "sg" | "wo" | "yo" | "yue" => PluralCategory::Other,
+        "ja" | "ko" | "zh" | "vi" | "th" | "my" | "id" | "km" | "ms" | "lo" | "bo" | "dz"
+        | "ig" | "ii" | "jv" | "kde" | "kea" | "nqo" | "ses" | "sg" | "wo" | "yo" | "yue" => {
+            PluralCategory::Other
+        }
 
         // ── Family 1: one/other (n = 1) ───────────────────────────────────────
-        "af" | "az" | "bg" | "bn" | "ca" | "da" | "de" | "el" | "eo" | "es"
-        | "et" | "eu" | "fi" | "fy" | "gl" | "gu" | "hu" | "it" | "kk"
-        | "ky" | "lb" | "mn" | "mr" | "ne" | "nl" | "or" | "pa" | "rm"
-        | "sq" | "sw" | "ta" | "te" | "tk" | "tr" | "ug" | "ur" | "uz" => {
+        "af" | "az" | "bg" | "bn" | "ca" | "da" | "de" | "el" | "eo" | "es" | "et" | "eu"
+        | "fi" | "fy" | "gl" | "gu" | "hu" | "it" | "kk" | "ky" | "lb" | "mn" | "mr" | "ne"
+        | "nl" | "or" | "pa" | "rm" | "sq" | "sw" | "ta" | "te" | "tk" | "tr" | "ug" | "ur"
+        | "uz" => {
             if (ops.n - 1.0).abs() < 1e-9 {
                 PluralCategory::One
             } else {
@@ -591,7 +593,9 @@ mod tests {
 
     #[test]
     fn extra_east_asian_locales_always_other() {
-        for lang in &["bo", "dz", "ig", "ii", "jv", "kde", "kea", "nqo", "ses", "sg", "wo", "yo", "yue"] {
+        for lang in &[
+            "bo", "dz", "ig", "ii", "jv", "kde", "kea", "nqo", "ses", "sg", "wo", "yo", "yue",
+        ] {
             assert_eq!(get_plural_category(lang, 1.0), PluralCategory::Other);
             assert_eq!(get_plural_category(lang, 5.0), PluralCategory::Other);
         }

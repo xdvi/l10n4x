@@ -54,16 +54,22 @@ impl<'a> BinaryFormatReader<'a> {
                 return None;
             }
             let hash = u64::from_be_bytes(
-                self.data[entry_offset..entry_offset + 8].try_into().unwrap(),
+                self.data[entry_offset..entry_offset + 8]
+                    .try_into()
+                    .unwrap(),
             );
 
             match hash.cmp(&key_hash) {
                 core::cmp::Ordering::Equal => {
                     let val_offset = u32::from_be_bytes(
-                        self.data[entry_offset + 8..entry_offset + 12].try_into().unwrap(),
+                        self.data[entry_offset + 8..entry_offset + 12]
+                            .try_into()
+                            .unwrap(),
                     ) as usize;
                     let val_len = u32::from_be_bytes(
-                        self.data[entry_offset + 12..entry_offset + 16].try_into().unwrap(),
+                        self.data[entry_offset + 12..entry_offset + 16]
+                            .try_into()
+                            .unwrap(),
                     ) as usize;
                     if val_offset + val_len > self.data.len() {
                         return None;

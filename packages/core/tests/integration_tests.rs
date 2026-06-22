@@ -1,4 +1,4 @@
-use l10n4x_core::binary_format::{BinaryFormatReader, fnv1a_64};
+use l10n4x_core::binary_format::{fnv1a_64, BinaryFormatReader};
 
 use l10n4x_core::formatter::{format_message, PluralCategory};
 use l10n4x_core::plural_rules::get_plural_category;
@@ -238,7 +238,10 @@ fn test_ebr_stress() {
 
             let mut locales = Vec::new();
             locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
-            locales.push(("es".to_string(), StoreData::Owned(Arc::new(vec![count as u8]))));
+            locales.push((
+                "es".to_string(),
+                StoreData::Owned(Arc::new(vec![count as u8])),
+            ));
             let store = TranslationStore {
                 locales: Arc::new(locales),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),

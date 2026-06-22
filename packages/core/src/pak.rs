@@ -68,7 +68,9 @@ pub fn parse_signed(data: &[u8]) -> CoreResult<ParsedSignedPak<'_>> {
         return Err(crate::CoreError::BufferTooShort("Pak file truncated"));
     }
     if data.len() != sig_end {
-        return Err(crate::CoreError::TrailingData("Pak file has trailing bytes"));
+        return Err(crate::CoreError::TrailingData(
+            "Pak file has trailing bytes",
+        ));
     }
     Ok((
         &data[0..message_end],

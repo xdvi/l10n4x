@@ -149,7 +149,9 @@ impl<'a> MessageParser<'a> {
                         }
                         let mut key_ref = String::new();
                         for ch in self.chars.by_ref() {
-                            if ch == ')' { break; }
+                            if ch == ')' {
+                                break;
+                            }
                             key_ref.push(ch);
                         }
                         nodes.push(MessageNode::KeyRef(key_ref.trim().to_string()));
@@ -223,20 +225,36 @@ impl<'a> MessageParser<'a> {
                         "percent" => NumberStyle::Percent,
                         "integer" => NumberStyle::Integer,
                         "currency" => NumberStyle::Currency(
-                            parts.get(3).map(|s| s.trim().to_string()).unwrap_or_default()
+                            parts
+                                .get(3)
+                                .map(|s| s.trim().to_string())
+                                .unwrap_or_default(),
                         ),
                         _ => NumberStyle::Decimal,
                     }
                 } else {
                     NumberStyle::Decimal
                 };
-                return Ok(MessageNode::Number { var: var_name, style });
+                return Ok(MessageNode::Number {
+                    var: var_name,
+                    style,
+                });
             } else if expr_type == "date" || expr_type == "Date" {
-                return Ok(MessageNode::Date { var: var_name, style: DateStyle::Date });
+                return Ok(MessageNode::Date {
+                    var: var_name,
+                    style: DateStyle::Date,
+                });
             } else if expr_type == "time" || expr_type == "Time" {
-                return Ok(MessageNode::Date { var: var_name, style: DateStyle::Time });
-            } else if expr_type == "datetime" || expr_type == "dateTime" || expr_type == "DateTime" {
-                return Ok(MessageNode::Date { var: var_name, style: DateStyle::DateTime });
+                return Ok(MessageNode::Date {
+                    var: var_name,
+                    style: DateStyle::Time,
+                });
+            } else if expr_type == "datetime" || expr_type == "dateTime" || expr_type == "DateTime"
+            {
+                return Ok(MessageNode::Date {
+                    var: var_name,
+                    style: DateStyle::DateTime,
+                });
             } else if expr_type == "list" {
                 let style = if parts.len() == 3 {
                     match parts[2].trim() {
@@ -247,23 +265,29 @@ impl<'a> MessageParser<'a> {
                 } else {
                     ListStyle::Conjunction
                 };
-                return Ok(MessageNode::List { var: var_name, style });
+                return Ok(MessageNode::List {
+                    var: var_name,
+                    style,
+                });
             } else if expr_type == "relativedelta" || expr_type == "relativetime" {
                 let style = if parts.len() == 3 {
                     match parts[2].trim() {
                         "seconds" => RelTimeStyle::Seconds,
                         "minutes" => RelTimeStyle::Minutes,
-                        "hours"   => RelTimeStyle::Hours,
-                        "days"    => RelTimeStyle::Days,
-                        "weeks"   => RelTimeStyle::Weeks,
-                        "months"  => RelTimeStyle::Months,
-                        "years"   => RelTimeStyle::Years,
-                        _         => RelTimeStyle::Auto,
+                        "hours" => RelTimeStyle::Hours,
+                        "days" => RelTimeStyle::Days,
+                        "weeks" => RelTimeStyle::Weeks,
+                        "months" => RelTimeStyle::Months,
+                        "years" => RelTimeStyle::Years,
+                        _ => RelTimeStyle::Auto,
                     }
                 } else {
                     RelTimeStyle::Auto
                 };
-                return Ok(MessageNode::RelTime { var: var_name, style });
+                return Ok(MessageNode::RelTime {
+                    var: var_name,
+                    style,
+                });
             } else if !expr_type.is_empty() {
                 // Custom formatter (unknown function type in ICU 1.0 syntax)
                 let mut options = std::collections::HashMap::new();
@@ -273,14 +297,17 @@ impl<'a> MessageParser<'a> {
                         if let Some(eq_pos) = option.find('=') {
                             options.insert(
                                 option[..eq_pos].trim().to_string(),
-                                option[eq_pos+1..].trim().to_string(),
+                                option[eq_pos + 1..].trim().to_string(),
                             );
                         }
                     }
                 }
                 return Ok(MessageNode::Custom {
                     var: var_name,
-                    format: CustomFormat { formatter: expr_type.to_string(), options },
+                    format: CustomFormat {
+                        formatter: expr_type.to_string(),
+                        options,
+                    },
                 });
             }
         }
@@ -302,7 +329,10 @@ impl<'a> MessageParser<'a> {
 
         // Check for pipe default value syntax: {name|Guest}
         if let Some(pipe_pos) = trimmed.find('|') {
-            let name = trimmed[..pipe_pos].trim_start_matches('$').trim().to_string();
+            let name = trimmed[..pipe_pos]
+                .trim_start_matches('$')
+                .trim()
+                .to_string();
             let default = trimmed[pipe_pos + 1..].trim().to_string();
             return Ok(MessageNode::VariableWithDefault { name, default });
         }
@@ -329,7 +359,10 @@ impl<'a> MessageParser<'a> {
                 } else {
                     NumberStyle::Decimal
                 };
-                return Ok(MessageNode::Number { var: base_var, style });
+                return Ok(MessageNode::Number {
+                    var: base_var,
+                    style,
+                });
             }
             if func_spec.starts_with(":string") || func_spec.starts_with("string") {
                 let default = if let Some(start) = func_spec.find("default=\"") {
@@ -341,34 +374,68 @@ impl<'a> MessageParser<'a> {
                 } else {
                     String::new()
                 };
-                return Ok(MessageNode::VariableWithDefault { name: base_var, default });
+                return Ok(MessageNode::VariableWithDefault {
+                    name: base_var,
+                    default,
+                });
             }
             if func_spec == ":date" || func_spec == "date" || func_spec == "Date" {
-                return Ok(MessageNode::Date { var: base_var, style: DateStyle::Date });
+                return Ok(MessageNode::Date {
+                    var: base_var,
+                    style: DateStyle::Date,
+                });
             }
             if func_spec == ":time" || func_spec == "time" || func_spec == "Time" {
-                return Ok(MessageNode::Date { var: base_var, style: DateStyle::Time });
+                return Ok(MessageNode::Date {
+                    var: base_var,
+                    style: DateStyle::Time,
+                });
             }
             if func_spec == ":datetime" || func_spec == "datetime" || func_spec == "DateTime" {
-                return Ok(MessageNode::Date { var: base_var, style: DateStyle::DateTime });
+                return Ok(MessageNode::Date {
+                    var: base_var,
+                    style: DateStyle::DateTime,
+                });
             }
             if func_spec.starts_with(":list") || func_spec.starts_with("list") {
-                let style = if func_spec.contains("style=or") { ListStyle::Disjunction }
-                    else if func_spec.contains("style=unit") { ListStyle::Unit }
-                    else { ListStyle::Conjunction };
-                return Ok(MessageNode::List { var: base_var, style });
+                let style = if func_spec.contains("style=or") {
+                    ListStyle::Disjunction
+                } else if func_spec.contains("style=unit") {
+                    ListStyle::Unit
+                } else {
+                    ListStyle::Conjunction
+                };
+                return Ok(MessageNode::List {
+                    var: base_var,
+                    style,
+                });
             }
-            if func_spec.starts_with(":relativedelta") || func_spec.starts_with("relativedelta")
-                || func_spec.starts_with(":relativetime") || func_spec.starts_with("relativetime") {
-                let style = if func_spec.contains("unit=seconds") { RelTimeStyle::Seconds }
-                    else if func_spec.contains("unit=minutes") { RelTimeStyle::Minutes }
-                    else if func_spec.contains("unit=hours") { RelTimeStyle::Hours }
-                    else if func_spec.contains("unit=days") { RelTimeStyle::Days }
-                    else if func_spec.contains("unit=weeks") { RelTimeStyle::Weeks }
-                    else if func_spec.contains("unit=months") { RelTimeStyle::Months }
-                    else if func_spec.contains("unit=years") { RelTimeStyle::Years }
-                    else { RelTimeStyle::Auto };
-                return Ok(MessageNode::RelTime { var: base_var, style });
+            if func_spec.starts_with(":relativedelta")
+                || func_spec.starts_with("relativedelta")
+                || func_spec.starts_with(":relativetime")
+                || func_spec.starts_with("relativetime")
+            {
+                let style = if func_spec.contains("unit=seconds") {
+                    RelTimeStyle::Seconds
+                } else if func_spec.contains("unit=minutes") {
+                    RelTimeStyle::Minutes
+                } else if func_spec.contains("unit=hours") {
+                    RelTimeStyle::Hours
+                } else if func_spec.contains("unit=days") {
+                    RelTimeStyle::Days
+                } else if func_spec.contains("unit=weeks") {
+                    RelTimeStyle::Weeks
+                } else if func_spec.contains("unit=months") {
+                    RelTimeStyle::Months
+                } else if func_spec.contains("unit=years") {
+                    RelTimeStyle::Years
+                } else {
+                    RelTimeStyle::Auto
+                };
+                return Ok(MessageNode::RelTime {
+                    var: base_var,
+                    style,
+                });
             }
         }
 
@@ -389,7 +456,9 @@ pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<Mess
 
     while !remaining.is_empty() {
         remaining = remaining.trim();
-        if !remaining.starts_with('(') { break; }
+        if !remaining.starts_with('(') {
+            break;
+        }
 
         // Find the matching ) for the range specifier
         let close_paren = remaining.find(')')?;
@@ -401,7 +470,9 @@ pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<Mess
         let body_end = remaining[body_start..].find(']')?;
         let body_str = &remaining[body_start..body_start + body_end];
         remaining = &remaining[body_start + body_end + 1..];
-        if remaining.starts_with(';') { remaining = &remaining[1..]; }
+        if remaining.starts_with(';') {
+            remaining = &remaining[1..];
+        }
 
         // Parse range: (exact), (min-max), or (min-inf)
         let inner = range_part.trim_start_matches('(').trim_end_matches(')');
@@ -434,7 +505,11 @@ pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<Mess
         }
     }
 
-    if cases.is_empty() { None } else { Some(cases) }
+    if cases.is_empty() {
+        None
+    } else {
+        Some(cases)
+    }
 }
 
 /// Expands `#` to `{var_name}` (but not `\#`) in a plural case pattern string.
@@ -565,11 +640,18 @@ pub fn extract_params(nodes: &[MessageNode]) -> Vec<String> {
     out
 }
 
-fn collect_params(nodes: &[MessageNode], seen: &mut std::collections::HashSet<String>, out: &mut Vec<String>) {
+fn collect_params(
+    nodes: &[MessageNode],
+    seen: &mut std::collections::HashSet<String>,
+    out: &mut Vec<String>,
+) {
     for node in nodes {
         match node {
-            MessageNode::Variable(v) | MessageNode::RawVariable(v) | MessageNode::Number { var: v, .. }
-            | MessageNode::Date { var: v, .. } | MessageNode::RelTime { var: v, .. }
+            MessageNode::Variable(v)
+            | MessageNode::RawVariable(v)
+            | MessageNode::Number { var: v, .. }
+            | MessageNode::Date { var: v, .. }
+            | MessageNode::RelTime { var: v, .. }
             | MessageNode::List { var: v, .. } => {
                 if seen.insert(v.clone()) {
                     out.push(v.clone());
@@ -580,7 +662,11 @@ fn collect_params(nodes: &[MessageNode], seen: &mut std::collections::HashSet<St
                     out.push(name.clone());
                 }
             }
-            MessageNode::Plural { var, ordinal: _, cases } => {
+            MessageNode::Plural {
+                var,
+                ordinal: _,
+                cases,
+            } => {
                 if seen.insert(var.clone()) {
                     out.push(var.clone());
                 }
@@ -676,7 +762,9 @@ mod param_extraction_tests {
 
     #[test]
     fn deduplicates_repeated_vars() {
-        let nodes = MessageParser::new("{name} and {name} again").parse().unwrap();
+        let nodes = MessageParser::new("{name} and {name} again")
+            .parse()
+            .unwrap();
         let params = extract_params(&nodes);
         let count = params.iter().filter(|s| *s == "name").count();
         assert_eq!(count, 1, "duplicate params should be deduplicated");
@@ -804,12 +892,17 @@ mod custom_formatter_parse_tests {
 
     #[test]
     fn parses_custom_with_options() {
-        let nodes = MessageParser::new("{val, prefix, prefix=Hello_}").parse().unwrap();
+        let nodes = MessageParser::new("{val, prefix, prefix=Hello_}")
+            .parse()
+            .unwrap();
         match &nodes[0] {
             MessageNode::Custom { var, format } => {
                 assert_eq!(var, "val");
                 assert_eq!(format.formatter, "prefix");
-                assert_eq!(format.options.get("prefix").map(|s| s.as_str()), Some("Hello_"));
+                assert_eq!(
+                    format.options.get("prefix").map(|s| s.as_str()),
+                    Some("Hello_")
+                );
             }
             other => panic!("Expected Custom, got {:?}", other),
         }
@@ -817,21 +910,27 @@ mod custom_formatter_parse_tests {
 
     #[test]
     fn custom_node_is_extracted_as_param() {
-        let nodes = MessageParser::new("Hello {name, uppercase}!").parse().unwrap();
+        let nodes = MessageParser::new("Hello {name, uppercase}!")
+            .parse()
+            .unwrap();
         let params = extract_params(&nodes);
         assert!(params.contains(&"name".to_string()));
     }
 
     #[test]
     fn test_hash_escape_in_plural() {
-        let nodes = MessageParser::new("{count, plural, one {escaped \\# here} other {normal # here}}")
-            .parse()
-            .unwrap();
+        let nodes =
+            MessageParser::new("{count, plural, one {escaped \\# here} other {normal # here}}")
+                .parse()
+                .unwrap();
         if let MessageNode::Plural { var, cases, .. } = &nodes[0] {
             assert_eq!(var, "count");
             assert_eq!(cases.len(), 2);
             assert_eq!(cases[0].0, PluralCaseKey::One);
-            assert_eq!(cases[0].1, vec![MessageNode::Text("escaped # here".to_string())]);
+            assert_eq!(
+                cases[0].1,
+                vec![MessageNode::Text("escaped # here".to_string())]
+            );
             assert_eq!(cases[1].0, PluralCaseKey::Other);
             assert_eq!(
                 cases[1].1,
@@ -1070,10 +1169,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                                 _ => {
                                     if let Some(stripped) = k.strip_prefix('=') {
                                         PluralCaseKey::Exact(
-                                            stripped
-                                                .trim()
-                                                .parse::<f64>()
-                                                .unwrap_or(f64::NAN),
+                                            stripped.trim().parse::<f64>().unwrap_or(f64::NAN),
                                         )
                                     } else if let Ok(val) = k.parse::<f64>() {
                                         PluralCaseKey::Exact(val)

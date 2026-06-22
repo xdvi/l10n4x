@@ -73,19 +73,19 @@ pub fn generate_bindings(
 
         match target.r#type.as_str() {
             "go" => {
-                targets::go::generate(
+                targets::go::generate(out_dir, &key_pairs, &target.options, &ctx, to_pascal_case)?;
+            }
+            "typescript" => {
+                let params_map =
+                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
+                        .unwrap_or_default();
+                targets::typescript::generate(
                     out_dir,
                     &key_pairs,
                     &target.options,
                     &ctx,
-                    to_pascal_case,
+                    &params_map,
                 )?;
-            }
-            "typescript" => {
-                let params_map = l10n4x_compiler::extract_params_map(
-                    std::path::Path::new(ctx.source_dir)
-                ).unwrap_or_default();
-                targets::typescript::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "flutter" => {
                 targets::flutter::generate(
@@ -108,22 +108,28 @@ pub fn generate_bindings(
                 )?;
             }
             "vue" => {
-                let params_map = l10n4x_compiler::extract_params_map(
-                    std::path::Path::new(ctx.source_dir)
-                ).unwrap_or_default();
+                let params_map =
+                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
+                        .unwrap_or_default();
                 targets::vue::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "svelte" => {
-                let params_map = l10n4x_compiler::extract_params_map(
-                    std::path::Path::new(ctx.source_dir)
-                ).unwrap_or_default();
+                let params_map =
+                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
+                        .unwrap_or_default();
                 targets::svelte::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
             }
             "angular" => {
-                let params_map = l10n4x_compiler::extract_params_map(
-                    std::path::Path::new(ctx.source_dir)
-                ).unwrap_or_default();
-                targets::angular::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
+                let params_map =
+                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
+                        .unwrap_or_default();
+                targets::angular::generate(
+                    out_dir,
+                    &key_pairs,
+                    &target.options,
+                    &ctx,
+                    &params_map,
+                )?;
             }
             other => {
                 println!("Warning: Unknown target type '{}' ignored.", other);
@@ -201,7 +207,16 @@ mod tests {
             options: serde_json::json!({}),
         }];
         let keys: HashSet<String> = ["a.b".to_string()].into_iter().collect();
-        let result = generate_bindings(&targets, &keys, "en", ".", "/tmp", "0000000000000000000000000000000000000000000000000000000000000000", false, "");
+        let result = generate_bindings(
+            &targets,
+            &keys,
+            "en",
+            ".",
+            "/tmp",
+            "0000000000000000000000000000000000000000000000000000000000000000",
+            false,
+            "",
+        );
         assert!(result.is_ok());
     }
 

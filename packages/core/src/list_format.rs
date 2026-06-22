@@ -16,9 +16,13 @@ pub enum ListStyle {
 /// Parse a JSON array of strings manually (no serde dependency in core).
 fn parse_json_array(s: &str) -> Option<Vec<String>> {
     let s = s.trim();
-    if !s.starts_with('[') || !s.ends_with(']') { return None; }
-    let inner = s[1..s.len()-1].trim();
-    if inner.is_empty() { return Some(Vec::new()); }
+    if !s.starts_with('[') || !s.ends_with(']') {
+        return None;
+    }
+    let inner = s[1..s.len() - 1].trim();
+    if inner.is_empty() {
+        return Some(Vec::new());
+    }
 
     let mut result = Vec::new();
     let mut remaining = inner;
@@ -29,25 +33,43 @@ fn parse_json_array(s: &str) -> Option<Vec<String>> {
             let mut value = String::new();
             let mut chars = remaining[1..].chars();
             for c in &mut chars {
-                if escaped { value.push(c); escaped = false; }
-                else if c == '\\' { escaped = true; }
-                else if c == '"' { result.push(value); remaining = chars.as_str(); break; }
-                else { value.push(c); }
+                if escaped {
+                    value.push(c);
+                    escaped = false;
+                } else if c == '\\' {
+                    escaped = true;
+                } else if c == '"' {
+                    result.push(value);
+                    remaining = chars.as_str();
+                    break;
+                } else {
+                    value.push(c);
+                }
             }
             remaining = remaining.trim_start();
-            if remaining.starts_with(',') { remaining = &remaining[1..]; }
+            if remaining.starts_with(',') {
+                remaining = &remaining[1..];
+            }
         } else if remaining.starts_with('n') {
             // null
             if let Some(end) = remaining.find([',', ']']) {
                 remaining = &remaining[end..];
-                if remaining.starts_with(',') { remaining = &remaining[1..]; }
-            } else { break; }
+                if remaining.starts_with(',') {
+                    remaining = &remaining[1..];
+                }
+            } else {
+                break;
+            }
         } else {
             // number or other — skip to next comma
             if let Some(end) = remaining.find([',', ']']) {
                 remaining = &remaining[end..];
-                if remaining.starts_with(',') { remaining = &remaining[1..]; }
-            } else { break; }
+                if remaining.starts_with(',') {
+                    remaining = &remaining[1..];
+                }
+            } else {
+                break;
+            }
         }
     }
     Some(result)
@@ -123,7 +145,9 @@ mod tests {
     fn j(items: &[&str]) -> String {
         let mut s = String::from("[");
         for (i, item) in items.iter().enumerate() {
-            if i > 0 { s.push(','); }
+            if i > 0 {
+                s.push(',');
+            }
             s.push('"');
             s.push_str(item);
             s.push('"');
@@ -139,32 +163,50 @@ mod tests {
 
     #[test]
     fn english_two_items_conjunction() {
-        assert_eq!(format_list(&j(&["A", "B"]), "en", ListStyle::Conjunction), "A and B");
+        assert_eq!(
+            format_list(&j(&["A", "B"]), "en", ListStyle::Conjunction),
+            "A and B"
+        );
     }
 
     #[test]
     fn english_three_items_conjunction() {
-        assert_eq!(format_list(&j(&["A", "B", "C"]), "en", ListStyle::Conjunction), "A, B, and C");
+        assert_eq!(
+            format_list(&j(&["A", "B", "C"]), "en", ListStyle::Conjunction),
+            "A, B, and C"
+        );
     }
 
     #[test]
     fn english_disjunction() {
-        assert_eq!(format_list(&j(&["A", "B", "C"]), "en", ListStyle::Disjunction), "A, B, or C");
+        assert_eq!(
+            format_list(&j(&["A", "B", "C"]), "en", ListStyle::Disjunction),
+            "A, B, or C"
+        );
     }
 
     #[test]
     fn english_unit() {
-        assert_eq!(format_list(&j(&["A", "B", "C"]), "en", ListStyle::Unit), "A, B, C");
+        assert_eq!(
+            format_list(&j(&["A", "B", "C"]), "en", ListStyle::Unit),
+            "A, B, C"
+        );
     }
 
     #[test]
     fn spanish_conjunction() {
-        assert_eq!(format_list(&j(&["A", "B", "C"]), "es", ListStyle::Conjunction), "A, B y C");
+        assert_eq!(
+            format_list(&j(&["A", "B", "C"]), "es", ListStyle::Conjunction),
+            "A, B y C"
+        );
     }
 
     #[test]
     fn invalid_json_returns_raw() {
-        assert_eq!(format_list("not-json", "en", ListStyle::Conjunction), "not-json");
+        assert_eq!(
+            format_list("not-json", "en", ListStyle::Conjunction),
+            "not-json"
+        );
     }
 
     #[test]
@@ -174,7 +216,10 @@ mod tests {
 
     #[test]
     fn english_two_items_disjunction() {
-        assert_eq!(format_list(&j(&["A", "B"]), "en", ListStyle::Disjunction), "A or B");
+        assert_eq!(
+            format_list(&j(&["A", "B"]), "en", ListStyle::Disjunction),
+            "A or B"
+        );
     }
 
     #[test]
@@ -184,12 +229,18 @@ mod tests {
 
     #[test]
     fn spanish_two_items() {
-        assert_eq!(format_list(&j(&["A", "B"]), "es", ListStyle::Conjunction), "A y B");
+        assert_eq!(
+            format_list(&j(&["A", "B"]), "es", ListStyle::Conjunction),
+            "A y B"
+        );
     }
 
     #[test]
     fn spanish_two_items_disjunction() {
-        assert_eq!(format_list(&j(&["A", "B"]), "es", ListStyle::Disjunction), "A o B");
+        assert_eq!(
+            format_list(&j(&["A", "B"]), "es", ListStyle::Disjunction),
+            "A o B"
+        );
     }
 
     #[test]
@@ -219,11 +270,17 @@ mod tests {
 
     #[test]
     fn format_list_es_three_items() {
-        assert_eq!(format_list(r#"["A","B","C"]"#, "es", ListStyle::Disjunction), "A, B o C");
+        assert_eq!(
+            format_list(r#"["A","B","C"]"#, "es", ListStyle::Disjunction),
+            "A, B o C"
+        );
     }
 
     #[test]
     fn format_list_es_unit() {
-        assert_eq!(format_list(r#"["A","B","C"]"#, "es", ListStyle::Unit), "A, B, C");
+        assert_eq!(
+            format_list(r#"["A","B","C"]"#, "es", ListStyle::Unit),
+            "A, B, C"
+        );
     }
 }

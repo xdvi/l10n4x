@@ -58,7 +58,9 @@ pub fn decrypt_key_configured() -> bool {
 #[cfg(feature = "encryption")]
 pub fn encrypt_aes_gcm(plaintext: &[u8]) -> CoreResult<Vec<u8>> {
     if !KEY_SET.load(Ordering::SeqCst) {
-        return Err(crate::CoreError::KeyNotConfigured("Decrypt key not configured"));
+        return Err(crate::CoreError::KeyNotConfigured(
+            "Decrypt key not configured",
+        ));
     }
     let key_bytes = load_key();
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
@@ -77,7 +79,9 @@ pub fn encrypt_aes_gcm(plaintext: &[u8]) -> CoreResult<Vec<u8>> {
     #[cfg(not(feature = "std"))]
     {
         let _ = (cipher, plaintext);
-        Err(crate::CoreError::FeatureNotEnabled("Encryption requires std"))
+        Err(crate::CoreError::FeatureNotEnabled(
+            "Encryption requires std",
+        ))
     }
 }
 
@@ -85,10 +89,14 @@ pub fn encrypt_aes_gcm(plaintext: &[u8]) -> CoreResult<Vec<u8>> {
 #[cfg(feature = "encryption")]
 pub fn decrypt_aes_gcm(data: &[u8]) -> CoreResult<Vec<u8>> {
     if data.len() < 12 {
-        return Err(crate::CoreError::BufferTooShort("Encrypted payload too short"));
+        return Err(crate::CoreError::BufferTooShort(
+            "Encrypted payload too short",
+        ));
     }
     if !KEY_SET.load(Ordering::SeqCst) {
-        return Err(crate::CoreError::KeyNotConfigured("Decrypt key not configured"));
+        return Err(crate::CoreError::KeyNotConfigured(
+            "Decrypt key not configured",
+        ));
     }
     let key_bytes = load_key();
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
@@ -102,12 +110,16 @@ pub fn decrypt_aes_gcm(data: &[u8]) -> CoreResult<Vec<u8>> {
 
 #[cfg(not(feature = "encryption"))]
 pub fn encrypt_aes_gcm(_plaintext: &[u8]) -> CoreResult<Vec<u8>> {
-    Err(crate::CoreError::FeatureNotEnabled("Encryption support not enabled"))
+    Err(crate::CoreError::FeatureNotEnabled(
+        "Encryption support not enabled",
+    ))
 }
 
 #[cfg(not(feature = "encryption"))]
 pub fn decrypt_aes_gcm(_data: &[u8]) -> CoreResult<Vec<u8>> {
-    Err(crate::CoreError::FeatureNotEnabled("Encryption support not enabled"))
+    Err(crate::CoreError::FeatureNotEnabled(
+        "Encryption support not enabled",
+    ))
 }
 
 #[cfg(all(test, feature = "encryption"))]

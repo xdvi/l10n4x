@@ -65,15 +65,7 @@ fn test_dev_server_token_auth() {
     let workspace_root = get_workspace_root();
 
     let mut child = Command::new("cargo")
-        .args([
-            "run",
-            "-p",
-            "l10n4x-toolkit",
-            "--",
-            "dev",
-            "--port",
-            "0",
-        ])
+        .args(["run", "-p", "l10n4x-toolkit", "--", "dev", "--port", "0"])
         .current_dir(&workspace_root)
         .env("L10N4X_DEV_TOKEN", "my-test-token-123")
         .env("L10N4X_SIGNING_KEY", "0123456789abcdef0123456789abcdef")
@@ -101,8 +93,13 @@ fn test_dev_server_token_auth() {
         }
         if let Some(pos) = line.find("http://localhost:") {
             let port_part = &line[pos + 17..];
-            let port_str: String = port_part.chars().take_while(|c| c.is_ascii_digit()).collect();
-            break port_str.parse::<u16>().expect("Failed to parse port from stdout");
+            let port_str: String = port_part
+                .chars()
+                .take_while(|c| c.is_ascii_digit())
+                .collect();
+            break port_str
+                .parse::<u16>()
+                .expect("Failed to parse port from stdout");
         }
     };
 

@@ -65,7 +65,10 @@ pub fn generate(
     let mut dart_helpers = String::new();
     for (hash, name) in key_pairs {
         let key_var = to_lower_camel_case(name);
-        dart_definitions.push_str(&format!("  static const int {} = 0x{:016x};\n", key_var, hash));
+        dart_definitions.push_str(&format!(
+            "  static const int {} = 0x{:016x};\n",
+            key_var, hash
+        ));
         dart_helpers.push_str(&format!(
             "  String {}({{Map<String, String>? args}}) => t(L10nKeys.{}, args: args);\n",
             key_var, key_var
@@ -127,19 +130,23 @@ mod tests {
             (0x123456789abcdef0, "user.name".to_string()),
         ];
         generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), |s| {
-            let pascal: String = s.split('.').map(|part| {
-                let mut c = part.chars();
-                match c.next() {
-                    None => String::new(),
-                    Some(f) => f.to_uppercase().to_string() + c.as_str(),
-                }
-            }).collect();
+            let pascal: String = s
+                .split('.')
+                .map(|part| {
+                    let mut c = part.chars();
+                    match c.next() {
+                        None => String::new(),
+                        Some(f) => f.to_uppercase().to_string() + c.as_str(),
+                    }
+                })
+                .collect();
             let mut chars = pascal.chars();
             match chars.next() {
                 None => String::new(),
                 Some(f) => f.to_ascii_lowercase().to_string() + chars.as_str(),
             }
-        }).unwrap();
+        })
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
         assert!(content.contains("static const int"));
         assert!(content.contains("commonWelcome"));
@@ -156,7 +163,8 @@ mod tests {
                 None => String::new(),
                 Some(f) => f.to_ascii_lowercase().to_string() + chars.as_str(),
             }
-        }).unwrap();
+        })
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
         assert!(content.contains("L10nKeys"));
     }
@@ -168,7 +176,10 @@ mod tests {
         let mut ctx = test_ctx();
         ctx.encrypt = true;
         ctx.encrypt_key_env = "TEST_ENCRYPT_KEY_ENV";
-        generate(dir.path(), &key_pairs, &Value::Null, &ctx, |s| s.to_string()).unwrap();
+        generate(dir.path(), &key_pairs, &Value::Null, &ctx, |s| {
+            s.to_string()
+        })
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("i18n_keys.dart")).unwrap();
         assert!(content.contains("l10n4c_set_decrypt_key"));
         assert!(content.contains("Platform.environment['TEST_ENCRYPT_KEY_ENV']"));

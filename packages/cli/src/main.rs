@@ -638,7 +638,10 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
 
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await?;
     let actual_port = listener.local_addr()?.port();
-    println!("l10n4x dev server running at http://localhost:{}", actual_port);
+    println!(
+        "l10n4x dev server running at http://localhost:{}",
+        actual_port
+    );
     if flutter_web {
         println!("Flutter Web proxy mode active.");
     }
@@ -655,7 +658,8 @@ fn insert_nested_key(obj: &mut serde_json::Value, key_path: &str, value: &str) {
     let parts: Vec<&str> = key_path.splitn(2, '.').collect();
     if let serde_json::Value::Object(map) = obj {
         if parts.len() == 1 {
-            map.entry(parts[0]).or_insert(serde_json::Value::String(value.to_string()));
+            map.entry(parts[0])
+                .or_insert(serde_json::Value::String(value.to_string()));
         } else {
             let child = map
                 .entry(parts[0])
@@ -689,19 +693,29 @@ fn check_report(code_keys: &[String], locale_keys: &[String]) -> CheckReport {
         .collect();
     unused_in_code.sort();
 
-    CheckReport { missing_in_locale, unused_in_code }
+    CheckReport {
+        missing_in_locale,
+        unused_in_code,
+    }
 }
 
 fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
     let config = match load_config() {
         Ok(c) => c,
-        Err(e) => { eprintln!("Error: {}", e); return 1; }
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            return 1;
+        }
     };
 
     let globs = if src_globs.is_empty() {
-        vec!["src/**/*.ts".to_string(), "src/**/*.tsx".to_string(),
-             "src/**/*.js".to_string(), "lib/**/*.go".to_string(),
-             "lib/**/*.py".to_string()]
+        vec![
+            "src/**/*.ts".to_string(),
+            "src/**/*.tsx".to_string(),
+            "src/**/*.js".to_string(),
+            "lib/**/*.go".to_string(),
+            "lib/**/*.py".to_string(),
+        ]
     } else {
         src_globs
     };
@@ -724,13 +738,27 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
     let ref_locale_path = std::path::Path::new(&config.source_dir).join(&config.fallback);
     let locale_keys: Vec<String> = if ref_locale_path.is_dir() {
         match get_flat_keys_for_lang_dir(&ref_locale_path) {
-            Ok(keys) => { let mut v: Vec<_> = keys.into_iter().collect(); v.sort(); v }
-            Err(e) => { eprintln!("Error reading locale keys: {}", e); return 1; }
+            Ok(keys) => {
+                let mut v: Vec<_> = keys.into_iter().collect();
+                v.sort();
+                v
+            }
+            Err(e) => {
+                eprintln!("Error reading locale keys: {}", e);
+                return 1;
+            }
         }
     } else {
         match validate_keys(&config.source_dir) {
-            Ok(keys) => { let mut v: Vec<_> = keys.into_iter().collect(); v.sort(); v }
-            Err(e) => { eprintln!("Error: {}", e); return 1; }
+            Ok(keys) => {
+                let mut v: Vec<_> = keys.into_iter().collect();
+                v.sort();
+                v
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                return 1;
+            }
         }
     };
 
@@ -744,36 +772,95 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
         println!("}}");
     } else {
         if report.missing_in_locale.is_empty() && report.unused_in_code.is_empty() {
-            println!("✓ All {} code keys are present in locale files.", code_keys.len());
+            println!(
+                "✓ All {} code keys are present in locale files.",
+                code_keys.len()
+            );
         } else {
             if !report.missing_in_locale.is_empty() {
-                eprintln!("✗ {} key(s) used in code but missing from locales:", report.missing_in_locale.len());
-                for k in &report.missing_in_locale { eprintln!("    - {}", k); }
+                eprintln!(
+                    "✗ {} key(s) used in code but missing from locales:",
+                    report.missing_in_locale.len()
+                );
+                for k in &report.missing_in_locale {
+                    eprintln!("    - {}", k);
+                }
             }
             if !report.unused_in_code.is_empty() {
-                println!("⚠ {} key(s) in locales not used in code:", report.unused_in_code.len());
-                for k in &report.unused_in_code { println!("    - {}", k); }
+                println!(
+                    "⚠ {} key(s) in locales not used in code:",
+                    report.unused_in_code.len()
+                );
+                for k in &report.unused_in_code {
+                    println!("    - {}", k);
+                }
             }
         }
     }
 
-    if has_issues { 1 } else { 0 }
+    if has_issues {
+        1
+    } else {
+        0
+    }
 }
 
 // ── Task 7: Pseudo (pseudolocalization) ────────────────────────────────────
 
 fn pseudolocalize_string(s: &str) -> String {
     const SUBSTITUTIONS: &[(char, char)] = &[
-        ('a', 'á'), ('b', 'ƀ'), ('c', 'ć'), ('d', 'ď'), ('e', 'é'), ('f', 'ƒ'),
-        ('g', 'ĝ'), ('h', 'ĥ'), ('i', 'í'), ('j', 'ĵ'), ('k', 'ķ'), ('l', 'ĺ'),
-        ('m', 'm'), ('n', 'ń'), ('o', 'ö'), ('p', 'þ'), ('q', 'q'), ('r', 'ŕ'),
-        ('s', 'š'), ('t', 'ţ'), ('u', 'ü'), ('v', 'v'), ('w', 'ŵ'), ('x', 'x'),
-        ('y', 'ŷ'), ('z', 'ž'),
-        ('A', 'Á'), ('B', 'Ɓ'), ('C', 'Ć'), ('D', 'Ď'), ('E', 'É'), ('F', 'F'),
-        ('G', 'Ĝ'), ('H', 'Ĥ'), ('I', 'Í'), ('J', 'Ĵ'), ('K', 'Ķ'), ('L', 'Ĺ'),
-        ('M', 'M'), ('N', 'Ń'), ('O', 'Ö'), ('P', 'Þ'), ('Q', 'Q'), ('R', 'Ŕ'),
-        ('S', 'Š'), ('T', 'Ţ'), ('U', 'Ü'), ('V', 'V'), ('W', 'Ŵ'), ('X', 'X'),
-        ('Y', 'Ŷ'), ('Z', 'Ž'),
+        ('a', 'á'),
+        ('b', 'ƀ'),
+        ('c', 'ć'),
+        ('d', 'ď'),
+        ('e', 'é'),
+        ('f', 'ƒ'),
+        ('g', 'ĝ'),
+        ('h', 'ĥ'),
+        ('i', 'í'),
+        ('j', 'ĵ'),
+        ('k', 'ķ'),
+        ('l', 'ĺ'),
+        ('m', 'm'),
+        ('n', 'ń'),
+        ('o', 'ö'),
+        ('p', 'þ'),
+        ('q', 'q'),
+        ('r', 'ŕ'),
+        ('s', 'š'),
+        ('t', 'ţ'),
+        ('u', 'ü'),
+        ('v', 'v'),
+        ('w', 'ŵ'),
+        ('x', 'x'),
+        ('y', 'ŷ'),
+        ('z', 'ž'),
+        ('A', 'Á'),
+        ('B', 'Ɓ'),
+        ('C', 'Ć'),
+        ('D', 'Ď'),
+        ('E', 'É'),
+        ('F', 'F'),
+        ('G', 'Ĝ'),
+        ('H', 'Ĥ'),
+        ('I', 'Í'),
+        ('J', 'Ĵ'),
+        ('K', 'Ķ'),
+        ('L', 'Ĺ'),
+        ('M', 'M'),
+        ('N', 'Ń'),
+        ('O', 'Ö'),
+        ('P', 'Þ'),
+        ('Q', 'Q'),
+        ('R', 'Ŕ'),
+        ('S', 'Š'),
+        ('T', 'Ţ'),
+        ('U', 'Ü'),
+        ('V', 'V'),
+        ('W', 'Ŵ'),
+        ('X', 'X'),
+        ('Y', 'Ŷ'),
+        ('Z', 'Ž'),
     ];
 
     let mut result = String::with_capacity(s.len() * 2 + 2);
@@ -787,10 +874,13 @@ fn pseudolocalize_string(s: &str) -> String {
             result.push(c);
             for inner in chars.by_ref() {
                 result.push(inner);
-                if inner == '}' { break; }
+                if inner == '}' {
+                    break;
+                }
             }
         } else {
-            let sub = SUBSTITUTIONS.iter()
+            let sub = SUBSTITUTIONS
+                .iter()
                 .find(|(from, _)| *from == c)
                 .map(|(_, to)| *to)
                 .unwrap_or(c);
@@ -825,17 +915,27 @@ fn pseudo_transform_json(value: &serde_json::Value, count: &mut usize) -> serde_
     }
 }
 
-fn pseudo_command(locale_opt: Option<String>, out_opt: Option<String>) -> Result<(), anyhow::Error> {
+fn pseudo_command(
+    locale_opt: Option<String>,
+    out_opt: Option<String>,
+) -> Result<(), anyhow::Error> {
     let config = load_config()?;
     let source_locale = locale_opt.unwrap_or_else(|| config.fallback.clone());
     let source_path = std::path::Path::new(&config.source_dir).join(&source_locale);
 
     if !source_path.is_dir() {
-        anyhow::bail!("Source locale '{}' not found at '{}'", source_locale, source_path.display());
+        anyhow::bail!(
+            "Source locale '{}' not found at '{}'",
+            source_locale,
+            source_path.display()
+        );
     }
 
     let out_dir_str = out_opt.unwrap_or_else(|| {
-        std::path::Path::new(&config.source_dir).join("pseudo").to_string_lossy().into_owned()
+        std::path::Path::new(&config.source_dir)
+            .join("pseudo")
+            .to_string_lossy()
+            .into_owned()
     });
     let out_dir = std::path::Path::new(&out_dir_str);
     std::fs::create_dir_all(out_dir)?;
@@ -845,7 +945,9 @@ fn pseudo_command(locale_opt: Option<String>, out_opt: Option<String>) -> Result
     for file_entry in std::fs::read_dir(&source_path)? {
         let file_entry = file_entry?;
         let fpath = file_entry.path();
-        if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") { continue; }
+        if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") {
+            continue;
+        }
 
         let content = std::fs::read_to_string(&fpath)?;
         let json: serde_json::Value = serde_json::from_str(&content)?;
@@ -885,10 +987,10 @@ fn compute_coverage(
             percent: 100,
         };
     }
-    let missing_count  = reference_keys.difference(locale_keys).count();
-    let extra_count    = locale_keys.difference(reference_keys).count();
-    let translated     = reference_keys.len() - missing_count;
-    let percent        = (translated * 100 / reference_keys.len()) as u8;
+    let missing_count = reference_keys.difference(locale_keys).count();
+    let extra_count = locale_keys.difference(reference_keys).count();
+    let translated = reference_keys.len() - missing_count;
+    let percent = (translated * 100 / reference_keys.len()) as u8;
 
     LocaleCoverage {
         locale: locale.to_string(),
@@ -914,10 +1016,14 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
 
     for lang_entry in std::fs::read_dir(src_path)? {
         let lang_entry = lang_entry?;
-        if !lang_entry.path().is_dir() { continue; }
+        if !lang_entry.path().is_dir() {
+            continue;
+        }
         let lang = lang_entry.file_name().to_string_lossy().to_string();
         let locale_keys: std::collections::HashSet<String> =
-            get_flat_keys_for_lang_dir(&lang_entry.path())?.into_iter().collect();
+            get_flat_keys_for_lang_dir(&lang_entry.path())?
+                .into_iter()
+                .collect();
         coverages.push(compute_coverage(&lang, &locale_keys, &ref_keys));
     }
 
@@ -934,12 +1040,21 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
         }
         println!("]");
     } else {
-        println!("\n{:<12} {:>8} {:>8} {:>8}  Bar", "Locale", "Coverage", "Missing", "Total");
+        println!(
+            "\n{:<12} {:>8} {:>8} {:>8}  Bar",
+            "Locale", "Coverage", "Missing", "Total"
+        );
         println!("{}", "─".repeat(60));
         for cov in &coverages {
             let bar_filled = (cov.percent as usize * 20) / 100;
             let bar: String = "█".repeat(bar_filled) + &"░".repeat(20 - bar_filled);
-            let status = if cov.percent == 100 { "✓" } else if cov.percent >= 80 { "~" } else { "✗" };
+            let status = if cov.percent == 100 {
+                "✓"
+            } else if cov.percent >= 80 {
+                "~"
+            } else {
+                "✗"
+            };
             println!(
                 "{:<12} {:>7}%  {:>7}  {:>7}  {} {}",
                 cov.locale, cov.percent, cov.missing_count, cov.total_keys, bar, status
@@ -947,7 +1062,8 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
             if verbose && cov.missing_count > 0 {
                 let locale_path = src_path.join(&cov.locale);
                 if let Ok(locale_keys) = get_flat_keys_for_lang_dir(&locale_path) {
-                    let locale_set: std::collections::HashSet<_> = locale_keys.into_iter().collect();
+                    let locale_set: std::collections::HashSet<_> =
+                        locale_keys.into_iter().collect();
                     let mut missing: Vec<_> = ref_keys.difference(&locale_set).collect();
                     missing.sort();
                     for k in missing {
@@ -957,9 +1073,17 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
             }
         }
         let total_locales = coverages.len();
-        let avg = coverages.iter().map(|c| c.percent as usize).sum::<usize>().checked_div(total_locales).unwrap_or(0);
+        let avg = coverages
+            .iter()
+            .map(|c| c.percent as usize)
+            .sum::<usize>()
+            .checked_div(total_locales)
+            .unwrap_or(0);
         println!("{}", "─".repeat(60));
-        println!("Average coverage: {}% across {} locale(s)", avg, total_locales);
+        println!(
+            "Average coverage: {}% across {} locale(s)",
+            avg, total_locales
+        );
     }
 
     Ok(())
@@ -970,7 +1094,7 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
 /// Computes FNV-1a 64-bit hash of `data` and returns it as a 16-char lowercase hex string.
 fn fnv1a_hex(data: &[u8]) -> String {
     const FNV_OFFSET: u64 = 14695981039346656037;
-    const FNV_PRIME:  u64 = 1099511628211;
+    const FNV_PRIME: u64 = 1099511628211;
     let mut hash = FNV_OFFSET;
     for &byte in data {
         hash ^= byte as u64;
@@ -985,9 +1109,13 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
     let config = load_config()?;
 
     let globs = if src_globs.is_empty() {
-        vec!["src/**/*.ts".to_string(), "src/**/*.tsx".to_string(),
-             "src/**/*.js".to_string(), "lib/**/*.go".to_string(),
-             "lib/**/*.py".to_string()]
+        vec![
+            "src/**/*.ts".to_string(),
+            "src/**/*.tsx".to_string(),
+            "src/**/*.js".to_string(),
+            "lib/**/*.go".to_string(),
+            "lib/**/*.py".to_string(),
+        ]
     } else {
         src_globs
     };
@@ -1016,7 +1144,9 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
 
     for lang_entry in std::fs::read_dir(src_path)? {
         let lang_entry = lang_entry?;
-        if !lang_entry.path().is_dir() { continue; }
+        if !lang_entry.path().is_dir() {
+            continue;
+        }
         let lang = lang_entry.file_name().to_string_lossy().to_string();
 
         let mut existing_keys: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1026,24 +1156,32 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
         for file_entry in std::fs::read_dir(lang_entry.path())? {
             let file_entry = file_entry?;
             let fpath = file_entry.path();
-            if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") { continue; }
+            if !fpath.is_file() || fpath.extension().is_none_or(|e| e != "json") {
+                continue;
+            }
             let ns = fpath.file_stem().unwrap().to_string_lossy().to_string();
             let content = std::fs::read_to_string(&fpath)?;
             let obj: serde_json::Value = serde_json::from_str(&content)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-            let mut flat: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+            let mut flat: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
             l10n4x_compiler::flatten_value(ns.clone(), &obj, &mut flat);
-            for k in flat.keys() { existing_keys.insert(k.clone()); }
+            for k in flat.keys() {
+                existing_keys.insert(k.clone());
+            }
             namespaces.insert(ns, obj);
         }
 
-        let missing: Vec<&str> = all_keys.iter()
+        let missing: Vec<&str> = all_keys
+            .iter()
             .filter(|k| !existing_keys.contains(*k))
             .map(|k| k.as_str())
             .collect();
 
-        if missing.is_empty() { continue; }
+        if missing.is_empty() {
+            continue;
+        }
 
         let mut by_namespace: std::collections::HashMap<String, Vec<String>> =
             std::collections::HashMap::new();
@@ -1054,7 +1192,9 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
 
         for (ns, keys) in by_namespace {
             let file_path = lang_entry.path().join(format!("{}.json", ns));
-            let mut obj = namespaces.get(&ns).cloned()
+            let mut obj = namespaces
+                .get(&ns)
+                .cloned()
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
             for key in &keys {
@@ -1076,7 +1216,10 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
     }
 
     if dry_run {
-        println!("Dry-run: {} key(s) would be added across all locales.", total_added);
+        println!(
+            "Dry-run: {} key(s) would be added across all locales.",
+            total_added
+        );
     } else {
         println!("Extract complete: {} key(s) added.", total_added);
     }
@@ -1278,8 +1421,14 @@ mod extract_tests {
     fn finds_ts_double_quoted_keys() {
         let src = r#"const a = t("welcome.message"); const b = t("user.name");"#;
         let keys = extract_keys_from_source(src);
-        assert!(keys.iter().any(|k| k == "welcome.message"), "should find double-quoted key");
-        assert!(keys.iter().any(|k| k == "user.name"), "should find second key");
+        assert!(
+            keys.iter().any(|k| k == "welcome.message"),
+            "should find double-quoted key"
+        );
+        assert!(
+            keys.iter().any(|k| k == "user.name"),
+            "should find second key"
+        );
     }
 
     #[test]
@@ -1321,13 +1470,15 @@ mod check_tests {
         let code_keys = vec!["common.title".to_string(), "common.missing_key".to_string()];
         let locale_keys = vec!["common.title".to_string()];
         let report = check_report(&code_keys, &locale_keys);
-        assert!(report.missing_in_locale.contains(&"common.missing_key".to_string()));
+        assert!(report
+            .missing_in_locale
+            .contains(&"common.missing_key".to_string()));
         assert!(report.unused_in_code.is_empty());
     }
 
     #[test]
     fn detects_locale_key_unused_in_code() {
-        let code_keys   = vec!["common.title".to_string()];
+        let code_keys = vec!["common.title".to_string()];
         let locale_keys = vec!["common.title".to_string(), "common.orphan".to_string()];
         let report = check_report(&code_keys, &locale_keys);
         assert!(report.unused_in_code.contains(&"common.orphan".to_string()));
@@ -1371,7 +1522,7 @@ mod pseudo_tests {
     fn pads_to_longer_length() {
         let original = "Short text";
         let result = pseudolocalize_string(original);
-        let inner = &result[1..result.len()-1];
+        let inner = &result[1..result.len() - 1];
         assert!(
             inner.len() >= original.len(),
             "pseudolocalized string should be at least as long as original"
@@ -1399,7 +1550,7 @@ mod stats_tests {
 
     #[test]
     fn partial_coverage() {
-        let ref_keys  = make_keys(&["a", "b", "c", "d"]);
+        let ref_keys = make_keys(&["a", "b", "c", "d"]);
         let locale_keys = make_keys(&["a", "b"]);
         let cov = compute_coverage("fr", &locale_keys, &ref_keys);
         assert_eq!(cov.percent, 50);
@@ -1514,7 +1665,18 @@ async fn main() -> Result<(), anyhow::Error> {
             }
         }
         Commands::Generate { target } => {
-            if !["go", "typescript", "python", "c", "flutter", "dart", "vue", "svelte"].contains(&target.as_str()) {
+            if ![
+                "go",
+                "typescript",
+                "python",
+                "c",
+                "flutter",
+                "dart",
+                "vue",
+                "svelte",
+            ]
+            .contains(&target.as_str())
+            {
                 anyhow::bail!(
                     "Unsupported target '{}'. Supported targets are: go, typescript, python, c, flutter, dart, vue, svelte.",
                     target

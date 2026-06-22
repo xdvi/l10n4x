@@ -98,7 +98,14 @@ mod tests {
             (0xabcdef0123456789, "common.welcome".to_string()),
             (0x123456789abcdef0, "user.name".to_string()),
         ];
-        generate(dir.path(), &key_pairs, &serde_json::Value::Null, &test_ctx(), to_pascal_case).unwrap();
+        generate(
+            dir.path(),
+            &key_pairs,
+            &serde_json::Value::Null,
+            &test_ctx(),
+            to_pascal_case,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("keys.go")).unwrap();
         assert!(content.contains("CommonWelcome"));
         assert!(content.contains("UserName"));
@@ -108,7 +115,14 @@ mod tests {
     fn copies_l10n4c_header() {
         let dir = tempfile::tempdir().unwrap();
         let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "k".to_string())];
-        generate(dir.path(), &key_pairs, &serde_json::Value::Null, &test_ctx(), to_pascal_case).unwrap();
+        generate(
+            dir.path(),
+            &key_pairs,
+            &serde_json::Value::Null,
+            &test_ctx(),
+            to_pascal_case,
+        )
+        .unwrap();
         assert!(dir.path().join("l10n4c.h").exists());
     }
 }

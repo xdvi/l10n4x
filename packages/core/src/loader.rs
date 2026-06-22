@@ -2,8 +2,8 @@ extern crate alloc;
 use crate::pak::decompress_pak;
 use crate::store::{emit_locale_changed, read_store, swap_store, StoreData, TranslationStore};
 use alloc::string::ToString;
-use alloc::vec::Vec;
 use alloc::sync::Arc;
+use alloc::vec::Vec;
 
 /// Loads raw inner `L10N` binary format bytes into the global store for a given locale.
 /// Takes ownership of `bytes` to avoid an extra allocation (caller typically has a `Vec<u8>`
@@ -11,7 +11,10 @@ use alloc::sync::Arc;
 pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     crate::metrics::inc_locale_loads();
     let (mut new_vec, fallback_chain) = read_store(|store| {
-        ((*store.locales).clone(), alloc::sync::Arc::clone(&store.fallback_chain))
+        (
+            (*store.locales).clone(),
+            alloc::sync::Arc::clone(&store.fallback_chain),
+        )
     });
     let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
@@ -83,8 +86,8 @@ pub fn load_pak_directory(dir_path_str: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::vec::Vec;
     use crate::store::{clear_translations, locale_loaded};
+    use alloc::vec::Vec;
 
     fn make_l10n_bytes() -> Vec<u8> {
         let mut buf = Vec::new();

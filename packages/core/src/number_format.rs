@@ -21,17 +21,16 @@ fn separators(locale: &str) -> (char, char) {
     let lang = locale.split(['-', '_']).next().unwrap_or(locale);
     match lang.to_lowercase().as_str() {
         // Period decimal, comma grouping (English-like)
-        "en" | "zh" | "ja" | "ko" | "th" | "vi" | "hi" | "ms" | "fil" | "sw"
-        | "af" | "my" | "km" | "lo" | "bn" | "gu" | "kn" | "ml" | "mr"
-        | "ne" | "or" | "pa" | "si" | "ta" | "te" | "ur" => ('.', ','),
+        "en" | "zh" | "ja" | "ko" | "th" | "vi" | "hi" | "ms" | "fil" | "sw" | "af" | "my"
+        | "km" | "lo" | "bn" | "gu" | "kn" | "ml" | "mr" | "ne" | "or" | "pa" | "si" | "ta"
+        | "te" | "ur" => ('.', ','),
         // Comma decimal, period grouping (Continental European)
-        "de" | "nl" | "da" | "sv" | "nb" | "fi" | "et" | "lv" | "lt" | "hu"
-        | "hr" | "sr" | "bs" | "mk" | "sq" | "sk" | "cs" | "pl" | "ro"
-        | "bg" | "ru" | "uk" | "be" | "ka" | "hy" | "az" | "kk" | "ky"
-        | "uz" | "tk" | "mn" | "id" => (',', '.'),
+        "de" | "nl" | "da" | "sv" | "nb" | "fi" | "et" | "lv" | "lt" | "hu" | "hr" | "sr"
+        | "bs" | "mk" | "sq" | "sk" | "cs" | "pl" | "ro" | "bg" | "ru" | "uk" | "be" | "ka"
+        | "hy" | "az" | "kk" | "ky" | "uz" | "tk" | "mn" | "id" => (',', '.'),
         // Comma decimal, space grouping (French-like)
-        "fr" | "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "tr" | "ar"
-        | "he" | "fa" | "el" => (',', '\u{202f}'),
+        "fr" | "es" | "it" | "pt" | "ca" | "gl" | "eu" | "eo" | "tr" | "ar" | "he" | "fa"
+        | "el" => (',', '\u{202f}'),
         _ => ('.', ','),
     }
 }
@@ -39,38 +38,45 @@ fn separators(locale: &str) -> (char, char) {
 /// Returns `(symbol, is_prefix)` where `prefix=true` means the symbol precedes the amount.
 fn currency_symbol(currency_code: &str, locale: &str) -> (&'static str, bool) {
     let lang = locale.split(['-', '_']).next().unwrap_or(locale);
-    match (currency_code.to_uppercase().as_str(), lang.to_lowercase().as_str()) {
-        ("USD", _)  => ("$",   true),
-        ("CAD", _)  => ("CA$", true),
-        ("AUD", _)  => ("A$",  true),
-        ("GBP", _)  => ("£",   true),
-        ("JPY", _)  => ("¥",   true),
-        ("CNY", _)  => ("¥",   true),
-        ("KRW", _)  => ("₩",   true),
-        ("INR", _)  => ("₹",   true),
-        ("BRL", _)  => ("R$",  true),
-        ("MXN", _)  => ("MX$", true),
-        ("CHF", _)  => ("Fr",  true),
+    match (
+        currency_code.to_uppercase().as_str(),
+        lang.to_lowercase().as_str(),
+    ) {
+        ("USD", _) => ("$", true),
+        ("CAD", _) => ("CA$", true),
+        ("AUD", _) => ("A$", true),
+        ("GBP", _) => ("£", true),
+        ("JPY", _) => ("¥", true),
+        ("CNY", _) => ("¥", true),
+        ("KRW", _) => ("₩", true),
+        ("INR", _) => ("₹", true),
+        ("BRL", _) => ("R$", true),
+        ("MXN", _) => ("MX$", true),
+        ("CHF", _) => ("Fr", true),
         ("SEK", "sv") | ("SEK", _) => ("kr", false),
         ("NOK", "nb") | ("NOK", _) => ("kr", false),
         ("DKK", "da") | ("DKK", _) => ("kr", false),
-        ("EUR", "de") | ("EUR", "nl") | ("EUR", "fi") | ("EUR", "et")
-        | ("EUR", "lv") | ("EUR", "lt") => ("€", false),
-        ("EUR", _)  => ("€",   true),
-        ("RUB", _)  => ("₽",   false),
-        ("PLN", _)  => ("zł",  false),
-        ("CZK", _)  => ("Kč",  false),
-        ("HUF", _)  => ("Ft",  false),
-        ("RON", _)  => ("lei", false),
-        ("TRY", _)  => ("₺",   true),
-        ("ILS", _)  => ("₪",   true),
-        ("SAR", _)  => ("﷼",   true),
-        ("AED", _)  => ("د.إ", true),
-        ("THB", _)  => ("฿",   true),
-        ("SGD", _)  => ("S$",  true),
-        ("HKD", _)  => ("HK$", true),
-        ("NZD", _)  => ("NZ$", true),
-        ("ZAR", _)  => ("R",   true),
+        ("EUR", "de")
+        | ("EUR", "nl")
+        | ("EUR", "fi")
+        | ("EUR", "et")
+        | ("EUR", "lv")
+        | ("EUR", "lt") => ("€", false),
+        ("EUR", _) => ("€", true),
+        ("RUB", _) => ("₽", false),
+        ("PLN", _) => ("zł", false),
+        ("CZK", _) => ("Kč", false),
+        ("HUF", _) => ("Ft", false),
+        ("RON", _) => ("lei", false),
+        ("TRY", _) => ("₺", true),
+        ("ILS", _) => ("₪", true),
+        ("SAR", _) => ("﷼", true),
+        ("AED", _) => ("د.إ", true),
+        ("THB", _) => ("฿", true),
+        ("SGD", _) => ("S$", true),
+        ("HKD", _) => ("HK$", true),
+        ("NZD", _) => ("NZ$", true),
+        ("ZAR", _) => ("R", true),
         _ => ("$", true),
     }
 }
@@ -81,8 +87,10 @@ pub fn format_currency(value: f64, locale: &str, currency_code: &str) -> String 
     let (symbol, is_prefix) = currency_symbol(currency_code, locale);
     let (decimal_sep, group_sep) = separators(locale);
 
-    let no_decimal = matches!(currency_code.to_uppercase().as_str(),
-        "JPY" | "KRW" | "VND" | "CLP" | "IDR" | "HUF" | "RWF" | "UGX");
+    let no_decimal = matches!(
+        currency_code.to_uppercase().as_str(),
+        "JPY" | "KRW" | "VND" | "CLP" | "IDR" | "HUF" | "RWF" | "UGX"
+    );
 
     let abs_val = if value < 0.0 { -value } else { value };
     let sign = if value < 0.0 { "-" } else { "" };
@@ -97,7 +105,9 @@ pub fn format_currency(value: f64, locale: &str, currency_code: &str) -> String 
         let digits = alloc::format!("{}", int_part);
         let mut grouped = String::new();
         for (i, ch) in digits.chars().rev().enumerate() {
-            if i > 0 && i % 3 == 0 { grouped.push(group_sep); }
+            if i > 0 && i % 3 == 0 {
+                grouped.push(group_sep);
+            }
             grouped.push(ch);
         }
         grouped.chars().rev().collect::<String>()
@@ -147,13 +157,14 @@ pub fn format_number(value: f64, locale: &str, style: NumberStyle) -> String {
     };
 
     // Format fractional part (max 2 decimal places, strip trailing zeros)
-    let frac_str = if matches!(style, NumberStyle::Integer | NumberStyle::Currency(_)) || frac_part == 0 {
-        String::new()
-    } else if frac_part % 10 == 0 {
-        alloc::format!("{}{}", decimal_sep, frac_part / 10)
-    } else {
-        alloc::format!("{}{:02}", decimal_sep, frac_part)
-    };
+    let frac_str =
+        if matches!(style, NumberStyle::Integer | NumberStyle::Currency(_)) || frac_part == 0 {
+            String::new()
+        } else if frac_part % 10 == 0 {
+            alloc::format!("{}{}", decimal_sep, frac_part / 10)
+        } else {
+            alloc::format!("{}{:02}", decimal_sep, frac_part)
+        };
 
     alloc::format!("{}{}{}{}", sign, int_str, frac_str, suffix)
 }
@@ -164,14 +175,20 @@ mod tests {
 
     #[test]
     fn english_decimal_separator() {
-        assert_eq!(format_number(1234.56, "en", NumberStyle::Decimal), "1,234.56");
+        assert_eq!(
+            format_number(1234.56, "en", NumberStyle::Decimal),
+            "1,234.56"
+        );
         assert_eq!(format_number(1000.0, "en", NumberStyle::Decimal), "1,000");
         assert_eq!(format_number(0.5, "en", NumberStyle::Decimal), "0.5");
     }
 
     #[test]
     fn german_decimal_separator() {
-        assert_eq!(format_number(1234.56, "de", NumberStyle::Decimal), "1.234,56");
+        assert_eq!(
+            format_number(1234.56, "de", NumberStyle::Decimal),
+            "1.234,56"
+        );
         assert_eq!(format_number(1000.0, "de", NumberStyle::Decimal), "1.000");
     }
 
@@ -249,7 +266,10 @@ mod tests {
 
     #[test]
     fn negative_number() {
-        assert_eq!(format_number(-1234.56, "en", NumberStyle::Decimal), "-1,234.56");
+        assert_eq!(
+            format_number(-1234.56, "en", NumberStyle::Decimal),
+            "-1,234.56"
+        );
     }
 
     #[test]
@@ -260,17 +280,26 @@ mod tests {
 
     #[test]
     fn integer_with_large_value() {
-        assert_eq!(format_number(1234567.89, "en", NumberStyle::Integer), "1,234,567");
+        assert_eq!(
+            format_number(1234567.89, "en", NumberStyle::Integer),
+            "1,234,567"
+        );
     }
 
     #[test]
     fn french_locale() {
-        assert_eq!(format_number(1234.56, "fr", NumberStyle::Decimal), "1\u{202f}234,56");
+        assert_eq!(
+            format_number(1234.56, "fr", NumberStyle::Decimal),
+            "1\u{202f}234,56"
+        );
     }
 
     #[test]
     fn spanish_locale() {
-        assert_eq!(format_number(1234.56, "es", NumberStyle::Decimal), "1\u{202f}234,56");
+        assert_eq!(
+            format_number(1234.56, "es", NumberStyle::Decimal),
+            "1\u{202f}234,56"
+        );
     }
 
     #[test]

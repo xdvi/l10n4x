@@ -82,8 +82,9 @@ pub fn decode_32_byte_key(raw: &str, var_name: &str) -> Result<[u8; 32], anyhow:
     if bytes.len() == 64 && bytes.iter().all(|b| b.is_ascii_hexdigit()) {
         let mut out = [0u8; 32];
         for i in 0..32 {
-            out[i] = u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16)
-                .map_err(|_| anyhow::anyhow!("{}: invalid hex digit at position {}", var_name, i * 2))?;
+            out[i] = u8::from_str_radix(&raw[i * 2..i * 2 + 2], 16).map_err(|_| {
+                anyhow::anyhow!("{}: invalid hex digit at position {}", var_name, i * 2)
+            })?;
         }
         return Ok(out);
     }
@@ -95,7 +96,11 @@ pub fn decode_32_byte_key(raw: &str, var_name: &str) -> Result<[u8; 32], anyhow:
             .or_else(|_| general_purpose::URL_SAFE_NO_PAD.decode(raw))
             .map_err(|e| anyhow::anyhow!("{}: base64 decode failed: {}", var_name, e))?;
         if decoded.len() != 32 {
-            anyhow::bail!("{}: base64 decoded to {} bytes, expected 32.", var_name, decoded.len());
+            anyhow::bail!(
+                "{}: base64 decoded to {} bytes, expected 32.",
+                var_name,
+                decoded.len()
+            );
         }
         let mut out = [0u8; 32];
         out.copy_from_slice(&decoded);
@@ -123,8 +128,8 @@ pub fn decode_32_byte_key(raw: &str, var_name: &str) -> Result<[u8; 32], anyhow:
 /// Reads the 32-byte Ed25519 signing seed from the configured env var (build only).
 pub fn get_signing_key(config: &Config) -> Result<[u8; 32], anyhow::Error> {
     let var = &config.signing_key_env;
-    let raw = std::env::var(var)
-        .map_err(|_| anyhow::anyhow!("Signing key env '{}' is not set.", var))?;
+    let raw =
+        std::env::var(var).map_err(|_| anyhow::anyhow!("Signing key env '{}' is not set.", var))?;
     decode_32_byte_key(&raw, var)
 }
 
@@ -147,8 +152,8 @@ pub fn format_verify_public_key(key: &[u8; 32]) -> String {
 /// Reads the 32-byte AES decrypt key from the configured env var (build + runtime).
 pub fn get_encrypt_key(config: &Config) -> Result<[u8; 32], anyhow::Error> {
     let var = &config.encrypt_key_env;
-    let raw = std::env::var(var)
-        .map_err(|_| anyhow::anyhow!("Encrypt key env '{}' is not set.", var))?;
+    let raw =
+        std::env::var(var).map_err(|_| anyhow::anyhow!("Encrypt key env '{}' is not set.", var))?;
     decode_32_byte_key(&raw, var)
 }
 

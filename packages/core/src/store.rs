@@ -16,9 +16,9 @@ use core::sync::atomic::AtomicUsize;
 fn default_chain() -> Arc<[Arc<str>]> {
     use std::sync::OnceLock;
     static CHAIN: OnceLock<Arc<[Arc<str>]>> = OnceLock::new();
-    CHAIN.get_or_init(|| {
-        Arc::from(alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice())
-    }).clone()
+    CHAIN
+        .get_or_init(|| Arc::from(alloc::vec![Arc::from("en") as Arc<str>].into_boxed_slice()))
+        .clone()
 }
 
 #[cfg(not(feature = "std"))]
@@ -98,7 +98,10 @@ impl Default for TranslationStore {
 impl TranslationStore {
     /// Looks up the decompressed translation buffer for a given locale. O(log n) binary search.
     pub fn lookup(&self, locale: &str) -> Option<&[u8]> {
-        let idx = self.locales.binary_search_by(|(loc, _)| loc.as_str().cmp(locale)).ok()?;
+        let idx = self
+            .locales
+            .binary_search_by(|(loc, _)| loc.as_str().cmp(locale))
+            .ok()?;
         Some(self.locales[idx].1.as_slice())
     }
 }
@@ -256,7 +259,11 @@ pub fn set_fallback_locale(locale_str: &str) {
 /// Backward-compatible — returns the first element of the chain (or "en").
 pub fn get_fallback_locale() -> Arc<str> {
     read_store(|store| {
-        store.fallback_chain.first().cloned().unwrap_or_else(|| Arc::from("en"))
+        store
+            .fallback_chain
+            .first()
+            .cloned()
+            .unwrap_or_else(|| Arc::from("en"))
     })
 }
 
@@ -286,15 +293,21 @@ pub fn key_exists(locale: &str, key_hash: u64, context_hash: Option<u64>) -> boo
             let check_key = |kh: u64| -> bool {
                 if let Some(buf) = store.lookup(loc) {
                     if let Ok(reader) = BinaryFormatReader::new(buf) {
-                        if reader.lookup(kh).is_some() { return true; }
+                        if reader.lookup(kh).is_some() {
+                            return true;
+                        }
                     }
                 }
                 false
             };
             if let Some(ctx_hash) = context_hash {
-                if check_key(ctx_hash) { return true; }
+                if check_key(ctx_hash) {
+                    return true;
+                }
             }
-            if check_key(key_hash) { return true; }
+            if check_key(key_hash) {
+                return true;
+            }
         }
         false
     })
@@ -318,9 +331,15 @@ pub fn locale_loaded(locale: &str) -> bool {
 pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
     crate::metrics::inc_locale_loads();
     let (mut new_vec, fallback_chain) = read_store(|store| {
-        ((*store.locales).clone(), alloc::sync::Arc::clone(&store.fallback_chain))
+        (
+            (*store.locales).clone(),
+            alloc::sync::Arc::clone(&store.fallback_chain),
+        )
     });
-    let entry = (locale_str.to_string(), StoreData::Static(data, already_verified));
+    let entry = (
+        locale_str.to_string(),
+        StoreData::Static(data, already_verified),
+    );
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
         Ok(pos) => new_vec[pos] = entry,
         Err(pos) => new_vec.insert(pos, entry),
@@ -366,7 +385,9 @@ pub fn init_embedded(locales: &[(&str, &'static [u8])]) {
 /// `"en-US"` → `Some("en")`, `"zh-Hans-CN"` → `Some("zh-Hans")`, `"en"` → `None`.
 fn subtag_parent(locale: &str) -> Option<&str> {
     let pos = locale.rfind(['-', '_'])?;
-    if pos == 0 { return None; }
+    if pos == 0 {
+        return None;
+    }
     Some(&locale[..pos])
 }
 
@@ -390,9 +411,14 @@ pub fn on_locale_changed_boxed(callback: alloc::boxed::Box<dyn Fn(&str) + Send>)
 /// Removes all locale change callbacks.
 pub fn clear_locale_changed_callbacks() {
     LOCALE_CHANGE_CALLBACKS.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
-    let old = LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+    let old =
+        LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
     if !old.is_null() {
-        unsafe { drop(alloc::boxed::Box::from_raw(old as *mut Box<dyn Fn(&str) + Send>)); }
+        unsafe {
+            drop(alloc::boxed::Box::from_raw(
+                old as *mut Box<dyn Fn(&str) + Send>,
+            ));
+        }
     }
 }
 
@@ -404,7 +430,9 @@ pub(crate) fn emit_locale_changed(locale: &str) {
     }
     let boxed_ptr = LOCALE_CHANGE_BOXED.load(core::sync::atomic::Ordering::Acquire);
     if !boxed_ptr.is_null() {
-        unsafe { (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale); }
+        unsafe {
+            (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale);
+        }
     }
 }
 
@@ -471,7 +499,8 @@ pub fn translate_to_writer<W: core::fmt::Write>(
 
         // 2. BCP-47 subtag negotiation: en-US → en
         if let Some(parent) = subtag_parent(locale) {
-            if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer) {
+            if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer)
+            {
                 return Some(());
             }
         }
@@ -479,9 +508,13 @@ pub fn translate_to_writer<W: core::fmt::Write>(
         // 3. Walk the configured fallback chain
         for fb in chain.iter() {
             let fb_str: &str = fb.as_ref();
-            if fb_str == locale { continue; }
+            if fb_str == locale {
+                continue;
+            }
             if let Some(parent) = subtag_parent(locale) {
-                if fb_str == parent { continue; }
+                if fb_str == parent {
+                    continue;
+                }
             }
             if try_locale(store, fb_str, key_hash, context_hash, params, writer) {
                 return Some(());
@@ -503,7 +536,12 @@ pub fn translate_to_writer<W: core::fmt::Write>(
 
 /// Translates a key hash for a given locale, dynamically interpolating parameters,
 /// and returning an allocated String.
-pub fn translate(locale: &str, key_hash: u64, context_hash: Option<u64>, params: &[(&str, &str)]) -> String {
+pub fn translate(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+) -> String {
     let mut buf = String::new();
     let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut buf);
     buf
@@ -578,7 +616,10 @@ mod missing_key_tests {
         set_missing_key_handler(test_handler);
         let mut buf = alloc::string::String::new();
         let _ = translate_to_writer("xx", hash("nonexistent.key"), None, &[], &mut buf);
-        assert!(HANDLER_CALLED.load(Ordering::SeqCst), "handler should have been called");
+        assert!(
+            HANDLER_CALLED.load(Ordering::SeqCst),
+            "handler should have been called"
+        );
         clear_missing_key_handler();
     }
 
@@ -590,7 +631,10 @@ mod missing_key_tests {
         set_missing_key_handler(test_handler);
         let mut buf = alloc::string::String::new();
         let _ = translate_to_writer("zz", hash("nonexistent"), None, &[], &mut buf);
-        assert!(HANDLER_CALLED.load(Ordering::SeqCst), "handler should be called for missing key");
+        assert!(
+            HANDLER_CALLED.load(Ordering::SeqCst),
+            "handler should be called for missing key"
+        );
         clear_missing_key_handler();
     }
 }
@@ -629,16 +673,16 @@ mod bcp47_tests {
 
     #[test]
     fn subtag_parent_strips_last_component() {
-        assert_eq!(subtag_parent("en-US"),    Some("en"));
+        assert_eq!(subtag_parent("en-US"), Some("en"));
         assert_eq!(subtag_parent("zh-Hans-CN"), Some("zh-Hans"));
-        assert_eq!(subtag_parent("pt_BR"),    Some("pt"));
+        assert_eq!(subtag_parent("pt_BR"), Some("pt"));
     }
 
     #[test]
     fn subtag_parent_returns_none_for_root_tag() {
-        assert_eq!(subtag_parent("en"),  None);
-        assert_eq!(subtag_parent("fr"),  None);
-        assert_eq!(subtag_parent(""),    None);
+        assert_eq!(subtag_parent("en"), None);
+        assert_eq!(subtag_parent("fr"), None);
+        assert_eq!(subtag_parent(""), None);
     }
 
     #[test]
@@ -707,7 +751,8 @@ mod store_perf_tests {
     fn lookup_returns_buffer_for_loaded_locale() {
         let mut store = TranslationStore::default();
         let buf = Arc::new(alloc::vec![0x4c, 0x31, 0x30, 0x4e]);
-        Arc::make_mut(&mut store.locales).push((String::from("en"), StoreData::Owned(Arc::clone(&buf))));
+        Arc::make_mut(&mut store.locales)
+            .push((String::from("en"), StoreData::Owned(Arc::clone(&buf))));
         let found = store.lookup("en");
         assert!(found.is_some());
         assert_eq!(found.unwrap(), buf.as_slice());
@@ -834,15 +879,26 @@ mod store_extra_tests {
     fn key_exists_success_hits_lookup_ok_path() {
         let _lock = lock_extra();
         clear_translations();
-        load_locale_with_key("en", "greeting", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
-        assert!(key_exists("en", hash("greeting"), None), "should find existing key");
+        load_locale_with_key(
+            "en",
+            "greeting",
+            &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o'],
+        );
+        assert!(
+            key_exists("en", hash("greeting"), None),
+            "should find existing key"
+        );
     }
 
     #[test]
     fn key_exists_subtag_parent_pushes_candidate() {
         let _lock = lock_extra();
         clear_translations();
-        load_locale_with_key("en", "greeting", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
+        load_locale_with_key(
+            "en",
+            "greeting",
+            &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o'],
+        );
         assert!(
             key_exists("en-US", hash("greeting"), None),
             "should find key via subtag parent 'en'"
@@ -853,7 +909,11 @@ mod store_extra_tests {
     fn key_exists_with_context_suffix_hit() {
         let _lock = lock_extra();
         clear_translations();
-        load_locale_with_key("en", "greeting_male", &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o']);
+        load_locale_with_key(
+            "en",
+            "greeting_male",
+            &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o'],
+        );
         assert!(
             key_exists("en", hash("greeting"), Some(hash("greeting_male"))),
             "should find context-suffixed key"
@@ -864,7 +924,10 @@ mod store_extra_tests {
     fn translate_subtag_parent_success() {
         let _lock = lock_extra();
         clear_translations();
-        let val: Vec<u8> = vec![0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd'];
+        let val: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r',
+            b'l', b'd',
+        ];
         load_locale_with_key("en", "greeting", &val);
         let result = translate("en-US", hash("greeting"), None, &[]);
         assert_eq!(result, "Hello World", "should resolve via parent en");
@@ -876,11 +939,17 @@ mod store_extra_tests {
         clear_translations();
         // Load "fr" with greeting, set fallback to ["fr"], request "en-US"
         // Since "en-US"|"en" has no data, and fallback "fr" != parent "en", "fr" IS checked
-        let val: Vec<u8> = vec![0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r', b'l', b'd'];
+        let val: Vec<u8> = vec![
+            0x01, 0x00, 0x00, 0x00, 0x0B, b'H', b'e', b'l', b'l', b'o', b' ', b'W', b'o', b'r',
+            b'l', b'd',
+        ];
         load_locale_with_key("fr", "greeting", &val);
         set_fallback_chain(&["fr"]);
         let result = translate("en-US", hash("greeting"), None, &[]);
-        assert_eq!(result, "Hello World", "should resolve via fallback fr since fr != parent en");
+        assert_eq!(
+            result, "Hello World",
+            "should resolve via fallback fr since fr != parent en"
+        );
         set_fallback_chain(&["en"]);
     }
 
@@ -892,8 +961,15 @@ mod store_extra_tests {
         let before = crate::metrics::format_errors();
         let result = translate("en", hash("broken"), None, &[]);
         let after = crate::metrics::format_errors();
-        assert_eq!(result, alloc::format!("{:#x}", hash("broken")), "bad bytecode falls through to key-as-text");
-        assert!(after > before, "format_errors should increase on bad bytecode");
+        assert_eq!(
+            result,
+            alloc::format!("{:#x}", hash("broken")),
+            "bad bytecode falls through to key-as-text"
+        );
+        assert!(
+            after > before,
+            "format_errors should increase on bad bytecode"
+        );
     }
 
     #[test]
@@ -904,8 +980,15 @@ mod store_extra_tests {
         let before = crate::metrics::format_errors();
         let result = translate("en", hash("broken"), Some(hash("broken_male")), &[]);
         let after = crate::metrics::format_errors();
-        assert_eq!(result, alloc::format!("{:#x}", hash("broken")), "bad context bytecode falls through");
-        assert!(after >= before, "format_errors should increase for bad context bytecode");
+        assert_eq!(
+            result,
+            alloc::format!("{:#x}", hash("broken")),
+            "bad context bytecode falls through"
+        );
+        assert!(
+            after >= before,
+            "format_errors should increase for bad context bytecode"
+        );
     }
 
     #[test]
@@ -913,10 +996,7 @@ mod store_extra_tests {
         let _lock = lock_extra();
         clear_translations();
 
-        let val: &[u8] = &[
-            0x01, 0x00, 0x00, 0x00, 0x05,
-            b'H', b'e', b'l', b'l', b'o',
-        ];
+        let val: &[u8] = &[0x01, 0x00, 0x00, 0x00, 0x05, b'H', b'e', b'l', b'l', b'o'];
         let val_offset: u32 = 16;
         let index_offset: u32 = val_offset + val.len() as u32;
 
@@ -945,10 +1025,8 @@ mod store_extra_tests {
 
         fn make_l10n() -> &'static [u8] {
             let buf = vec![
-                b'L', b'1', b'0', b'N',
-                0x00, 0x00, 0x00, 0x01,
-                0x00, 0x00, 0x00, 0x10,
-                0x00, 0x00, 0x00, 0x00,
+                b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+                0x00, 0x00,
             ];
             Box::leak(buf.into_boxed_slice())
         }
@@ -965,19 +1043,18 @@ mod store_extra_tests {
         let _lock = lock_extra();
         clear_translations();
 
-        let static_en: &'static [u8] = Box::leak(vec![
-            b'L', b'1', b'0', b'N',
-            0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x10,
-            0x00, 0x00, 0x00, 0x00,
-        ].into_boxed_slice());
+        let static_en: &'static [u8] = Box::leak(
+            vec![
+                b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+                0x00, 0x00,
+            ]
+            .into_boxed_slice(),
+        );
         assert!(load_static_bytes("en", static_en, true));
 
         let buf = vec![
-            b'L', b'1', b'0', b'N',
-            0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x10,
-            0x00, 0x00, 0x00, 0x00,
+            b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00,
+            0x00, 0x00,
         ];
         assert!(crate::loader::load_raw_bytes("fr", buf));
 

@@ -3,9 +3,9 @@
 extern crate alloc;
 use alloc::vec::Vec;
 
-use crate::error::CoreResult;
 #[cfg(feature = "encryption")]
 use crate::encryption;
+use crate::error::CoreResult;
 
 /// Magic bytes identifying an optional `L10E` encrypted outer envelope.
 pub const ENVELOPE_MAGIC: &[u8; 4] = b"L10E";
@@ -19,7 +19,9 @@ pub fn wrap_encrypted(signed_pak: &[u8]) -> CoreResult<Vec<u8>> {
     #[cfg(not(feature = "encryption"))]
     {
         let _ = signed_pak;
-        return Err(crate::CoreError::FeatureNotEnabled("Encryption support not enabled"));
+        return Err(crate::CoreError::FeatureNotEnabled(
+            "Encryption support not enabled",
+        ));
     }
     #[cfg(feature = "encryption")]
     {
@@ -39,7 +41,9 @@ pub fn unwrap_encrypted(data: &[u8]) -> CoreResult<Vec<u8>> {
         return Err(crate::CoreError::BufferTooShort("Encrypted pak too short"));
     }
     if &data[0..4] != ENVELOPE_MAGIC {
-        return Err(crate::CoreError::InvalidMagic("Invalid encrypted pak magic"));
+        return Err(crate::CoreError::InvalidMagic(
+            "Invalid encrypted pak magic",
+        ));
     }
     let version = u32::from_be_bytes(data[4..8].try_into().unwrap());
     if version != ENVELOPE_VERSION {
@@ -55,7 +59,9 @@ pub fn unwrap_encrypted(data: &[u8]) -> CoreResult<Vec<u8>> {
     #[cfg(not(feature = "encryption"))]
     {
         let _ = (&data, end);
-        return Err(crate::CoreError::FeatureNotEnabled("Encryption support not enabled"));
+        return Err(crate::CoreError::FeatureNotEnabled(
+            "Encryption support not enabled",
+        ));
     }
     #[cfg(feature = "encryption")]
     encryption::decrypt_aes_gcm(&data[ENVELOPE_HEADER_SIZE..end])

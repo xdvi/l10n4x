@@ -11,14 +11,13 @@ use std::fs;
 use std::path::Path;
 
 use l10n4c::{
-    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales,
-    l10n4c_load_pak_directory, l10n4c_load_static_bytes, l10n4c_register_formatter,
-    l10n4c_set_decrypt_key, l10n4c_set_fallback_chain, l10n4c_set_fallback_locale,
-    l10n4c_set_missing_key_handler, l10n4c_set_verify_key, l10n4c_translate,
-    l10n4c_translate_alloc, l10n4c_translate_required_size, l10n4c_translate_with_params,
-    l10n4c_translate_with_params_alloc, l10n4c_translate_with_params_required_size,
-    L10n4cParam, L10N4C_INVALID_PARAMS,
-    L10N4C_KEY_NOT_FOUND, L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
+    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales, l10n4c_load_pak_directory,
+    l10n4c_load_static_bytes, l10n4c_register_formatter, l10n4c_set_decrypt_key,
+    l10n4c_set_fallback_chain, l10n4c_set_fallback_locale, l10n4c_set_missing_key_handler,
+    l10n4c_set_verify_key, l10n4c_translate, l10n4c_translate_alloc,
+    l10n4c_translate_required_size, l10n4c_translate_with_params,
+    l10n4c_translate_with_params_alloc, l10n4c_translate_with_params_required_size, L10n4cParam,
+    L10N4C_INVALID_PARAMS, L10N4C_KEY_NOT_FOUND, L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
 };
 use l10n4x_compiler::fnv1a_64;
 
@@ -40,10 +39,7 @@ fn compile_fixtures(src: &Path, out: &Path, encrypt: bool) {
     l10n4x_compiler::compile_translations(src, out, encrypt, 8).unwrap();
 }
 
-fn translate_helper(
-    locale: *const std::os::raw::c_char,
-    key_hash: u64,
-) -> String {
+fn translate_helper(locale: *const std::os::raw::c_char, key_hash: u64) -> String {
     let mut size = 0usize;
     let code = l10n4c_translate_required_size(locale, key_hash, &mut size);
     assert!(code == L10N4C_OK || code == L10N4C_KEY_NOT_FOUND || code == L10N4C_LOCALE_NOT_LOADED);
@@ -75,7 +71,8 @@ fn translate_with_params_helper(
             value: strings[i * 2 + 1].as_ptr(),
         });
     }
-    let ptr = l10n4c_translate_with_params_alloc(locale, key_hash, c_params.as_ptr(), c_params.len());
+    let ptr =
+        l10n4c_translate_with_params_alloc(locale, key_hash, c_params.as_ptr(), c_params.len());
     assert!(!ptr.is_null());
     let s = unsafe { CStr::from_ptr(ptr) }.to_str().unwrap().to_string();
     l10n4c_free_string(ptr);
@@ -174,10 +171,7 @@ fn test_fallback_locale() {
     assert_eq!(l10n4c_set_fallback_locale(fallback_es.as_ptr()), L10N4C_OK);
 
     let key_greeting = fnv1a_64(b"common.greeting");
-    assert_eq!(
-        translate_helper(locale_fr.as_ptr(), key_greeting),
-        "¡Hola!"
-    );
+    assert_eq!(translate_helper(locale_fr.as_ptr(), key_greeting), "¡Hola!");
 
     // Reset fallback
     let fallback_en = CString::new("en").unwrap();
@@ -480,10 +474,7 @@ fn test_fallback_chain() {
     // Translate with explicit locale "fr" (not loaded) — should fallback through chain
     let locale_fr = CString::new("fr").unwrap();
     let key_hash = fnv1a_64(b"common.greeting");
-    assert_eq!(
-        translate_helper(locale_fr.as_ptr(), key_hash),
-        "Hola"
-    );
+    assert_eq!(translate_helper(locale_fr.as_ptr(), key_hash), "Hola");
 
     // Test with null chain
     let null_code = unsafe { l10n4c_set_fallback_chain(std::ptr::null(), 1) };
@@ -516,7 +507,10 @@ fn test_missing_key_handler_callback() {
     assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
 
     unsafe extern "C" fn missing_key_cb(locale: *const std::os::raw::c_char, key_hash: u64) {
-        let loc = unsafe { CStr::from_ptr(locale) }.to_str().unwrap_or("").to_string();
+        let loc = unsafe { CStr::from_ptr(locale) }
+            .to_str()
+            .unwrap_or("")
+            .to_string();
         *CALLED_LOCALE.lock().unwrap() = Some(loc);
         *CALLED_KEY_HASH.lock().unwrap() = Some(key_hash);
         CALLED.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -529,9 +523,15 @@ fn test_missing_key_handler_callback() {
     let mut buf = [0u8; 64];
     l10n4c_translate(locale_en.as_ptr(), missing_key_hash, buf.as_mut_ptr(), 64);
 
-    assert!(CALLED.load(std::sync::atomic::Ordering::SeqCst), "missing key handler should have been called");
+    assert!(
+        CALLED.load(std::sync::atomic::Ordering::SeqCst),
+        "missing key handler should have been called"
+    );
     assert_eq!(*CALLED_LOCALE.lock().unwrap(), Some("en".to_string()));
-    assert_eq!(*CALLED_KEY_HASH.lock().unwrap(), Some(fnv1a_64(b"common.nonexistent")));
+    assert_eq!(
+        *CALLED_KEY_HASH.lock().unwrap(),
+        Some(fnv1a_64(b"common.nonexistent"))
+    );
 
     // Clear handler
     unsafe { l10n4c_set_missing_key_handler(None) };
@@ -549,7 +549,9 @@ fn test_register_custom_formatter_ffi() {
         _options: *const std::os::raw::c_char,
     ) -> *mut std::os::raw::c_char {
         let s = unsafe { CStr::from_ptr(value) }.to_str().unwrap_or("");
-        CString::new(s.to_uppercase()).unwrap_or_default().into_raw()
+        CString::new(s.to_uppercase())
+            .unwrap_or_default()
+            .into_raw()
     }
 
     let name = CString::new("c_upper").unwrap();
@@ -562,7 +564,11 @@ fn test_register_custom_formatter_ffi() {
     let temp_src = Path::new("temp_test_cfmt_src");
     let temp_en_dir = temp_src.join("en");
     fs::create_dir_all(&temp_en_dir).unwrap();
-    fs::write(temp_en_dir.join("common.json"), r#"{"welcome": "Hello {name, c_upper}!"}"#).unwrap();
+    fs::write(
+        temp_en_dir.join("common.json"),
+        r#"{"welcome": "Hello {name, c_upper}!"}"#,
+    )
+    .unwrap();
 
     let temp_out = Path::new("temp_test_cfmt_out");
     compile_fixtures(temp_src, temp_out, false);
@@ -602,7 +608,11 @@ fn test_get_loaded_locales_with_data() {
     let result = l10n4c_get_loaded_locales(buf.as_mut_ptr(), 64);
     assert!(result > 0);
     let s = std::str::from_utf8(&buf[..result as usize]).unwrap();
-    assert!(s.contains("en") || s.contains("es"), "expected locales in output, got: {}", s);
+    assert!(
+        s.contains("en") || s.contains("es"),
+        "expected locales in output, got: {}",
+        s
+    );
 
     let _ = fs::remove_dir_all(temp_src);
     let _ = fs::remove_dir_all(temp_out);
@@ -615,7 +625,11 @@ fn test_translate_with_params_buffer_api() {
     let temp_src = Path::new("temp_test_twp_src");
     let temp_en_dir = temp_src.join("en");
     fs::create_dir_all(&temp_en_dir).unwrap();
-    fs::write(temp_en_dir.join("common.json"), r#"{"hello": "Hello {name}!"}"#).unwrap();
+    fs::write(
+        temp_en_dir.join("common.json"),
+        r#"{"hello": "Hello {name}!"}"#,
+    )
+    .unwrap();
 
     let temp_out = Path::new("temp_test_twp_out");
     compile_fixtures(temp_src, temp_out, false);
@@ -627,13 +641,18 @@ fn test_translate_with_params_buffer_api() {
     let key_hash = fnv1a_64(b"common.hello");
     let param_name = CString::new("name").unwrap();
     let param_val = CString::new("World").unwrap();
-    let c_param = l10n4c::L10n4cParam { key: param_name.as_ptr(), value: param_val.as_ptr() };
+    let c_param = l10n4c::L10n4cParam {
+        key: param_name.as_ptr(),
+        value: param_val.as_ptr(),
+    };
 
     // Test required_size
     let mut out_size = 0usize;
     let size_code = l10n4c_translate_with_params_required_size(
-        locale_en.as_ptr(), key_hash,
-        &c_param, 1,
+        locale_en.as_ptr(),
+        key_hash,
+        &c_param,
+        1,
         &mut out_size,
     );
     assert!(size_code == L10N4C_OK || size_code == L10N4C_KEY_NOT_FOUND);
@@ -642,9 +661,12 @@ fn test_translate_with_params_buffer_api() {
     // Test buffer translate
     let mut buf = vec![0u8; out_size.max(16)];
     let code = l10n4c_translate_with_params(
-        locale_en.as_ptr(), key_hash,
-        &c_param, 1,
-        buf.as_mut_ptr(), buf.len(),
+        locale_en.as_ptr(),
+        key_hash,
+        &c_param,
+        1,
+        buf.as_mut_ptr(),
+        buf.len(),
     );
     assert!(code == L10N4C_OK || code == L10N4C_KEY_NOT_FOUND);
 
@@ -656,26 +678,23 @@ fn test_load_static_bytes_ffi() {
     l10n4c_clear();
 
     static L10N_DATA: &[u8] = &[
-        b'L', b'1', b'0', b'N',
-        0x00, 0x00, 0x00, 0x01,
-        0x00, 0x00, 0x00, 0x10,
-        0x00, 0x00, 0x00, 0x00,
+        b'L', b'1', b'0', b'N', 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00,
+        0x00,
     ];
 
     let locale = CString::new("static_test").unwrap();
-    let code = l10n4c_load_static_bytes(
-        locale.as_ptr(),
-        L10N_DATA.as_ptr(),
-        L10N_DATA.len(),
-        1,
-    );
+    let code = l10n4c_load_static_bytes(locale.as_ptr(), L10N_DATA.as_ptr(), L10N_DATA.len(), 1);
     assert_eq!(code, l10n4c::L10N4C_OK);
 
     let mut buf = [0u8; 64];
     let locales_result = l10n4c_get_loaded_locales(buf.as_mut_ptr(), 64);
     assert!(locales_result > 0);
     let s = std::str::from_utf8(&buf[..locales_result as usize]).unwrap();
-    assert!(s.contains("static_test"), "expected static_test in loaded locales, got: {}", s);
+    assert!(
+        s.contains("static_test"),
+        "expected static_test in loaded locales, got: {}",
+        s
+    );
 }
 
 // ─── Single test entry point (avoid global state races) ─────────────────────

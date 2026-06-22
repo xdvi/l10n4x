@@ -170,7 +170,11 @@ mod tests {
 
     fn run_generate(keys: &[&str]) -> String {
         let dir = tempfile::tempdir().unwrap();
-        let key_pairs: Vec<(u64, String)> = keys.iter().enumerate().map(|(i, s)| (0xabcdef0123456789 + i as u64, s.to_string())).collect();
+        let key_pairs: Vec<(u64, String)> = keys
+            .iter()
+            .enumerate()
+            .map(|(i, s)| (0xabcdef0123456789 + i as u64, s.to_string()))
+            .collect();
         generate(dir.path(), &key_pairs, &serde_json::Value::Null, |s| {
             s.to_uppercase().replace('.', "_")
         })

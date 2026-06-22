@@ -103,7 +103,10 @@ pub fn generate(
     let mut key_definitions = String::new();
     for (hash, name) in key_pairs {
         let pascal_name = crate::generator::to_pascal_case(name);
-        key_definitions.push_str(&format!("export const {} = 0x{:016x} as const;\n", pascal_name, hash));
+        key_definitions.push_str(&format!(
+            "export const {} = 0x{:016x} as const;\n",
+            pascal_name, hash
+        ));
     }
 
     // Build typed t() overloads for keys that have parameters
@@ -230,7 +233,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "welcome.title".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &key_pairs, &serde_json::Value::Null, &test_ctx(), &params).unwrap();
+        generate(
+            dir.path(),
+            &key_pairs,
+            &serde_json::Value::Null,
+            &test_ctx(),
+            &params,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("export const WelcomeTitle = 0xabcdef0123456789 as const;"));
         assert!(content.contains("export function t("));
@@ -277,7 +287,14 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "key".to_string())];
         let params = HashMap::new();
-        generate(dir.path(), &key_pairs, &Value::Null, &test_ctx_encrypt(), &params).unwrap();
+        generate(
+            dir.path(),
+            &key_pairs,
+            &Value::Null,
+            &test_ctx_encrypt(),
+            &params,
+        )
+        .unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("ENCRYPT_ENABLED"));
     }

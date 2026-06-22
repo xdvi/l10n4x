@@ -14,7 +14,10 @@ pub fn generate(
     let mut key_definitions = String::new();
     for (hash, name) in key_pairs {
         let pascal_name = crate::generator::to_pascal_case(name);
-        key_definitions.push_str(&format!("export const {} = 0x{:016x} as const;\n", pascal_name, hash));
+        key_definitions.push_str(&format!(
+            "export const {} = 0x{:016x} as const;\n",
+            pascal_name, hash
+        ));
     }
 
     let content = format!(

@@ -2,9 +2,9 @@ extern crate alloc;
 use alloc::string::String;
 
 use crate::date_format::{format_date, DateStyle};
+use crate::list_format::{format_list, ListStyle};
 use crate::number_format::{format_currency, format_number, NumberStyle};
 use crate::plural_rules::{get_ordinal_category, get_plural_category};
-use crate::list_format::{format_list, ListStyle};
 use crate::reltime::{format_relative_time, RelTimeStyle};
 
 #[cfg(feature = "std")]
@@ -25,14 +25,20 @@ static FORMATTER_REGISTRY: Mutex<Option<HashMap<String, CustomFormatter>>> = Mut
 #[cfg(feature = "std")]
 pub fn register_formatter(name: &str, formatter: CustomFormatter) {
     if let Ok(mut lock) = FORMATTER_REGISTRY.lock() {
-        lock.get_or_insert_with(HashMap::new).insert(name.to_string(), formatter);
+        lock.get_or_insert_with(HashMap::new)
+            .insert(name.to_string(), formatter);
     }
 }
 
 /// Formats a value using a registered custom formatter.
 /// Returns `None` if no formatter with that name is registered.
 #[cfg(feature = "std")]
-pub fn format_with_custom(name: &str, value: &str, locale: &str, options: &HashMap<String, String>) -> Option<String> {
+pub fn format_with_custom(
+    name: &str,
+    value: &str,
+    locale: &str,
+    options: &HashMap<String, String>,
+) -> Option<String> {
     if let Ok(lock) = FORMATTER_REGISTRY.lock() {
         if let Some(ref map) = *lock {
             if let Some(f) = map.get(name) {
@@ -75,8 +81,6 @@ pub enum PluralCategory {
     /// Fallback default category.
     Other,
 }
-
-
 
 /// Formats a bytecode compiled message into the provided writer, dynamically
 /// interpolating variables and evaluating plural/select rules.
@@ -128,18 +132,24 @@ pub fn format_message<W: core::fmt::Write>(
                     writer.write_str("{")?;
                     writer.write_str(var_name)?;
                     writer.write_str("}")?;
-                 }
-             }
-             0x0B => {
+                }
+            }
+            0x0B => {
                 // Variable with HTML escaping (has flags byte: bit 0 = raw/unescaped)
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let len = u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+len])
+                if pos + len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += len;
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let flags = bytecode[pos];
                 pos += 1;
                 if let Some((_, val)) = params.iter().find(|(k, _)| *k == var_name) {
@@ -153,21 +163,30 @@ pub fn format_message<W: core::fmt::Write>(
                     writer.write_str(var_name)?;
                     writer.write_str("}")?;
                 }
-             }
-             0x0A => {
+            }
+            0x0A => {
                 // Ordinal Plural Match (same binary format as 0x03, uses ordinal CLDR rules)
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
-                if pos + 2 > bytecode.len() { return Err(core::fmt::Error); }
-                let num_cases = u16::from_be_bytes(bytecode[pos..pos+2].try_into().unwrap()) as usize;
+                if pos + 2 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let num_cases =
+                    u16::from_be_bytes(bytecode[pos..pos + 2].try_into().unwrap()) as usize;
                 pos += 2;
 
-                let param_val = params.iter()
+                let param_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or("0");
@@ -180,20 +199,37 @@ pub fn format_message<W: core::fmt::Write>(
                 let mut other_case_len = None;
 
                 for _ in 0..num_cases {
-                    if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
-                    let case_type = bytecode[pos]; pos += 1;
+                    if pos + 1 > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let case_type = bytecode[pos];
+                    pos += 1;
                     let has_val = case_type == 0x01;
                     let val = if has_val {
-                        if pos + 8 > bytecode.len() { return Err(core::fmt::Error); }
-                        let v = f64::from_be_bytes(bytecode[pos..pos+8].try_into().unwrap());
-                        pos += 8; Some(v)
-                    } else { None };
-                    if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                    let pat_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                        if pos + 8 > bytecode.len() {
+                            return Err(core::fmt::Error);
+                        }
+                        let v = f64::from_be_bytes(bytecode[pos..pos + 8].try_into().unwrap());
+                        pos += 8;
+                        Some(v)
+                    } else {
+                        None
+                    };
+                    if pos + 4 > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let pat_len =
+                        u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                     pos += 4;
-                    if pos + pat_len > bytecode.len() { return Err(core::fmt::Error); }
-                    let pat_pos = pos; pos += pat_len;
-                    if case_type == 0x00 { other_case_pos = Some(pat_pos); other_case_len = Some(pat_len); }
+                    if pos + pat_len > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let pat_pos = pos;
+                    pos += pat_len;
+                    if case_type == 0x00 {
+                        other_case_pos = Some(pat_pos);
+                        other_case_len = Some(pat_len);
+                    }
                     let matches = match case_type {
                         0x01 => (parsed_i as f64 - val.unwrap_or(0.0)).abs() < 1e-9,
                         0x02 => cat == PluralCategory::Zero,
@@ -203,7 +239,10 @@ pub fn format_message<W: core::fmt::Write>(
                         0x06 => cat == PluralCategory::Many,
                         _ => false,
                     };
-                    if matches && best_case_pos.is_none() { best_case_pos = Some(pat_pos); best_case_len = Some(pat_len); }
+                    if matches && best_case_pos.is_none() {
+                        best_case_pos = Some(pat_pos);
+                        best_case_len = Some(pat_len);
+                    }
                 }
                 let (selected_pos, selected_len) = best_case_pos
                     .map(|p| (p, best_case_len.unwrap()))
@@ -392,30 +431,43 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x05 => {
                 // Number formatting
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
 
-                let param_val: f64 = params.iter()
+                let param_val: f64 = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| v.parse::<f64>().unwrap_or(0.0))
                     .unwrap_or(0.0);
 
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let style_byte = bytecode[pos];
                 pos += 1;
 
                 if style_byte == 0x03 {
                     // Currency style — read currency code
-                    if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                    let code_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                    if pos + 4 > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let code_len =
+                        u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                     pos += 4;
-                    if pos + code_len > bytecode.len() { return Err(core::fmt::Error); }
-                    let currency_code = core::str::from_utf8(&bytecode[pos..pos+code_len])
+                    if pos + code_len > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let currency_code = core::str::from_utf8(&bytecode[pos..pos + code_len])
                         .map_err(|_| core::fmt::Error)?;
                     pos += code_len;
                     let formatted = format_currency(param_val, locale, currency_code);
@@ -424,7 +476,7 @@ pub fn format_message<W: core::fmt::Write>(
                     let style = match style_byte {
                         0x01 => NumberStyle::Percent,
                         0x02 => NumberStyle::Integer,
-                        _    => NumberStyle::Decimal,
+                        _ => NumberStyle::Decimal,
                     };
                     let formatted = format_number(param_val, locale, style);
                     writer.write_str(&formatted)?;
@@ -432,24 +484,32 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x06 => {
                 // Date/Time formatting
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let style_byte = bytecode[pos];
                 pos += 1;
 
                 let style = match style_byte {
                     0x01 => DateStyle::Time,
                     0x02 => DateStyle::DateTime,
-                    _    => DateStyle::Date,
+                    _ => DateStyle::Date,
                 };
 
-                let raw_val = params.iter()
+                let raw_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or("");
@@ -459,23 +519,34 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x07 => {
                 // Variable with default value
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let name_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let name_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + name_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+name_len])
+                if pos + name_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + name_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += name_len;
 
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let default_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let default_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + default_len > bytecode.len() { return Err(core::fmt::Error); }
-                let default_val = core::str::from_utf8(&bytecode[pos..pos+default_len])
+                if pos + default_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let default_val = core::str::from_utf8(&bytecode[pos..pos + default_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += default_len;
 
-                let value = params.iter()
+                let value = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or(default_val);
@@ -484,14 +555,21 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x08 => {
                 // Relative time formatting
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let style_byte = bytecode[pos];
                 pos += 1;
 
@@ -503,10 +581,11 @@ pub fn format_message<W: core::fmt::Write>(
                     0x05 => RelTimeStyle::Weeks,
                     0x06 => RelTimeStyle::Months,
                     0x07 => RelTimeStyle::Years,
-                    _    => RelTimeStyle::Auto,
+                    _ => RelTimeStyle::Auto,
                 };
 
-                let raw_val = params.iter()
+                let raw_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or("0");
@@ -517,24 +596,32 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x09 => {
                 // List formatting
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let style_byte = bytecode[pos];
                 pos += 1;
 
                 let style = match style_byte {
                     0x01 => ListStyle::Disjunction,
                     0x02 => ListStyle::Unit,
-                    _    => ListStyle::Conjunction,
+                    _ => ListStyle::Conjunction,
                 };
 
-                let raw_val = params.iter()
+                let raw_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or("[]");
@@ -544,27 +631,40 @@ pub fn format_message<W: core::fmt::Write>(
             }
             0x0C => {
                 // Variable with default value + HTML escaping (has flags byte: bit 0 = raw/unescaped)
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let name_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let name_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + name_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+name_len])
+                if pos + name_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + name_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += name_len;
 
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let default_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let default_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + default_len > bytecode.len() { return Err(core::fmt::Error); }
-                let default_val = core::str::from_utf8(&bytecode[pos..pos+default_len])
+                if pos + default_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let default_val = core::str::from_utf8(&bytecode[pos..pos + default_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += default_len;
 
-                if pos + 1 > bytecode.len() { return Err(core::fmt::Error); }
+                if pos + 1 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
                 let flags = bytecode[pos];
                 pos += 1;
 
-                let raw_val = params.iter()
+                let raw_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or(default_val);
@@ -578,32 +678,50 @@ pub fn format_message<W: core::fmt::Write>(
             0x0D => {
                 // Custom formatter
                 // Layout: var_len(4) + var_name(var_len) + fmt_len(4) + fmt_name(fmt_len) + opt_len(4) + options(opt_len)
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let var_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + var_len > bytecode.len() { return Err(core::fmt::Error); }
-                let var_name = core::str::from_utf8(&bytecode[pos..pos+var_len])
+                if pos + var_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let var_name = core::str::from_utf8(&bytecode[pos..pos + var_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += var_len;
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let fmt_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let fmt_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
-                if pos + fmt_len > bytecode.len() { return Err(core::fmt::Error); }
-                let fmt_name = core::str::from_utf8(&bytecode[pos..pos+fmt_len])
+                if pos + fmt_len > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let fmt_name = core::str::from_utf8(&bytecode[pos..pos + fmt_len])
                     .map_err(|_| core::fmt::Error)?;
                 pos += fmt_len;
-                if pos + 4 > bytecode.len() { return Err(core::fmt::Error); }
-                let opt_len = u32::from_be_bytes(bytecode[pos..pos+4].try_into().unwrap()) as usize;
+                if pos + 4 > bytecode.len() {
+                    return Err(core::fmt::Error);
+                }
+                let opt_len =
+                    u32::from_be_bytes(bytecode[pos..pos + 4].try_into().unwrap()) as usize;
                 pos += 4;
                 let options_str = if opt_len > 0 {
-                    if pos + opt_len > bytecode.len() { return Err(core::fmt::Error); }
-                    let s = core::str::from_utf8(&bytecode[pos..pos+opt_len])
+                    if pos + opt_len > bytecode.len() {
+                        return Err(core::fmt::Error);
+                    }
+                    let s = core::str::from_utf8(&bytecode[pos..pos + opt_len])
                         .map_err(|_| core::fmt::Error)?;
                     pos += opt_len;
                     s
-                } else { "" };
+                } else {
+                    ""
+                };
 
-                let raw_val = params.iter()
+                let raw_val = params
+                    .iter()
                     .find(|(k, _)| *k == var_name)
                     .map(|(_, v)| *v)
                     .unwrap_or(var_name);
@@ -615,7 +733,10 @@ pub fn format_message<W: core::fmt::Write>(
                         if !options_str.is_empty() {
                             for pair in options_str.split(',') {
                                 if let Some(eq_pos) = pair.find('=') {
-                                    opts.insert(pair[..eq_pos].trim().to_string(), pair[eq_pos+1..].trim().to_string());
+                                    opts.insert(
+                                        pair[..eq_pos].trim().to_string(),
+                                        pair[eq_pos + 1..].trim().to_string(),
+                                    );
                                 }
                             }
                         }
@@ -644,10 +765,10 @@ pub fn format_message<W: core::fmt::Write>(
 #[cfg(test)]
 mod formatter_unit_tests {
     use super::*;
-    use alloc::string::String;
-    use alloc::vec::Vec;
-    use alloc::vec;
     use alloc::format;
+    use alloc::string::String;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     fn make_text(text: &str) -> Vec<u8> {
         let mut buf = Vec::new();
@@ -822,7 +943,7 @@ mod formatter_unit_tests {
         // Build a select on variable "gender" with cases: "male" -> "Mr.", "female" -> "Ms.", other -> "Mx."
         let mut bc = Vec::new();
         bc.push(0x04); // select opcode
-        // var name length + name
+                       // var name length + name
         bc.extend_from_slice(&6u32.to_be_bytes());
         bc.extend_from_slice(b"gender");
         // 3 cases
@@ -1191,7 +1312,7 @@ mod formatter_unit_tests {
         let mut out = String::new();
         format_message(&bc, "en", &[], &mut out).unwrap();
         assert_eq!(out, "");
-     }
+    }
 
     #[test]
     fn test_custom_formatter_no_std_fallback() {
@@ -1250,7 +1371,10 @@ mod formatter_unit_tests {
         let mut out = String::new();
         // NaN never matches via comparison, and there's no "other" case -> error
         let result = format_message(&bc, "en", &[("count", "5")], &mut out);
-        assert!(result.is_err(), "NaN exact match should error (no fallback)");
+        assert!(
+            result.is_err(),
+            "NaN exact match should error (no fallback)"
+        );
     }
 
     #[test]
@@ -1258,7 +1382,10 @@ mod formatter_unit_tests {
         let bc = make_plural_bc("count", 0x01, Some(f64::INFINITY));
         let mut out = String::new();
         let result = format_message(&bc, "en", &[("count", "5")], &mut out);
-        assert!(result.is_err(), "Infinity exact match should error (no fallback)");
+        assert!(
+            result.is_err(),
+            "Infinity exact match should error (no fallback)"
+        );
     }
 
     #[test]
@@ -1330,7 +1457,10 @@ mod formatter_unit_tests {
 
         let mut out = String::new();
         let result = format_message(&bc, "en", &[("count", "5")], &mut out);
-        assert!(result.is_err(), "Unknown case type with no 'other' should error");
+        assert!(
+            result.is_err(),
+            "Unknown case type with no 'other' should error"
+        );
     }
 
     #[test]
@@ -1347,7 +1477,10 @@ mod formatter_unit_tests {
 
         let mut out = String::new();
         let result = format_message(&bc, "en", &[("num", "5")], &mut out);
-        assert!(result.is_err(), "Unknown ordinal case type with no 'other' should error");
+        assert!(
+            result.is_err(),
+            "Unknown ordinal case type with no 'other' should error"
+        );
     }
 
     #[test]
@@ -1430,7 +1563,10 @@ mod formatter_unit_tests {
 
         let bc = make_text("");
         let result = format_message(&bc, "en", &[], &mut FailAfterFirst);
-        assert!(result.is_ok(), "empty text with single write should succeed");
+        assert!(
+            result.is_ok(),
+            "empty text with single write should succeed"
+        );
     }
 
     #[test]
@@ -1515,7 +1651,8 @@ mod formatter_unit_tests {
         bc.extend_from_slice(&3u32.to_be_bytes());
         bc.extend_from_slice(b"num");
         bc.extend_from_slice(&6u16.to_be_bytes());
-        let cases: Vec<(u8, f64)> = vec![(1, 1.0), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)];
+        let cases: Vec<(u8, f64)> =
+            vec![(1, 1.0), (2, 0.0), (3, 0.0), (4, 0.0), (5, 0.0), (6, 0.0)];
         for (case_type, val) in cases {
             bc.push(case_type);
             if case_type == 1 {
@@ -1527,7 +1664,10 @@ mod formatter_unit_tests {
         }
         let mut out = String::new();
         let r = format_message(&bc, "en", &[("num", "1")], &mut out);
-        assert!(r.is_ok(), "ordinal with all category types should not error");
+        assert!(
+            r.is_ok(),
+            "ordinal with all category types should not error"
+        );
     }
 
     #[test]
@@ -1551,17 +1691,24 @@ mod formatter_unit_tests {
             bc.push(style_byte);
             let mut out = String::new();
             let r = format_message(&bc, "en", &[("num", "3600")], &mut out);
-            assert!(r.is_ok(), "reltime style_byte 0x{:02X} should work", style_byte);
+            assert!(
+                r.is_ok(),
+                "reltime style_byte 0x{:02X} should work",
+                style_byte
+            );
         }
     }
 
     #[test]
     fn adversarial_custom_formatter_with_options() {
-        register_formatter("opts_test", Box::new(|value, _locale, opts| {
-            let prefix = opts.get("pfx").map(String::as_str).unwrap_or("");
-            let suffix = opts.get("sfx").map(String::as_str).unwrap_or("");
-            format!("{}{}{}", prefix, value, suffix)
-        }));
+        register_formatter(
+            "opts_test",
+            Box::new(|value, _locale, opts| {
+                let prefix = opts.get("pfx").map(String::as_str).unwrap_or("");
+                let suffix = opts.get("sfx").map(String::as_str).unwrap_or("");
+                format!("{}{}{}", prefix, value, suffix)
+            }),
+        );
         let mut bc = Vec::new();
         bc.push(0x0D);
         bc.extend_from_slice(&3u32.to_be_bytes());
@@ -1578,9 +1725,10 @@ mod formatter_unit_tests {
 
     #[test]
     fn adversarial_custom_formatter_options_split() {
-        register_formatter("opts_split", Box::new(|_value, _locale, _opts| {
-            String::new()
-        }));
+        register_formatter(
+            "opts_split",
+            Box::new(|_value, _locale, _opts| String::new()),
+        );
         let mut bc = Vec::new();
         bc.push(0x0D);
         bc.extend_from_slice(&3u32.to_be_bytes());
@@ -1706,7 +1854,7 @@ mod formatter_unit_tests {
         bc.extend_from_slice(b"num");
         bc.extend_from_slice(&1u16.to_be_bytes());
         bc.push(0x00); // other type
-        // No pat_len bytes
+                       // No pat_len bytes
         let mut out = String::new();
         let r = format_message(&bc, "en", &[("num", "1")], &mut out);
         assert!(r.is_err(), "truncated plural pat_len should error");
@@ -1815,7 +1963,10 @@ mod formatter_unit_tests {
         let bc = vec![0x03, 0x00];
         let mut out = String::new();
         let r = format_message(&bc, "en", &[("num", "1")], &mut out);
-        assert!(r.is_err(), "plural with truncated var_len header should error");
+        assert!(
+            r.is_err(),
+            "plural with truncated var_len header should error"
+        );
     }
 
     #[test]
@@ -1851,10 +2002,15 @@ mod formatter_unit_tests {
 
     #[test]
     fn adversarial_select_truncated_key_len_field() {
-        let mut bc = vec![0x04, 0x00, 0x00, 0x00, 0x01, b'x', 0x00, 0x01, 0x00, 0x00, 0x00];
+        let mut bc = vec![
+            0x04, 0x00, 0x00, 0x00, 0x01, b'x', 0x00, 0x01, 0x00, 0x00, 0x00,
+        ];
         let mut out = String::new();
         let r = format_message(&bc, "en", &[("gender", "male")], &mut out);
-        assert!(r.is_err(), "select with truncated key_len field should error");
+        assert!(
+            r.is_err(),
+            "select with truncated key_len field should error"
+        );
     }
 
     #[test]
@@ -1894,9 +2050,10 @@ mod custom_formatter_tests {
 
     #[test]
     fn register_and_call_formatter() {
-        register_formatter("reverse", Box::new(|value, _locale, _opts| {
-            value.chars().rev().collect()
-        }));
+        register_formatter(
+            "reverse",
+            Box::new(|value, _locale, _opts| value.chars().rev().collect()),
+        );
         let result = format_with_custom("reverse", "hello", "en", &HashMap::new());
         assert_eq!(result, Some("olleh".to_string()));
     }
@@ -1909,11 +2066,14 @@ mod custom_formatter_tests {
 
     #[test]
     fn formatter_receives_options() {
-        register_formatter("wrap", Box::new(|value, _locale, opts| {
-            let prefix = opts.get("prefix").map(|s| s.as_str()).unwrap_or("");
-            let suffix = opts.get("suffix").map(|s| s.as_str()).unwrap_or("");
-            format!("{}{}{}", prefix, value, suffix)
-        }));
+        register_formatter(
+            "wrap",
+            Box::new(|value, _locale, opts| {
+                let prefix = opts.get("prefix").map(|s| s.as_str()).unwrap_or("");
+                let suffix = opts.get("suffix").map(|s| s.as_str()).unwrap_or("");
+                format!("{}{}{}", prefix, value, suffix)
+            }),
+        );
         let mut opts = HashMap::new();
         opts.insert("prefix".to_string(), "<".to_string());
         opts.insert("suffix".to_string(), ">".to_string());

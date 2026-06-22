@@ -1,4 +1,6 @@
-use crate::icu_parser::{DateStyle, ListStyle, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle};
+use crate::icu_parser::{
+    DateStyle, ListStyle, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle,
+};
 
 fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
     let mut buf = Vec::new();
@@ -28,7 +30,11 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 buf.extend_from_slice(bytes);
                 buf.push(0x00); // flags: 0 = escaped by default
             }
-            MessageNode::Plural { var, ordinal, cases } => {
+            MessageNode::Plural {
+                var,
+                ordinal,
+                cases,
+            } => {
                 if *ordinal {
                     buf.push(0x0A); // ordinal plural
                 } else {
@@ -77,9 +83,15 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(var_bytes);
                 match style {
-                    NumberStyle::Decimal => { buf.push(0x00); }
-                    NumberStyle::Percent => { buf.push(0x01); }
-                    NumberStyle::Integer => { buf.push(0x02); }
+                    NumberStyle::Decimal => {
+                        buf.push(0x00);
+                    }
+                    NumberStyle::Percent => {
+                        buf.push(0x01);
+                    }
+                    NumberStyle::Integer => {
+                        buf.push(0x02);
+                    }
                     NumberStyle::Currency(code) => {
                         buf.push(0x03);
                         let code_bytes = code.as_bytes();
@@ -94,15 +106,15 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(var_bytes);
                 let style_byte: u8 = match style {
-                    DateStyle::Date     => 0x00,
-                    DateStyle::Time     => 0x01,
+                    DateStyle::Date => 0x00,
+                    DateStyle::Time => 0x01,
                     DateStyle::DateTime => 0x02,
                 };
                 buf.push(style_byte);
             }
             MessageNode::VariableWithDefault { name, default } => {
                 buf.push(0x0C);
-                let name_bytes    = name.as_bytes();
+                let name_bytes = name.as_bytes();
                 let default_bytes = default.as_bytes();
                 buf.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(name_bytes);
@@ -118,7 +130,7 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 let style_byte: u8 = match style {
                     ListStyle::Conjunction => 0x00,
                     ListStyle::Disjunction => 0x01,
-                    ListStyle::Unit        => 0x02,
+                    ListStyle::Unit => 0x02,
                 };
                 buf.push(style_byte);
             }
@@ -128,14 +140,14 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(var_bytes);
                 let style_byte: u8 = match style {
-                    RelTimeStyle::Auto    => 0x00,
+                    RelTimeStyle::Auto => 0x00,
                     RelTimeStyle::Seconds => 0x01,
                     RelTimeStyle::Minutes => 0x02,
-                    RelTimeStyle::Hours   => 0x03,
-                    RelTimeStyle::Days    => 0x04,
-                    RelTimeStyle::Weeks   => 0x05,
-                    RelTimeStyle::Months  => 0x06,
-                    RelTimeStyle::Years   => 0x07,
+                    RelTimeStyle::Hours => 0x03,
+                    RelTimeStyle::Days => 0x04,
+                    RelTimeStyle::Weeks => 0x05,
+                    RelTimeStyle::Months => 0x06,
+                    RelTimeStyle::Years => 0x07,
                 };
                 buf.push(style_byte);
             }
@@ -147,7 +159,9 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 let fmt_bytes = format.formatter.as_bytes();
                 buf.extend_from_slice(&(fmt_bytes.len() as u32).to_be_bytes());
                 buf.extend_from_slice(fmt_bytes);
-                let opts_str = format.options.iter()
+                let opts_str = format
+                    .options
+                    .iter()
                     .map(|(k, v)| format!("{}={}", k, v))
                     .collect::<Vec<_>>()
                     .join(",");
@@ -212,7 +226,9 @@ pub fn write_binary_format(
 mod tests {
     use super::*;
     use crate::fnv1a_64;
-    use crate::icu_parser::{CustomFormat, DateStyle, ListStyle, NumberStyle, PluralCaseKey, RelTimeStyle};
+    use crate::icu_parser::{
+        CustomFormat, DateStyle, ListStyle, NumberStyle, PluralCaseKey, RelTimeStyle,
+    };
     use std::collections::HashMap;
 
     #[test]
@@ -222,7 +238,7 @@ mod tests {
         assert_eq!(bytes[0], 0x01);
         let len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         assert_eq!(len, 11);
-        assert_eq!(&bytes[5..5+11], b"Hello World");
+        assert_eq!(&bytes[5..5 + 11], b"Hello World");
     }
 
     #[test]
@@ -250,13 +266,19 @@ mod tests {
             var: "count".to_string(),
             ordinal: false,
             cases: vec![
-                (PluralCaseKey::One, vec![MessageNode::Text("item".to_string())]),
-                (PluralCaseKey::Other, vec![MessageNode::Text("items".to_string())]),
+                (
+                    PluralCaseKey::One,
+                    vec![MessageNode::Text("item".to_string())],
+                ),
+                (
+                    PluralCaseKey::Other,
+                    vec![MessageNode::Text("items".to_string())],
+                ),
             ],
         }];
         let bytes = serialize_nodes(&nodes);
         assert_eq!(bytes[0], 0x03); // cardinal plural
-        // var name
+                                    // var name
         let var_len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         assert_eq!(var_len, 5);
         assert_eq!(&bytes[5..10], b"count");
@@ -271,8 +293,14 @@ mod tests {
             var: "n".to_string(),
             ordinal: true,
             cases: vec![
-                (PluralCaseKey::One, vec![MessageNode::Text("1st".to_string())]),
-                (PluralCaseKey::Other, vec![MessageNode::Text("th".to_string())]),
+                (
+                    PluralCaseKey::One,
+                    vec![MessageNode::Text("1st".to_string())],
+                ),
+                (
+                    PluralCaseKey::Other,
+                    vec![MessageNode::Text("th".to_string())],
+                ),
             ],
         }];
         let bytes = serialize_nodes(&nodes);
@@ -284,8 +312,14 @@ mod tests {
         let nodes = vec![MessageNode::Select {
             var: "gender".to_string(),
             cases: vec![
-                ("male".to_string(), vec![MessageNode::Text("Mr.".to_string())]),
-                ("other".to_string(), vec![MessageNode::Text("Mx.".to_string())]),
+                (
+                    "male".to_string(),
+                    vec![MessageNode::Text("Mr.".to_string())],
+                ),
+                (
+                    "other".to_string(),
+                    vec![MessageNode::Text("Mx.".to_string())],
+                ),
             ],
         }];
         let bytes = serialize_nodes(&nodes);
@@ -303,7 +337,7 @@ mod tests {
         }];
         let bytes = serialize_nodes(&nodes);
         assert_eq!(bytes[0], 0x05);
-        assert_eq!(bytes[bytes.len()-1], 0x00); // decimal style
+        assert_eq!(bytes[bytes.len() - 1], 0x00); // decimal style
     }
 
     #[test]
@@ -313,7 +347,7 @@ mod tests {
             style: NumberStyle::Percent,
         }];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[bytes.len()-1], 0x01);
+        assert_eq!(bytes[bytes.len() - 1], 0x01);
     }
 
     #[test]
@@ -323,7 +357,7 @@ mod tests {
             style: NumberStyle::Integer,
         }];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[bytes.len()-1], 0x02);
+        assert_eq!(bytes[bytes.len() - 1], 0x02);
     }
 
     #[test]
@@ -333,12 +367,13 @@ mod tests {
             style: NumberStyle::Currency("USD".to_string()),
         }];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[bytes.len()-1-4-3], 0x03); // currency style
-        // currency code should appear
+        assert_eq!(bytes[bytes.len() - 1 - 4 - 3], 0x03); // currency style
+                                                          // currency code should appear
         let code_len_pos = bytes.len() - 4 - 3;
-        let code_len = u32::from_be_bytes(bytes[code_len_pos..code_len_pos+4].try_into().unwrap()) as usize;
+        let code_len =
+            u32::from_be_bytes(bytes[code_len_pos..code_len_pos + 4].try_into().unwrap()) as usize;
         assert_eq!(code_len, 3);
-        assert_eq!(&bytes[code_len_pos+4..code_len_pos+4+3], b"USD");
+        assert_eq!(&bytes[code_len_pos + 4..code_len_pos + 4 + 3], b"USD");
     }
 
     #[test]
@@ -353,7 +388,7 @@ mod tests {
                 style,
             }];
             let bytes = serialize_nodes(&nodes);
-            assert_eq!(bytes[bytes.len()-1], expected_byte, "DateStyle variant");
+            assert_eq!(bytes[bytes.len() - 1], expected_byte, "DateStyle variant");
         }
     }
 
@@ -369,10 +404,17 @@ mod tests {
         assert_eq!(name_len, 4);
         assert_eq!(&bytes[5..9], b"user");
         let default_len_pos = 9;
-        let default_len = u32::from_be_bytes(bytes[default_len_pos..default_len_pos+4].try_into().unwrap()) as usize;
+        let default_len = u32::from_be_bytes(
+            bytes[default_len_pos..default_len_pos + 4]
+                .try_into()
+                .unwrap(),
+        ) as usize;
         assert_eq!(default_len, 5);
-        assert_eq!(&bytes[default_len_pos+4..default_len_pos+4+5], b"Guest");
-        assert_eq!(bytes[bytes.len()-1], 0x00); // escaped
+        assert_eq!(
+            &bytes[default_len_pos + 4..default_len_pos + 4 + 5],
+            b"Guest"
+        );
+        assert_eq!(bytes[bytes.len() - 1], 0x00); // escaped
     }
 
     #[test]
@@ -383,7 +425,7 @@ mod tests {
         }];
         let bytes = serialize_nodes(&nodes);
         assert_eq!(bytes[0], 0x09);
-        assert_eq!(bytes[bytes.len()-1], 0x00);
+        assert_eq!(bytes[bytes.len() - 1], 0x00);
     }
 
     #[test]
@@ -393,7 +435,7 @@ mod tests {
             style: ListStyle::Disjunction,
         }];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[bytes.len()-1], 0x01);
+        assert_eq!(bytes[bytes.len() - 1], 0x01);
     }
 
     #[test]
@@ -403,7 +445,7 @@ mod tests {
             style: ListStyle::Unit,
         }];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[bytes.len()-1], 0x02);
+        assert_eq!(bytes[bytes.len() - 1], 0x02);
     }
 
     #[test]
@@ -423,7 +465,7 @@ mod tests {
                 style,
             }];
             let bytes = serialize_nodes(&nodes);
-            assert_eq!(bytes[bytes.len()-1], expected_byte);
+            assert_eq!(bytes[bytes.len() - 1], expected_byte);
         }
     }
 
@@ -469,7 +511,10 @@ mod tests {
     #[test]
     fn test_write_binary_format_single() {
         let mut translations = HashMap::new();
-        translations.insert(fnv1a_64(b"key1"), vec![MessageNode::Text("Hello".to_string())]);
+        translations.insert(
+            fnv1a_64(b"key1"),
+            vec![MessageNode::Text("Hello".to_string())],
+        );
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
         let index_count = u32::from_be_bytes(bytes[12..16].try_into().unwrap());
@@ -483,7 +528,10 @@ mod tests {
     #[test]
     fn test_write_binary_format_multiple_sorted() {
         let mut translations = HashMap::new();
-        translations.insert(fnv1a_64(b"b"), vec![MessageNode::Text("second".to_string())]);
+        translations.insert(
+            fnv1a_64(b"b"),
+            vec![MessageNode::Text("second".to_string())],
+        );
         translations.insert(fnv1a_64(b"a"), vec![MessageNode::Text("first".to_string())]);
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
@@ -494,19 +542,22 @@ mod tests {
         let val_a = reader.lookup(fnv1a_64(b"a")).unwrap();
         let val_b = reader.lookup(fnv1a_64(b"b")).unwrap();
         let text_len_a = u32::from_be_bytes(val_a[1..5].try_into().unwrap()) as usize;
-        assert_eq!(&val_a[5..5+text_len_a], b"first");
+        assert_eq!(&val_a[5..5 + text_len_a], b"first");
         let text_len_b = u32::from_be_bytes(val_b[1..5].try_into().unwrap()) as usize;
-        assert_eq!(&val_b[5..5+text_len_b], b"second");
+        assert_eq!(&val_b[5..5 + text_len_b], b"second");
     }
 
     #[test]
     fn test_roundtrip_via_reader_and_formatter() {
         let mut translations = HashMap::new();
-        translations.insert(fnv1a_64(b"greeting"), vec![
-            MessageNode::Text("Hello ".to_string()),
-            MessageNode::Variable("name".to_string()),
-            MessageNode::Text("!".to_string()),
-        ]);
+        translations.insert(
+            fnv1a_64(b"greeting"),
+            vec![
+                MessageNode::Text("Hello ".to_string()),
+                MessageNode::Variable("name".to_string()),
+                MessageNode::Text("!".to_string()),
+            ],
+        );
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
         let bc = reader.lookup(fnv1a_64(b"greeting")).unwrap();

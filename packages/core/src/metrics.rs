@@ -18,17 +18,29 @@ static LOCALE_LOADS: AtomicU64 = AtomicU64::new(0);
 static FORMAT_ERRORS: AtomicU64 = AtomicU64::new(0);
 
 /// Increment the total translations counter.
-pub fn inc_total_translations() { TOTAL_TRANSLATIONS.fetch_add(1, Ordering::Relaxed); }
+pub fn inc_total_translations() {
+    TOTAL_TRANSLATIONS.fetch_add(1, Ordering::Relaxed);
+}
 /// Increment the cache hit counter.
-pub fn inc_cache_hits() { CACHE_HITS.fetch_add(1, Ordering::Relaxed); }
+pub fn inc_cache_hits() {
+    CACHE_HITS.fetch_add(1, Ordering::Relaxed);
+}
 /// Increment the cache miss counter.
-pub fn inc_cache_misses() { CACHE_MISSES.fetch_add(1, Ordering::Relaxed); }
+pub fn inc_cache_misses() {
+    CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
+}
 /// Increment the locale load counter.
-pub fn inc_locale_loads() { LOCALE_LOADS.fetch_add(1, Ordering::Relaxed); }
+pub fn inc_locale_loads() {
+    LOCALE_LOADS.fetch_add(1, Ordering::Relaxed);
+}
 /// Increment the format error counter.
-pub fn inc_format_errors() { FORMAT_ERRORS.fetch_add(1, Ordering::Relaxed); }
+pub fn inc_format_errors() {
+    FORMAT_ERRORS.fetch_add(1, Ordering::Relaxed);
+}
 /// Read the current format error count.
-pub fn format_errors() -> u64 { FORMAT_ERRORS.load(Ordering::Relaxed) }
+pub fn format_errors() -> u64 {
+    FORMAT_ERRORS.load(Ordering::Relaxed)
+}
 
 /// Returns all metrics as a formatted string: `total,hits,misses,loads,errors`.
 pub fn metrics_string() -> alloc::string::String {

@@ -118,7 +118,8 @@ fn bench_lookup(c: &mut Criterion) {
     });
 
     // Pre-built data for pure swap benchmarking
-    let prebuilt_locales = std::sync::Arc::new(vec![("es".to_string(), std::sync::Arc::new(vec![]))]);
+    let prebuilt_locales =
+        std::sync::Arc::new(vec![("es".to_string(), std::sync::Arc::new(vec![]))]);
     let prebuilt_chain = TranslationStore::default().fallback_chain; // cached singleton
 
     c.bench_function("swap_store_pure", |b| {

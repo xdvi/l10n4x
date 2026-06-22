@@ -52,8 +52,12 @@ mod tests {
     #[test]
     fn generates_header_and_source() {
         let dir = tempfile::tempdir().unwrap();
-        let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "common.welcome".to_string())];
-        generate(dir.path(), &key_pairs, &Value::Null, |s| s.to_uppercase().replace('.', "_")).unwrap();
+        let key_pairs: Vec<(u64, String)> =
+            vec![(0xabcdef0123456789, "common.welcome".to_string())];
+        generate(dir.path(), &key_pairs, &Value::Null, |s| {
+            s.to_uppercase().replace('.', "_")
+        })
+        .unwrap();
         assert!(dir.path().join("l10n4x_keys.h").exists());
         assert!(dir.path().join("l10n4x_keys.c").exists());
         let header = std::fs::read_to_string(dir.path().join("l10n4x_keys.h")).unwrap();

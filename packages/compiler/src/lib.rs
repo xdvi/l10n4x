@@ -125,7 +125,10 @@ fn resolve_single(
 
     let nodes = match translations.get(&key) {
         Some(n) if n.iter().any(|nd| matches!(nd, MessageNode::KeyRef(_))) => n.clone(),
-        _ => { resolving.remove(&key); return; }
+        _ => {
+            resolving.remove(&key);
+            return;
+        }
     };
 
     let mut resolved: Vec<MessageNode> = Vec::with_capacity(nodes.len());
@@ -136,7 +139,11 @@ fn resolve_single(
                     resolve_single(ref_key.clone(), translations, resolving);
                 }
                 match translations.get(&ref_key) {
-                    Some(target_nodes) if !target_nodes.iter().any(|n| matches!(n, MessageNode::KeyRef(_))) => {
+                    Some(target_nodes)
+                        if !target_nodes
+                            .iter()
+                            .any(|n| matches!(n, MessageNode::KeyRef(_))) =>
+                    {
                         resolved.extend_from_slice(target_nodes);
                     }
                     _ => {
@@ -170,7 +177,7 @@ pub fn compile_translations(
         let binary_bytes = write_binary_format(nodes);
 
         let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
-            .map_err(|e| CompileError::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+            .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
 
         let unsigned = build_unsigned(&compressed_bytes);
         let signature = signing::sign(&unsigned)
@@ -252,9 +259,7 @@ pub fn fnv1a_64(data: &[u8]) -> u64 {
 ///
 /// This is the core pipeline shared by `compile_translations` and
 /// `compile_translations_to_bytes`.
-fn compile_pipeline(
-    src_path: &Path,
-) -> Result<TranslationsMap, CompileError> {
+fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
     if !src_path.is_dir() {
         return Err(CompileError::SourceNotADirectory);
     }
@@ -302,8 +307,7 @@ fn compile_pipeline(
             continue;
         }
 
-        let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
-            HashMap::new();
+        let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
         for (k, template) in raw_flat_translations {
             if let Some(interval_cases) = icu_parser::parse_interval_plural(&template) {
                 let nodes = vec![icu_parser::MessageNode::Plural {
@@ -340,13 +344,18 @@ pub fn compile_key_pairs(src_path: &Path) -> Result<Vec<(u64, String)>, CompileE
     for lang_entry in fs::read_dir(src_path)? {
         let lang_entry = lang_entry?;
         let lang_path = lang_entry.path();
-        if !lang_path.is_dir() { continue; }
+        if !lang_path.is_dir() {
+            continue;
+        }
         for file_entry in fs::read_dir(&lang_path)? {
             let file_entry = file_entry?;
             let file_path = file_entry.path();
             if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
-                let file_name = file_path.file_stem().and_then(|s| s.to_str())
-                    .ok_or(CompileError::InvalidFileName)?.to_string();
+                let file_name = file_path
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .ok_or(CompileError::InvalidFileName)?
+                    .to_string();
                 let content = fs::read_to_string(&file_path)?;
                 let parsed: Value = serde_json::from_str(&content)?;
                 let mut raw_flat = HashMap::new();
@@ -402,10 +411,14 @@ mod key_ref_tests {
     #[test]
     fn key_ref_is_inlined_at_compile_time() {
         let mut translations: HashMap<String, Vec<MessageNode>> = HashMap::new();
-        translations.insert("common.ok".to_string(),
-            MessageParser::new("OK").parse().unwrap());
-        translations.insert("button.save".to_string(),
-            MessageParser::new("$t(common.ok)").parse().unwrap());
+        translations.insert(
+            "common.ok".to_string(),
+            MessageParser::new("OK").parse().unwrap(),
+        );
+        translations.insert(
+            "button.save".to_string(),
+            MessageParser::new("$t(common.ok)").parse().unwrap(),
+        );
 
         resolve_key_refs(&mut translations);
 
@@ -417,10 +430,14 @@ mod key_ref_tests {
     #[test]
     fn cycle_detection_does_not_panic() {
         let mut translations: HashMap<String, Vec<MessageNode>> = HashMap::new();
-        translations.insert("a".to_string(),
-            MessageParser::new("$t(b)").parse().unwrap());
-        translations.insert("b".to_string(),
-            MessageParser::new("$t(a)").parse().unwrap());
+        translations.insert(
+            "a".to_string(),
+            MessageParser::new("$t(b)").parse().unwrap(),
+        );
+        translations.insert(
+            "b".to_string(),
+            MessageParser::new("$t(a)").parse().unwrap(),
+        );
 
         resolve_key_refs(&mut translations);
     }
@@ -436,8 +453,10 @@ mod key_ref_tests {
     #[test]
     fn missing_ref_target_becomes_key_literal() {
         let mut translations: HashMap<String, Vec<MessageNode>> = HashMap::new();
-        translations.insert("greeting".to_string(),
-            MessageParser::new("$t(nonexistent.key)").parse().unwrap());
+        translations.insert(
+            "greeting".to_string(),
+            MessageParser::new("$t(nonexistent.key)").parse().unwrap(),
+        );
 
         resolve_key_refs(&mut translations);
 
@@ -540,7 +559,10 @@ mod tests {
     #[test]
     fn compile_error_display_template_parse() {
         let err = CompileError::TemplateParseError("parse failed".to_string());
-        assert_eq!(format!("{}", err), "Failed to parse translation template: parse failed");
+        assert_eq!(
+            format!("{}", err),
+            "Failed to parse translation template: parse failed"
+        );
     }
 
     #[test]
@@ -552,8 +574,12 @@ mod tests {
     #[test]
     fn resolve_single_no_change_for_non_keyref() {
         let mut translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
-        translations.insert("key".to_string(),
-            icu_parser::MessageParser::new("simple text").parse().unwrap());
+        translations.insert(
+            "key".to_string(),
+            icu_parser::MessageParser::new("simple text")
+                .parse()
+                .unwrap(),
+        );
         resolve_key_refs(&mut translations);
         let nodes = translations.get("key").unwrap();
         assert_eq!(nodes.len(), 1);
@@ -562,10 +588,16 @@ mod tests {
     #[test]
     fn resolve_single_direct_ref() {
         let mut translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
-        translations.insert("target".to_string(),
-            icu_parser::MessageParser::new("hello").parse().unwrap());
-        translations.insert("source".to_string(),
-            icu_parser::MessageParser::new("$t(target)").parse().unwrap());
+        translations.insert(
+            "target".to_string(),
+            icu_parser::MessageParser::new("hello").parse().unwrap(),
+        );
+        translations.insert(
+            "source".to_string(),
+            icu_parser::MessageParser::new("$t(target)")
+                .parse()
+                .unwrap(),
+        );
         resolve_key_refs(&mut translations);
         let nodes = translations.get("source").unwrap();
         assert!(matches!(&nodes[0], icu_parser::MessageNode::Text(t) if t == "hello"));
@@ -636,7 +668,11 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");
         fs::create_dir_all(&en_dir).unwrap();
-        fs::write(en_dir.join("common.json"), r#"{"messages": "(0)[none];(1)[one];(2-7)[few];(7-inf)[many]"}"#).unwrap();
+        fs::write(
+            en_dir.join("common.json"),
+            r#"{"messages": "(0)[none];(1)[one];(2-7)[few];(7-inf)[many]"}"#,
+        )
+        .unwrap();
 
         let seed = [22u8; 32];
         let _ = crate::signing::set_signing_key(&seed);
@@ -678,12 +714,19 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");
         fs::create_dir_all(&en_dir).unwrap();
-        fs::write(en_dir.join("common.json"), r#"{"greeting": "Hello {name}!"}"#).unwrap();
+        fs::write(
+            en_dir.join("common.json"),
+            r#"{"greeting": "Hello {name}!"}"#,
+        )
+        .unwrap();
         let result = extract_params_map(&tmp);
         assert!(result.is_ok());
         let map = result.unwrap();
         assert!(map.contains_key("common.greeting"));
-        assert!(map.get("common.greeting").unwrap().contains(&"name".to_string()));
+        assert!(map
+            .get("common.greeting")
+            .unwrap()
+            .contains(&"name".to_string()));
         let _ = fs::remove_dir_all(&tmp);
     }
 }

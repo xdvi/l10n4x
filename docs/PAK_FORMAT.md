@@ -53,3 +53,26 @@ Inside the decompressed `L10N` block, the value of each key is a sequence of opc
 | `0x08` | Relative Time | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=auto, `0x01`=seconds, `0x02`=minutes, `0x03`=hours, `0x04`=days, `0x05`=weeks, `0x06`=months, `0x07`=years |
 | `0x09` | List Format | `[u32: var_name_len][var_name_bytes][u8: style]` where style: `0x00`=conjunction (and), `0x01`=disjunction (or), `0x02`=unit (commas only) |
 | `0x0A` | Ordinal Plural | Same encoding as `0x03` but selects from CLDR ordinal rules instead of cardinal |
+
+## Index Format (hash keys)
+
+The inner `L10N` block uses a sorted u64 hash index for O(log N) binary search lookup:
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 4 | Magic `L10N` |
+| 4 | 4 | Version `1` |
+| 8 | 4 | Index offset (byte offset of index from block start) |
+| 12 | 4 | Index count (number of entries) |
+| 16 | * | Data pool (bytecode values only) |
+| index_offset | count * 16 | Index entries |
+
+Each index entry (16 bytes):
+
+| Offset | Size | Field |
+|--------|------|-------|
+| 0 | 8 | FNV-1a 64-bit key hash (big-endian) |
+| 8 | 4 | Value bytecode offset (from block start) |
+| 12 | 4 | Value bytecode length |
+
+Key names are not stored in the binary. The index is sorted by hash ascending for binary search. Hashes are FNV-1a 64-bit computed at compile time. Runtime uses the hash for lookup directly. No string comparison, no key strings in memory.
