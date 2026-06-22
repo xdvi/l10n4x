@@ -49,3 +49,53 @@ const _: () = assert!(L10N4C_VERIFY_KEY_NOT_SET == 9);
 const _: () = assert!(L10N4C_NOT_INITIALIZED == 10);
 const _: () = assert!(L10N4C_DECRYPT_KEY_NOT_SET == 11);
 const _: () = assert!(L10N4C_BUFFER_OVERFLOW == 12);
+
+/// Maps a [`l10n4x_core::CoreError`] to the corresponding FFI status code.
+pub fn core_error_to_ffi(err: l10n4x_core::CoreError) -> i32 {
+    use l10n4x_core::CoreError;
+    match err {
+        CoreError::SignatureInvalid(_) => L10N4C_SIGNATURE_INVALID,
+        CoreError::KeyNotConfigured(msg) if msg.contains("Verify") => L10N4C_VERIFY_KEY_NOT_SET,
+        CoreError::KeyNotConfigured(msg) if msg.contains("Decrypt") => L10N4C_DECRYPT_KEY_NOT_SET,
+        CoreError::KeyNotConfigured(_) => L10N4C_VERIFY_KEY_NOT_SET,
+        CoreError::IoError(_) => L10N4C_IO_ERROR,
+        CoreError::EncodingError => L10N4C_INVALID_ENCODING,
+        CoreError::InvalidFormat(_)
+        | CoreError::InvalidMagic(_)
+        | CoreError::BufferTooShort(_)
+        | CoreError::UnsupportedVersion(_)
+        | CoreError::TrailingData(_) => L10N4C_SIGNATURE_INVALID,
+        CoreError::Overflow(_) => L10N4C_BUFFER_OVERFLOW,
+        CoreError::FeatureNotEnabled(_) => L10N4C_INTERNAL_ERROR,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use l10n4x_core::CoreError;
+
+    #[test]
+    fn maps_signature_invalid() {
+        assert_eq!(
+            core_error_to_ffi(CoreError::SignatureInvalid("bad")),
+            L10N4C_SIGNATURE_INVALID
+        );
+    }
+
+    #[test]
+    fn maps_verify_key_not_set() {
+        assert_eq!(
+            core_error_to_ffi(CoreError::KeyNotConfigured("Verify key not configured")),
+            L10N4C_VERIFY_KEY_NOT_SET
+        );
+    }
+
+    #[test]
+    fn maps_decrypt_key_not_set() {
+        assert_eq!(
+            core_error_to_ffi(CoreError::KeyNotConfigured("Decrypt key not configured")),
+            L10N4C_DECRYPT_KEY_NOT_SET
+        );
+    }
+}

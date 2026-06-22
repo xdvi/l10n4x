@@ -12,12 +12,13 @@ use std::path::Path;
 
 use l10n4c::{
     l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales, l10n4c_load_pak_directory,
-    l10n4c_load_static_bytes, l10n4c_register_formatter, l10n4c_set_decrypt_key,
-    l10n4c_set_fallback_chain, l10n4c_set_fallback_locale, l10n4c_set_missing_key_handler,
-    l10n4c_set_verify_key, l10n4c_translate, l10n4c_translate_alloc,
-    l10n4c_translate_required_size, l10n4c_translate_with_params,
+    l10n4c_load_pak_locale, l10n4c_load_static_bytes, l10n4c_register_formatter,
+    l10n4c_set_decrypt_key, l10n4c_set_fallback_chain, l10n4c_set_fallback_locale,
+    l10n4c_set_missing_key_handler, l10n4c_set_verify_key, l10n4c_translate,
+    l10n4c_translate_alloc, l10n4c_translate_required_size, l10n4c_translate_with_params,
     l10n4c_translate_with_params_alloc, l10n4c_translate_with_params_required_size, L10n4cParam,
     L10N4C_INVALID_PARAMS, L10N4C_KEY_NOT_FOUND, L10N4C_LOCALE_NOT_LOADED, L10N4C_OK,
+    L10N4C_SIGNATURE_INVALID,
 };
 use l10n4x_compiler::fnv1a_64;
 
@@ -697,6 +698,35 @@ fn test_load_static_bytes_ffi() {
     );
 }
 
+fn test_tampered_pak_returns_signature_invalid() {
+    l10n4c_clear();
+    install_test_keys();
+
+    let temp_src = Path::new("temp_tamper_src");
+    let en_dir = temp_src.join("en");
+    fs::create_dir_all(&en_dir).unwrap();
+    fs::write(en_dir.join("k.json"), r#"{"greeting": "Hi"}"#).unwrap();
+    let temp_out = Path::new("temp_tamper_out");
+    compile_fixtures(temp_src, temp_out, false);
+
+    let pak_path = temp_out.join("en.pak");
+    let mut bytes = fs::read(&pak_path).unwrap();
+    if let Some(last) = bytes.last_mut() {
+        *last ^= 0xFF;
+    }
+    fs::write(&pak_path, &bytes).unwrap();
+
+    let locale = CString::new("en").unwrap();
+    let path = CString::new(pak_path.to_str().unwrap()).unwrap();
+    assert_eq!(
+        l10n4c_load_pak_locale(locale.as_ptr(), path.as_ptr()),
+        L10N4C_SIGNATURE_INVALID
+    );
+
+    let _ = fs::remove_dir_all(temp_src);
+    let _ = fs::remove_dir_all(temp_out);
+}
+
 // ─── Single test entry point (avoid global state races) ─────────────────────
 
 #[test]
@@ -714,4 +744,5 @@ fn run_all_ffi_integration_tests() {
     test_missing_key_handler_callback();
     test_register_custom_formatter_ffi();
     test_load_static_bytes_ffi();
+    test_tampered_pak_returns_signature_invalid();
 }

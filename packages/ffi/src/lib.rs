@@ -29,11 +29,9 @@ use std::os::raw::c_char;
 
 use l10n4x_core::encryption;
 use l10n4x_core::integrity;
-use l10n4x_core::loader::{load_pak_directory, load_pak_locale};
+use l10n4x_core::loader::{load_pak_directory, try_load_pak_locale, try_load_static_bytes};
 use l10n4x_core::metrics;
-use l10n4x_core::store::{
-    clear_translations, get_fallback_locale, load_static_bytes, set_fallback_locale,
-};
+use l10n4x_core::store::{clear_translations, get_fallback_locale, set_fallback_locale};
 
 /// C-compatible function pointer type for the missing key callback.
 pub type L10n4cMissingKeyFn = unsafe extern "C" fn(locale: *const c_char, key_hash: u64);
@@ -78,15 +76,36 @@ fn cstr_to_str<'a>(ptr: *const c_char) -> Result<&'a str, i32> {
         .map_err(|_| L10N4C_INVALID_ENCODING)
 }
 
-fn resolve_translation(locale: &str, key_hash: u64, params: &[(&str, &str)]) -> TranslateOutcome {
+fn resolve_translation(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+) -> TranslateOutcome {
     let locale_loaded = l10n4x_core::store::locale_loaded(locale);
-    let key_found = l10n4x_core::store::key_exists(locale, key_hash, None);
+    let key_found = l10n4x_core::store::key_exists(locale, key_hash, context_hash);
     let mut resolved = String::new();
-    let _ = l10n4x_core::store::translate_to_writer(locale, key_hash, None, params, &mut resolved);
+    let _ = l10n4x_core::store::translate_to_writer(
+        locale,
+        key_hash,
+        context_hash,
+        params,
+        &mut resolved,
+    );
     TranslateOutcome {
         text: resolved,
         key_found,
         locale_loaded,
+    }
+}
+
+fn outcome_status(outcome: &TranslateOutcome) -> i32 {
+    if outcome.key_found {
+        L10N4C_OK
+    } else if outcome.locale_loaded {
+        L10N4C_KEY_NOT_FOUND
+    } else {
+        L10N4C_LOCALE_NOT_LOADED
     }
 }
 
@@ -134,6 +153,7 @@ fn parse_typed_params_owned(
 fn translate_core(
     locale_ptr: *const c_char,
     key_hash: u64,
+    context_hash: Option<u64>,
     params: &[(&str, &str)],
 ) -> Result<TranslateOutcome, i32> {
     let locale = if locale_ptr.is_null() {
@@ -141,7 +161,7 @@ fn translate_core(
     } else {
         cstr_to_str(locale_ptr)?.to_string()
     };
-    Ok(resolve_translation(&locale, key_hash, params))
+    Ok(resolve_translation(&locale, key_hash, context_hash, params))
 }
 
 fn string_to_c(s: &str) -> *mut c_char {
@@ -229,10 +249,9 @@ pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *cons
         Ok(s) => s,
         Err(e) => return e,
     };
-    if load_pak_locale(locale_str, path_str) {
-        L10N4C_OK
-    } else {
-        L10N4C_IO_ERROR
+    match try_load_pak_locale(locale_str, path_str) {
+        Ok(()) => L10N4C_OK,
+        Err(e) => core_error_to_ffi(e),
     }
 }
 
@@ -264,10 +283,9 @@ pub extern "C" fn l10n4c_load_static_bytes(
     // (e.g., a C static variable or mmap'd read-only section).
     let static_slice: &'static [u8] = unsafe { core::mem::transmute(slice) };
     let verified = already_verified != 0;
-    if load_static_bytes(locale_str, static_slice, verified) {
-        L10N4C_OK
-    } else {
-        L10N4C_INTERNAL_ERROR
+    match try_load_static_bytes(locale_str, static_slice, verified) {
+        Ok(()) => L10N4C_OK,
+        Err(e) => core_error_to_ffi(e),
     }
 }
 
@@ -295,7 +313,7 @@ pub extern "C" fn l10n4c_translate_required_size(
     if out_size.is_null() {
         return L10N4C_INVALID_PARAMS;
     }
-    let outcome = match translate_core(locale, key_hash, &[]) {
+    let outcome = match translate_core(locale, key_hash, None, &[]) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -306,13 +324,7 @@ pub extern "C" fn l10n4c_translate_required_size(
     unsafe {
         *out_size = needed;
     }
-    if outcome.key_found {
-        L10N4C_OK
-    } else if outcome.locale_loaded {
-        L10N4C_KEY_NOT_FOUND
-    } else {
-        L10N4C_LOCALE_NOT_LOADED
-    }
+    outcome_status(&outcome)
 }
 
 /// Translates a key into a caller-provided buffer.
@@ -323,20 +335,12 @@ pub extern "C" fn l10n4c_translate(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(locale, key_hash, &[]) {
+    let outcome = match translate_core(locale, key_hash, None, &[]) {
         Ok(o) => o,
         Err(e) => return e,
     };
     match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => {
-            if outcome.key_found {
-                L10N4C_OK
-            } else if outcome.locale_loaded {
-                L10N4C_KEY_NOT_FOUND
-            } else {
-                L10N4C_LOCALE_NOT_LOADED
-            }
-        }
+        Ok(_) => outcome_status(&outcome),
         Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
         Err(e) => e,
     }
@@ -362,7 +366,7 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let outcome = match translate_core(locale, key_hash, &refs) {
+    let outcome = match translate_core(locale, key_hash, None, &refs) {
         Ok(o) => o,
         Err(e) => return e,
     };
@@ -373,13 +377,7 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
     unsafe {
         *out_size = needed;
     }
-    if outcome.key_found {
-        L10N4C_OK
-    } else if outcome.locale_loaded {
-        L10N4C_KEY_NOT_FOUND
-    } else {
-        L10N4C_LOCALE_NOT_LOADED
-    }
+    outcome_status(&outcome)
 }
 
 /// Translates a key with typed parameters into a caller-provided buffer.
@@ -400,20 +398,12 @@ pub extern "C" fn l10n4c_translate_with_params(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    let outcome = match translate_core(locale, key_hash, &refs) {
+    let outcome = match translate_core(locale, key_hash, None, &refs) {
         Ok(o) => o,
         Err(e) => return e,
     };
     match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => {
-            if outcome.key_found {
-                L10N4C_OK
-            } else if outcome.locale_loaded {
-                L10N4C_KEY_NOT_FOUND
-            } else {
-                L10N4C_LOCALE_NOT_LOADED
-            }
-        }
+        Ok(_) => outcome_status(&outcome),
         Err(e) => e,
     }
 }
@@ -421,7 +411,7 @@ pub extern "C" fn l10n4c_translate_with_params(
 /// Allocates and returns a translated string. Caller must free with [`l10n4c_free_string`].
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key_hash: u64) -> *mut c_char {
-    match translate_core(locale, key_hash, &[]) {
+    match translate_core(locale, key_hash, None, &[]) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }
@@ -442,7 +432,151 @@ pub extern "C" fn l10n4c_translate_with_params_alloc(
         .iter()
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    match translate_core(locale, key_hash, &refs) {
+    match translate_core(locale, key_hash, None, &refs) {
+        Ok(o) => string_to_c(&o.text),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Returns the buffer size needed for a context-suffix translation.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context_required_size(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+    out_size: *mut usize,
+) -> i32 {
+    if out_size.is_null() {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), &[]) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    let needed = match required_size(&outcome.text) {
+        Some(sz) => sz,
+        None => return L10N4C_BUFFER_OVERFLOW,
+    };
+    unsafe {
+        *out_size = needed;
+    }
+    outcome_status(&outcome)
+}
+
+/// Translates a key with context suffix into a caller-provided buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+    buf: *mut u8,
+    max_len: usize,
+) -> i32 {
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), &[]) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    match write_to_c_buffer(&outcome.text, buf, max_len) {
+        Ok(_) => outcome_status(&outcome),
+        Err(e) => e,
+    }
+}
+
+/// Allocates and returns a context-suffix translation.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context_alloc(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+) -> *mut c_char {
+    match translate_core(locale, key_hash, Some(context_hash), &[]) {
+        Ok(o) => string_to_c(&o.text),
+        Err(_) => std::ptr::null_mut(),
+    }
+}
+
+/// Returns the buffer size needed for a context-suffix translation with parameters.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context_and_params_required_size(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+    params: *const L10n4cParam,
+    param_count: usize,
+    out_size: *mut usize,
+) -> i32 {
+    if out_size.is_null() {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let parsed = match parse_typed_params_owned(params, param_count) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let refs: Vec<(&str, &str)> = parsed
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), &refs) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    let needed = match required_size(&outcome.text) {
+        Some(sz) => sz,
+        None => return L10N4C_BUFFER_OVERFLOW,
+    };
+    unsafe {
+        *out_size = needed;
+    }
+    outcome_status(&outcome)
+}
+
+/// Translates a key with context suffix and parameters into a caller-provided buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context_and_params(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+    params: *const L10n4cParam,
+    param_count: usize,
+    buf: *mut u8,
+    max_len: usize,
+) -> i32 {
+    let parsed = match parse_typed_params_owned(params, param_count) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    let refs: Vec<(&str, &str)> = parsed
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    let outcome = match translate_core(locale, key_hash, Some(context_hash), &refs) {
+        Ok(o) => o,
+        Err(e) => return e,
+    };
+    match write_to_c_buffer(&outcome.text, buf, max_len) {
+        Ok(_) => outcome_status(&outcome),
+        Err(e) => e,
+    }
+}
+
+/// Allocates and returns a context-suffix translation with parameters.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_translate_with_context_and_params_alloc(
+    locale: *const c_char,
+    key_hash: u64,
+    context_hash: u64,
+    params: *const L10n4cParam,
+    param_count: usize,
+) -> *mut c_char {
+    let parsed = match parse_typed_params_owned(params, param_count) {
+        Ok(p) => p,
+        Err(_) => return std::ptr::null_mut(),
+    };
+    let refs: Vec<(&str, &str)> = parsed
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
+    match translate_core(locale, key_hash, Some(context_hash), &refs) {
         Ok(o) => string_to_c(&o.text),
         Err(_) => std::ptr::null_mut(),
     }

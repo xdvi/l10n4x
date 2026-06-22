@@ -49,6 +49,8 @@ int32_t l10n4c_set_fallback_chain(const char **locales, size_t count);
 
 int32_t l10n4c_load_pak_locale(const char *locale, const char *file_path);
 int32_t l10n4c_load_pak_directory(const char *dir_path);
+int32_t l10n4c_load_static_bytes(const char *locale, const uint8_t *data,
+                                   size_t data_len, int32_t already_verified);
 void    l10n4c_clear(void);
 
 /* ── Translation (buffer-based) ───────────────────────────────────────────── */
@@ -68,6 +70,25 @@ int32_t l10n4c_translate_with_params(
 char *l10n4c_translate_alloc(const char *locale, uint64_t key_hash);
 char *l10n4c_translate_with_params_alloc(
     const char *locale, uint64_t key_hash, const L10n4cParam *params, size_t param_count);
+
+int32_t l10n4c_translate_with_context_required_size(
+    const char *locale, uint64_t key_hash, uint64_t context_hash, size_t *out_size);
+int32_t l10n4c_translate_with_context(
+    const char *locale, uint64_t key_hash, uint64_t context_hash,
+    uint8_t *buf, size_t max_len);
+char *l10n4c_translate_with_context_alloc(
+    const char *locale, uint64_t key_hash, uint64_t context_hash);
+
+int32_t l10n4c_translate_with_context_and_params_required_size(
+    const char *locale, uint64_t key_hash, uint64_t context_hash,
+    const L10n4cParam *params, size_t param_count, size_t *out_size);
+int32_t l10n4c_translate_with_context_and_params(
+    const char *locale, uint64_t key_hash, uint64_t context_hash,
+    const L10n4cParam *params, size_t param_count, uint8_t *buf, size_t max_len);
+char *l10n4c_translate_with_context_and_params_alloc(
+    const char *locale, uint64_t key_hash, uint64_t context_hash,
+    const L10n4cParam *params, size_t param_count);
+
 void  l10n4c_free_string(char *ptr);
 
 /* ── Custom Formatters ─────────────────────────────────────────────────────── */
