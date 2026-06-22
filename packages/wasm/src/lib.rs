@@ -1,4 +1,7 @@
 //! `l10n4x-wasm` — WebAssembly bindings for `l10n4x`.
+//!
+//! Mirrors the runtime API of the `l10n4c` C FFI layer, including context-suffix
+//! translation and locale-change callbacks.
 
 use std::collections::HashMap;
 use wasm_bindgen::prelude::*;
@@ -126,8 +129,9 @@ pub fn l10n4x_clear() {
 #[wasm_bindgen]
 pub fn l10n4x_on_locale_changed(callback: js_sys::Function) {
     let cb = callback;
-    l10n4x_core::store::on_locale_changed_boxed(Box::new(move |_locale: &str| {
-        let _ = cb.call0(&wasm_bindgen::JsValue::UNDEFINED);
+    l10n4x_core::store::on_locale_changed_boxed(Box::new(move |locale: &str| {
+        let arg = wasm_bindgen::JsValue::from_str(locale);
+        let _ = cb.call1(&wasm_bindgen::JsValue::UNDEFINED, &arg);
     }));
 }
 
@@ -141,6 +145,12 @@ pub fn l10n4x_locale_loaded(locale: &str) -> bool {
 #[wasm_bindgen]
 pub fn l10n4x_key_exists(locale: &str, key_hash: u64) -> bool {
     l10n4x_core::store::key_exists(locale, key_hash, None)
+}
+
+/// Returns `true` if a context-suffixed key exists in `locale` or the fallback chain.
+#[wasm_bindgen]
+pub fn l10n4x_key_exists_with_context(locale: &str, key_hash: u64, context_hash: u64) -> bool {
+    l10n4x_core::store::key_exists(locale, key_hash, Some(context_hash))
 }
 
 /// Returns the list of locale codes that are currently loaded in memory.
