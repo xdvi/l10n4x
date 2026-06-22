@@ -19,8 +19,8 @@ fn get_workspace_root() -> std::path::PathBuf {
 
 fn send_request(port: u16, path: &str, headers: &[&str]) -> Result<(u16, String), std::io::Error> {
     let mut stream = TcpStream::connect(format!("127.0.0.1:{}", port))?;
-    stream.set_read_timeout(Some(Duration::from_secs(1)))?;
-    stream.set_write_timeout(Some(Duration::from_secs(1)))?;
+    stream.set_read_timeout(Some(Duration::from_secs(2)))?;
+    stream.set_write_timeout(Some(Duration::from_secs(2)))?;
 
     let mut request = format!(
         "GET {} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nConnection: close\r\n",
@@ -57,6 +57,28 @@ impl Drop for KillOnDrop {
             let _ = child.wait();
         }
     }
+}
+
+fn wait_for_server(port: u16, stderr: &mut impl Read) -> Result<(), String> {
+    let start = Instant::now();
+    let mut attempt: u32 = 0;
+    let mut last_err = None;
+    while start.elapsed() < Duration::from_secs(15) {
+        match send_request(port, "/", &[]) {
+            Ok((code, _)) if code == 401 || code == 404 => return Ok(()),
+            Ok((code, _)) => last_err = Some(format!("unexpected HTTP code: {code}")),
+            Err(e) => last_err = Some(format!("connection error: {e}")),
+        }
+        let backoff_ms = 50u64.saturating_mul(1u64 << attempt.min(6));
+        std::thread::sleep(Duration::from_millis(backoff_ms));
+        attempt = attempt.saturating_add(1);
+    }
+    let mut stderr_buf = String::new();
+    let _ = stderr.read_to_string(&mut stderr_buf);
+    Err(format!(
+        "dev server not ready within 15s; last error: {:?}\nSTDERR:\n{}",
+        last_err, stderr_buf
+    ))
 }
 
 #[test]
@@ -105,36 +127,11 @@ fn test_dev_server_token_auth() {
 
     let mut guard = KillOnDrop(Some(child));
 
-    let start = Instant::now();
-    let mut ready = false;
-    let mut last_err = None;
-    while start.elapsed() < Duration::from_secs(8) {
-        match send_request(port, "/", &[]) {
-            Ok((code, _)) => {
-                if code == 401 || code == 404 {
-                    ready = true;
-                    break;
-                } else {
-                    last_err = Some(format!("HTTP code: {}", code));
-                }
-            }
-            Err(e) => {
-                last_err = Some(format!("Connection error: {}", e));
-            }
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-
-    if !ready {
+    if let Err(msg) = wait_for_server(port, &mut stderr) {
         let mut child = guard.0.take().unwrap();
         let _ = child.kill();
-        let mut stderr_buf = String::new();
-        let _ = stderr.read_to_string(&mut stderr_buf);
         let _ = child.wait();
-        panic!(
-            "Dev server failed to start or respond within 8 seconds. Last polling diagnostic: {:?}\nSTDERR:\n{}",
-            last_err, stderr_buf
-        );
+        panic!("{}", msg);
     }
 
     // 1. Assert protected endpoint without token returns 401

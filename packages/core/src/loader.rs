@@ -3,7 +3,7 @@ use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 use crate::store::{
     build_store, emit_locale_changed, lazy_cache_mut, offset_maps_mut, read_store, store_snapshot,
-    StoreData, StoreSnapshot,
+    upsert_locale, StoreData, StoreSnapshot,
 };
 #[cfg(not(feature = "std"))]
 use crate::store::TranslationStore;
@@ -90,7 +90,7 @@ fn apply_l10n_to_snapshot(
                 .locales
                 .binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str))
                 .ok()
-                .and_then(|idx| match &snap.locales[idx].1 {
+                .and_then(|idx| match snap.locales[idx].1.as_ref() {
                     StoreData::Owned(buf) => Some(buf.as_slice()),
                     StoreData::Static(buf, _) => Some(*buf),
                     #[cfg(feature = "std")]
@@ -112,15 +112,11 @@ fn apply_l10n_to_snapshot(
     offset_maps_mut(&mut snap.offset_maps).insert(locale_hash, Arc::new(reader.to_offsets()));
     merge_debug_keys(snap, &final_bytes, replace_debug)?;
 
-    let entry = (
+    upsert_locale(
+        &mut snap.locales,
         locale_str.to_string(),
         StoreData::Owned(Arc::new(final_bytes)),
     );
-    let new_vec = Arc::make_mut(&mut snap.locales);
-    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-        Ok(pos) => new_vec[pos] = entry,
-        Err(pos) => new_vec.insert(pos, entry),
-    }
     Ok(())
 }
 
@@ -131,6 +127,9 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
 
 /// Loads raw L10N bytes, replacing any existing locale bundle (monolith mode).
 pub fn try_load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> CoreResult<()> {
+    #[cfg(feature = "tracing")]
+    let _span = tracing::trace_span!("l10n4x.load_raw_bytes", locale = locale_str).entered();
+
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
@@ -145,12 +144,11 @@ pub fn try_load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> CoreResult<()> {
         let (mut locales, fallback_chain) =
             read_store(|store| (Arc::clone(&store.locales), Arc::clone(&store.fallback_chain)));
         crate::binary_format::BinaryFormatReader::new(&bytes)?;
-        let new_vec = Arc::make_mut(&mut locales);
-        let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
-        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-            Ok(pos) => new_vec[pos] = entry,
-            Err(pos) => new_vec.insert(pos, entry),
-        }
+        upsert_locale(
+            &mut locales,
+            locale_str.to_string(),
+            StoreData::Owned(Arc::new(bytes)),
+        );
         crate::store::swap_store(TranslationStore {
             locales,
             fallback_chain,
@@ -275,31 +273,27 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
     crate::integrity::verify(message, signature)?;
     let mut snap = read_store(store_snapshot);
-    let new_vec = Arc::make_mut(&mut snap.locales);
     let lazy = lazy_cache_mut(&mut snap.lazy_cache);
     let offset_map = offset_maps_mut(&mut snap.offset_maps);
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-    let entry = (
+    let had_locale = snap
+        .locales
+        .binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str))
+        .is_ok();
+    if had_locale {
+        lazy.remove(&locale_hash);
+        offset_map.remove(&locale_hash);
+    }
+    lazy.entry(locale_hash)
+        .or_insert_with(|| Arc::new(OnceLock::new()));
+    offset_map
+        .entry(locale_hash)
+        .or_insert_with(|| Arc::new(HashMap::new()));
+    upsert_locale(
+        &mut snap.locales,
         locale_str.to_string(),
         StoreData::Lazy(Arc::new(Vec::from(compressed))),
     );
-    match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-        Ok(pos) => {
-            lazy.remove(&locale_hash);
-            offset_map.remove(&locale_hash);
-            lazy.insert(locale_hash, Arc::new(OnceLock::new()));
-            offset_map.insert(locale_hash, Arc::new(HashMap::new()));
-            new_vec[pos] = entry;
-        }
-        Err(pos) => {
-            lazy.entry(locale_hash)
-                .or_insert_with(|| Arc::new(OnceLock::new()));
-            offset_map
-                .entry(locale_hash)
-                .or_insert_with(|| Arc::new(HashMap::new()));
-            new_vec.insert(pos, entry);
-        }
-    }
     crate::store::swap_store(build_store(snap));
     emit_locale_changed(locale_str);
     Ok(())
@@ -372,6 +366,14 @@ mod tests {
     use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
+    #[cfg(feature = "std")]
+    static LOADER_TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[cfg(feature = "std")]
+    fn loader_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        LOADER_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn make_l10n_with_key(key: &str, val: &[u8]) -> Vec<u8> {
         let mut entries = BTreeMap::new();
         entries.insert(fnv1a_64(key.as_bytes()), val.to_vec());
@@ -380,12 +382,16 @@ mod tests {
 
     #[test]
     fn load_raw_bytes_success() {
+        #[cfg(feature = "std")]
+        let _lock = loader_test_lock();
         clear_translations();
         assert!(load_raw_bytes("test", pack_l10n(&BTreeMap::new(), RUNTIME_VERSION, None)));
     }
 
     #[test]
     fn load_namespace_merges_keys() {
+        #[cfg(feature = "std")]
+        let _lock = loader_test_lock();
         clear_translations();
         let common = make_l10n_with_key("common.welcome", b"hi");
         let auth = make_l10n_with_key("auth.login", b"login");
@@ -397,6 +403,8 @@ mod tests {
 
     #[test]
     fn load_raw_bytes_overwrites_monolith_namespaces() {
+        #[cfg(feature = "std")]
+        let _lock = loader_test_lock();
         clear_translations();
         let a = make_l10n_with_key("a", b"1");
         let b = make_l10n_with_key("b", b"2");

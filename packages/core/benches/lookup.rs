@@ -208,19 +208,26 @@ fn bench_lookup(c: &mut Criterion) {
 
     c.bench_function("swap_store_reload", |b| {
         b.iter(|| {
-            let mut store = TranslationStore::default();
-            let vec = Arc::make_mut(&mut store.locales);
-            vec.push((
-                "es".to_string(),
-                StoreData::Owned(Arc::new(Vec::new())),
-            ));
+            let store = TranslationStore {
+                locales: Arc::new(vec![(
+                    "es".to_string(),
+                    Arc::new(StoreData::Owned(Arc::new(Vec::new()))),
+                )]),
+                fallback_chain: TranslationStore::default().fallback_chain,
+                #[cfg(feature = "std")]
+                lazy_cache: None,
+                #[cfg(feature = "std")]
+                offset_maps: None,
+                #[cfg(feature = "std")]
+                loaded_namespaces: None,
+            };
             swap_store(black_box(store));
         })
     });
 
     let prebuilt_locales = Arc::new(vec![(
         "es".to_string(),
-        StoreData::Owned(Arc::new(Vec::new())),
+        Arc::new(StoreData::Owned(Arc::new(Vec::new()))),
     )]);
     let prebuilt_chain = TranslationStore::default().fallback_chain;
 

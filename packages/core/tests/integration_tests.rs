@@ -133,7 +133,10 @@ fn test_translate_helper_and_macro() {
     data.extend_from_slice(&val_len.to_be_bytes());
 
     let store = TranslationStore {
-        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(data)))]),
+        locales: Arc::new(vec![(
+            "en".to_string(),
+            Arc::new(StoreData::Owned(Arc::new(data))),
+        )]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
@@ -155,7 +158,10 @@ fn test_translate_helper_and_macro() {
 fn test_lock_free_concurrency_rcu() {
     let _lock = TEST_MUTEX.lock().unwrap();
     let initial_store = TranslationStore {
-        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
+        locales: Arc::new(vec![(
+            "en".to_string(),
+            Arc::new(StoreData::Owned(Arc::new(vec![]))),
+        )]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
@@ -212,7 +218,10 @@ fn test_lock_free_concurrency_rcu() {
 fn test_ebr_stress() {
     let _lock = TEST_MUTEX.lock().unwrap();
     let initial_store = TranslationStore {
-        locales: Arc::new(vec![("en".to_string(), StoreData::Owned(Arc::new(vec![])))]),
+        locales: Arc::new(vec![(
+            "en".to_string(),
+            Arc::new(StoreData::Owned(Arc::new(vec![]))),
+        )]),
         fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
         lazy_cache: None,
         offset_maps: None,
@@ -235,10 +244,13 @@ fn test_ebr_stress() {
 
             let store = TranslationStore {
                 locales: Arc::new(vec![
-                    ("en".to_string(), StoreData::Owned(Arc::new(mock_data))),
+                    (
+                        "en".to_string(),
+                        Arc::new(StoreData::Owned(Arc::new(mock_data))),
+                    ),
                     (
                         "es".to_string(),
-                        StoreData::Owned(Arc::new(vec![count as u8])),
+                        Arc::new(StoreData::Owned(Arc::new(vec![count as u8]))),
                     ),
                 ]),
                 fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),

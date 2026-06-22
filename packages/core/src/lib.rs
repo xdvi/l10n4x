@@ -36,6 +36,9 @@ pub mod integrity;
 pub mod list_format;
 /// Decompression and in-memory pak loading.
 pub mod loader;
+/// OTA pak reload with one-retired-snapshot rollback.
+#[cfg(feature = "std")]
+pub mod ota;
 /// Locale-aware number formatting (decimal, percent, integer styles).
 pub mod number_format;
 /// Outer `.pak` container format (zstd + Ed25519).
@@ -52,6 +55,12 @@ pub use store::{
     init_embedded, load_static_bytes, locale_parent, translate_to_writer_with_status,
     TranslateStatus, StoreData,
 };
+#[cfg(feature = "std")]
+pub use ota::{
+    ota_can_rollback, ota_reload_pak, ota_rollback, try_ota_reload_pak, try_ota_rollback,
+};
+#[cfg(feature = "std")]
+pub use store::hash_params;
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 

@@ -57,6 +57,17 @@ int32_t l10n4c_load_static_bytes(const char *locale, const uint8_t *data,
                                    size_t data_len, int32_t already_verified);
 void    l10n4c_clear(void);
 
+/**
+ * Atomically reloads a signed .pak for locale, retaining one retired snapshot for rollback.
+ */
+int32_t l10n4c_ota_reload_pak(const char *locale, const uint8_t *pak_bytes, size_t pak_len);
+
+/** Restores the retired OTA snapshot for locale when available. */
+int32_t l10n4c_ota_rollback(const char *locale);
+
+/** Returns non-zero when an OTA rollback snapshot exists for locale. */
+int32_t l10n4c_ota_can_rollback(const char *locale);
+
 /* ── Translation (buffer-based) ───────────────────────────────────────────── */
 
 int32_t l10n4c_translate_required_size(const char *locale, uint64_t key_hash, size_t *out_size);
@@ -128,8 +139,8 @@ void l10n4c_set_missing_key_handler(l10n4c_missing_key_fn handler);
 int32_t l10n4c_get_loaded_locales(uint8_t *out_buf, size_t out_len);
 
 /**
- * Returns comma-separated metrics counters: total translations, cache hits,
- * cache misses, locale loads, format errors — as a UTF-8 string.
+ * Returns extended v2 metrics (prefix "v2,"); first five numeric fields remain
+ * total/hits/misses/loads/errors for backward-compatible parsers.
  * Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
  */
 int32_t l10n4c_get_metrics(uint8_t *out_buf, size_t out_len);

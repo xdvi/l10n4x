@@ -38,9 +38,10 @@ use l10n4x_core::loader::{
     try_load_static_bytes,
 };
 use l10n4x_core::metrics;
+use l10n4x_core::ota::{ota_can_rollback, try_ota_reload_pak, try_ota_rollback};
 use l10n4x_core::store::{
-    clear_translations, get_fallback_locale, set_fallback_locale, translate_to_writer_with_status,
-    TranslateStatus,
+    clear_translations, get_fallback_locale, hash_params, set_fallback_locale,
+    translate_to_writer_with_status, TranslateStatus,
 };
 
 /// C-compatible function pointer type for the missing key callback.
@@ -104,17 +105,6 @@ thread_local! {
 
 const MAX_STACK_PARAMS: usize = 8;
 
-fn hash_params(params: &[(&str, &str)]) -> u64 {
-    let mut h = 0xcbf29ce484222325u64;
-    for (key, value) in params {
-        h ^= fnv1a_64(key.as_bytes());
-        h = h.wrapping_mul(0x100000001b3);
-        h ^= fnv1a_64(value.as_bytes());
-        h = h.wrapping_mul(0x100000001b3);
-    }
-    h
-}
-
 fn cache_lookup(
     locale_hash: u64,
     key_hash: u64,
@@ -138,6 +128,10 @@ fn cache_lookup(
             None
         }
     })
+}
+
+fn clear_translate_cache() {
+    LAST_TRANSLATE.with(|cell| *cell.borrow_mut() = None);
 }
 
 fn cache_store(
@@ -176,10 +170,18 @@ fn resolve_translation(
     params: &[(&str, &str)],
 ) -> TranslateOutcome {
     let locale_hash = fnv1a_64(locale.as_bytes());
-    let params_key = hash_params(params);
-    if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, params_key) {
-        return cached;
-    }
+    let params_key = if params.is_empty() {
+        if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, 0) {
+            return cached;
+        }
+        0
+    } else {
+        let pk = hash_params(params);
+        if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, pk) {
+            return cached;
+        }
+        pk
+    };
 
     let mut resolved = String::new();
     let status = translate_to_writer_with_status(
@@ -829,6 +831,56 @@ pub extern "C" fn l10n4c_register_formatter(
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_clear() {
     clear_translations();
+    clear_translate_cache();
+}
+
+/// Atomically reloads a signed `.pak` for `locale`, retaining one retired snapshot for rollback.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_ota_reload_pak(
+    locale: *const c_char,
+    pak_bytes: *const u8,
+    pak_len: usize,
+) -> i32 {
+    let locale_str = match cstr_to_str(locale) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    if pak_bytes.is_null() || pak_len == 0 {
+        return L10N4C_INVALID_PARAMS;
+    }
+    let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
+    match try_ota_reload_pak(locale_str, slice) {
+        Ok(()) => {
+            clear_translate_cache();
+            L10N4C_OK
+        }
+        Err(e) => core_error_to_ffi(e),
+    }
+}
+
+/// Restores the retired OTA snapshot for `locale` when available.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_ota_rollback(locale: *const c_char) -> i32 {
+    let locale_str = match cstr_to_str(locale) {
+        Ok(s) => s,
+        Err(e) => return e,
+    };
+    match try_ota_rollback(locale_str) {
+        Ok(()) => {
+            clear_translate_cache();
+            L10N4C_OK
+        }
+        Err(e) => core_error_to_ffi(e),
+    }
+}
+
+/// Returns non-zero when an OTA rollback snapshot exists for `locale`.
+#[unsafe(no_mangle)]
+pub extern "C" fn l10n4c_ota_can_rollback(locale: *const c_char) -> i32 {
+    match cstr_to_str(locale) {
+        Ok(s) => i32::from(ota_can_rollback(s)),
+        Err(e) => e,
+    }
 }
 
 /// Writes comma-separated loaded locale codes into `out_buf` (up to `out_len` bytes).
@@ -856,8 +908,8 @@ pub extern "C" fn l10n4c_get_loaded_locales(out_buf: *mut u8, out_len: usize) ->
     len as i32
 }
 
-/// Returns comma-separated metrics counters: total translations, cache hits,
-/// cache misses, locale loads, format errors — as a UTF-8 string.
+/// Returns extended v2 metrics string (see `l10n4x_core::metrics` module docs).
+/// Legacy consumers: first five numeric fields remain total/hits/misses/loads/errors.
 /// Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_get_metrics(out_buf: *mut u8, out_len: usize) -> i32 {
@@ -1109,7 +1161,7 @@ mod tests {
         assert!(result > 0);
         assert_eq!(buf[result as usize], 0);
         let s = std::str::from_utf8(&buf[..result as usize]).unwrap();
-        assert_eq!(s.split(',').count(), 5);
+        assert!(s.starts_with("v2,"));
     }
 
     #[test]

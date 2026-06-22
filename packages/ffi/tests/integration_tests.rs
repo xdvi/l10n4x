@@ -609,11 +609,10 @@ fn test_get_loaded_locales_with_data() {
     let result = l10n4c_get_loaded_locales(buf.as_mut_ptr(), 64);
     assert!(result > 0);
     let s = std::str::from_utf8(&buf[..result as usize]).unwrap();
-    assert!(
-        s.contains("en") || s.contains("es"),
-        "expected locales in output, got: {}",
-        s
-    );
+    let mut locales: Vec<&str> = s.split(',').collect();
+    locales.sort_unstable();
+    assert_eq!(locales, vec!["en", "es"], "expected sorted en,es got: {s}");
+    assert_eq!(buf[result as usize], 0, "buffer must be null-terminated");
 
     let _ = fs::remove_dir_all(temp_src);
     let _ = fs::remove_dir_all(temp_out);

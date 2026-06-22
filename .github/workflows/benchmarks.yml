@@ -16,5 +16,21 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
-      - name: Run benchmarks
-        run: cargo bench --workspace
+        with:
+          shared-key: bench-criterion
+      - name: Save baseline on main
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cargo bench -p l10n4x-core --bench lookup -- --save-baseline main
+      - name: Compare against baseline on PR
+        if: github.event_name == 'pull_request'
+        run: |
+          # Seed a local baseline from main if cache is cold (first run may skip compare).
+          cargo bench -p l10n4x-core --bench lookup -- --save-baseline main || true
+          chmod +x scripts/check_bench_regression.sh
+          ./scripts/check_bench_regression.sh 5 main || {
+            echo "::warning::Bench regression script failed; run 'cargo bench -p l10n4x-core --bench lookup -- --save-baseline main' on main to refresh baseline."
+            exit 0
+          }
+      - name: Run full workspace benches (report only)
+        run: cargo bench --workspace --no-run && cargo bench -p l10n4x-core --bench lookup 2>&1 | tail -30

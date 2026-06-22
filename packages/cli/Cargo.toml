@@ -23,8 +23,8 @@ axum = "0.7"
 notify = "6"
 anyhow = "1"
 thiserror = "1"
-l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
-l10n4x-core = { version = "0.2.0", path = "../core" }
+l10n4x-compiler = { version = "0.3.0", path = "../compiler" }
+l10n4x-core = { version = "0.3.0", path = "../core" }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors", "timeout"] } # For browser cross-origin dev server requests
 subtle = "2.5"

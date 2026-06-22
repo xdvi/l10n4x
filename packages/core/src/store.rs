@@ -47,8 +47,9 @@ thread_local! {
         const { RefCell::new(VecDeque::new()) };
 }
 
+/// FNV-1a composite hash of interpolation parameters (shared by core, FFI, and WASM).
 #[cfg(feature = "std")]
-fn hash_params(params: &[(&str, &str)]) -> u64 {
+pub fn hash_params(params: &[(&str, &str)]) -> u64 {
     if params.is_empty() {
         return 0;
     }
@@ -238,10 +239,10 @@ impl StoreData {
 
 /// Per-locale lazy decompression cache: maps locale_hash to decompressed bytes and offset map.
 #[cfg(feature = "std")]
-type LazyDecompressCache = HashMap<u64, Arc<OnceLock<(Vec<u8>, OffsetMap)>>>;
+pub(crate) type LazyDecompressCache = HashMap<u64, Arc<OnceLock<(Vec<u8>, OffsetMap)>>>;
 /// Per-locale O(1) offset cache: maps locale_hash to key-hash-based (offset, length) pairs.
 #[cfg(feature = "std")]
-type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
+pub(crate) type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
 /// Loaded namespace names per locale hash (modular bundles).
 #[cfg(feature = "std")]
 type LoadedNamespacesMap = Arc<HashMap<u64, Arc<[Arc<str>]>>>;
@@ -272,12 +273,62 @@ pub(crate) fn offset_maps_mut(
     }
 }
 
+/// Fine-grained COW upsert: rebuilds the sorted locale vector sharing unchanged `Arc<StoreData>` entries.
+pub(crate) fn upsert_locale(
+    locales: &mut Arc<Vec<(String, Arc<StoreData>)>>,
+    locale: String,
+    data: StoreData,
+) {
+    let data_arc = Arc::new(data);
+    let old = Arc::clone(locales);
+    let pos = old.binary_search_by(|(loc, _)| loc.as_str().cmp(locale.as_str()));
+    let mut new_vec = Vec::with_capacity(old.len() + pos.is_err() as usize);
+    match pos {
+        Ok(idx) => {
+            for (i, (loc, sd)) in old.iter().enumerate() {
+                if i == idx {
+                    new_vec.push((locale.clone(), Arc::clone(&data_arc)));
+                } else {
+                    new_vec.push((loc.clone(), Arc::clone(sd)));
+                }
+            }
+        }
+        Err(idx) => {
+            for (i, (loc, sd)) in old.iter().enumerate() {
+                if i == idx {
+                    new_vec.push((locale.clone(), Arc::clone(&data_arc)));
+                }
+                new_vec.push((loc.clone(), Arc::clone(sd)));
+            }
+            if idx == old.len() {
+                new_vec.push((locale, data_arc));
+            }
+        }
+    }
+    *locales = Arc::new(new_vec);
+}
+
+/// Fine-grained COW removal of a locale entry from the sorted vector.
+#[allow(dead_code)]
+pub(crate) fn remove_locale(locales: &mut Arc<Vec<(String, Arc<StoreData>)>>, locale: &str) {
+    let old = Arc::clone(locales);
+    if let Ok(idx) = old.binary_search_by(|(loc, _)| loc.as_str().cmp(locale)) {
+        let mut new_vec = Vec::with_capacity(old.len().saturating_sub(1));
+        for (i, (loc, sd)) in old.iter().enumerate() {
+            if i != idx {
+                new_vec.push((loc.clone(), Arc::clone(sd)));
+            }
+        }
+        *locales = Arc::new(new_vec);
+    }
+}
+
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 /// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
 /// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
 pub struct TranslationStore {
     /// Sorted vector of locale-to-buffer mappings (Arc for O(1) clone). Binary-search for lookup.
-    pub locales: Arc<Vec<(String, StoreData)>>,
+    pub locales: Arc<Vec<(String, Arc<StoreData>)>>,
     /// Ordered chain of fallback locale codes. The first match wins.
     pub fallback_chain: Arc<[Arc<str>]>,
     /// Per-locale lazy decompression cache. Key: locale_hash. `None` when empty (no reload caches).
@@ -314,7 +365,7 @@ impl Default for TranslationStore {
 /// Cloned store state used by RCU writers (`load`, `clear`, `swap_store`).
 #[cfg(feature = "std")]
 pub(crate) struct StoreSnapshot {
-    pub locales: Arc<Vec<(String, StoreData)>>,
+    pub locales: Arc<Vec<(String, Arc<StoreData>)>>,
     pub fallback_chain: Arc<[Arc<str>]>,
     pub lazy_cache: Option<Arc<LazyDecompressCache>>,
     pub offset_maps: Option<Arc<HashMap<u64, OffsetMap>>>,
@@ -357,7 +408,7 @@ impl TranslationStore {
             .locales
             .binary_search_by(|(loc, _)| loc.as_str().cmp(locale))
             .ok()?;
-        match &self.locales[idx].1 {
+        match self.locales[idx].1.as_ref() {
             StoreData::Owned(v) => Some(v.as_slice()),
             StoreData::Static(v, _) => Some(v),
             #[cfg(feature = "std")]
@@ -784,7 +835,6 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     #[cfg(feature = "std")]
     {
         let mut snap = read_store(store_snapshot);
-        let new_vec = Arc::make_mut(&mut snap.locales);
         let offset_map = offset_maps_mut(&mut snap.offset_maps);
         let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
         let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
@@ -806,14 +856,11 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
                 }
             }
         }
-        let entry = (
+        upsert_locale(
+            &mut snap.locales,
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
         );
-        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-            Ok(pos) => new_vec[pos] = entry,
-            Err(pos) => new_vec.insert(pos, entry),
-        }
         let ns_map = snap
             .loaded_namespaces
             .get_or_insert_with(|| Arc::new(HashMap::new()));
@@ -826,15 +873,11 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     {
         let (mut locales, fallback_chain) =
             read_store(|store| (Arc::clone(&store.locales), Arc::clone(&store.fallback_chain)));
-        let new_vec = Arc::make_mut(&mut locales);
-        let entry = (
+        upsert_locale(
+            &mut locales,
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
         );
-        match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
-            Ok(pos) => new_vec[pos] = entry,
-            Err(pos) => new_vec.insert(pos, entry),
-        }
         swap_store(TranslationStore {
             locales,
             fallback_chain,
@@ -914,7 +957,45 @@ pub fn clear_locale_changed_callbacks() {
     }
 }
 
+#[cfg(feature = "std")]
+fn invalidate_translate_caches_for_locale(locale: &str) {
+    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+    TRANSLATE_CACHE_FAST.with(|cell| {
+        cell.borrow_mut()
+            .retain(|(lh, _), _| *lh != locale_hash);
+    });
+    TRANSLATE_CACHE_FAST_ORDER.with(|order_cell| {
+        order_cell
+            .borrow_mut()
+            .retain(|key| key.0 != locale_hash);
+    });
+    TRANSLATE_CACHE.with(|cell| {
+        cell.borrow_mut()
+            .retain(|(lh, _, _, _), _| *lh != locale_hash);
+    });
+    TRANSLATE_CACHE_ORDER.with(|order_cell| {
+        order_cell
+            .borrow_mut()
+            .retain(|key| key.0 != locale_hash);
+    });
+}
+
+#[cfg(feature = "std")]
+fn invalidate_all_translate_caches() {
+    TRANSLATE_CACHE_FAST.with(|cell| cell.borrow_mut().clear());
+    TRANSLATE_CACHE_FAST_ORDER.with(|order_cell| order_cell.borrow_mut().clear());
+    TRANSLATE_CACHE.with(|cell| cell.borrow_mut().clear());
+    TRANSLATE_CACHE_ORDER.with(|order_cell| order_cell.borrow_mut().clear());
+}
+
 pub(crate) fn emit_locale_changed(locale: &str) {
+    #[cfg(feature = "std")]
+    if locale == "*" {
+        invalidate_all_translate_caches();
+    } else {
+        invalidate_translate_caches_for_locale(locale);
+    }
+
     let ptr = LOCALE_CHANGE_CALLBACKS.load(core::sync::atomic::Ordering::Acquire);
     if !ptr.is_null() {
         let f: LocaleChangeFn = unsafe { core::mem::transmute(ptr) };
@@ -1015,6 +1096,14 @@ pub fn translate_to_writer_with_status<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> CoreResult<TranslateStatus> {
+    #[cfg(feature = "tracing")]
+    let _span = tracing::trace_span!(
+        "l10n4x.translate",
+        locale = locale,
+        key_hash = key_hash
+    )
+    .entered();
+
     crate::metrics::inc_total_translations();
 
     #[cfg(all(feature = "std", debug_assertions))]
@@ -1042,7 +1131,7 @@ pub fn translate_to_writer_with_status<W: core::fmt::Write>(
     if status.key_found {
         crate::metrics::inc_cache_hits();
     } else {
-        crate::metrics::inc_cache_misses();
+        crate::metrics::inc_cache_misses_for_locale(locale);
         call_missing_key_handler(locale, key_hash);
         let _ = core::write!(writer, "{:#x}", key_hash);
     }
@@ -1316,8 +1405,11 @@ mod store_perf_tests {
     fn lookup_returns_buffer_for_loaded_locale() {
         let mut store = TranslationStore::default();
         let buf = Arc::new(alloc::vec![0x4c, 0x31, 0x30, 0x4e]);
-        Arc::make_mut(&mut store.locales)
-            .push((String::from("en"), StoreData::Owned(Arc::clone(&buf))));
+        upsert_locale(
+            &mut store.locales,
+            String::from("en"),
+            StoreData::Owned(Arc::clone(&buf)),
+        );
         let found = store.lookup("en");
         assert!(found.is_some());
         assert_eq!(found.unwrap(), buf.as_slice());
@@ -1381,7 +1473,7 @@ mod store_extra_tests {
     fn load_locale_with_key(locale: &str, key: &str, val: &[u8]) {
         let locales = Arc::new(alloc::vec![(
             String::from(locale),
-            StoreData::Owned(Arc::new(make_binary_with_key(key, val))),
+            Arc::new(StoreData::Owned(Arc::new(make_binary_with_key(key, val)))),
         )]);
         let chain = get_fallback_chain();
         #[cfg(feature = "std")]

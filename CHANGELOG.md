@@ -9,14 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-06-22
+
 ### Added
 - **P0 thread-safe reload**: `load`/`clear`/`swap_store` writers serialized via mutex; readers remain lock-free RCU.
 - **P0 modular bundles**: opt-in `"bundles": { "mode": "modular" }` emits `{locale}/{namespace}.pak` plus `namespaces.json`; runtime `load_namespace` / `init_modular` APIs (core + FFI).
 - **P0 debug keys**: optional `debug-keys` feature embeds `DBGK` hash→name table; CLI `validate --report-misses` shows expected source file paths.
 - **P0 L10N v2**: `min_runtime_version` header field; `RuntimeTooOld` error (`L10N4C_RUNTIME_TOO_OLD = 13`).
+- **P1.1 OTA translation updates**: `try_ota_reload_pak` / `try_ota_rollback` with one retired snapshot per locale; FFI `l10n4c_ota_*`; metrics `pak_reload_total`, `pak_verify_failures`, `pak_rollback_total`.
+- **P1.2 Fine-grained COW locales**: per-entry `Arc<StoreData>` sharing via `upsert_locale` / `remove_locale` (no whole-`Vec` clone on single-locale reload).
+- **P1.3 Hot-path parity**: public `hash_params` in core; FFI/WASM thread-local caches check before param hash on empty params; WASM uses `translate_to_writer_with_status`.
+- **P1.4 Production observability**: v2 `metrics_string` (`cache_hit_ratio`, `miss_by_locale`, OTA counters); optional `tracing` feature; CI bench regression script (5% threshold).
+- **P1.5 Test hardening**: wasmtime smoke test for WASM; interval plural compile→translate E2E; strengthened `l10n4c_get_loaded_locales` FFI test; dev server 15s exponential backoff.
+- **Enterprise adoption guide**: `docs/ENTERPRISE_ADOPTION.md` — governance, CI/CD, namespace ownership, OTA (Angular/SAP-style patterns).
 
 ### Changed
 - Compiler emits L10N format v2 by default; v1 paks remain readable.
+- `l10n4c_get_metrics` returns v2 extended format (first five numeric fields remain backward-compatible).
+- Web runtime (`@l10n4x/react`, `@l10n4x/runtime`) lives in the separate [l10n4x-js](https://github.com/xdvi/l10n4x-js) repository.
 
 ## [0.2.0] - 2026-06-21
 

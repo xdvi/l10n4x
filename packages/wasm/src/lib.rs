@@ -3,8 +3,117 @@
 //! Mirrors the runtime API of the `l10n4c` C FFI layer, including context-suffix
 //! translation and locale-change callbacks.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+use l10n4x_core::binary_format::fnv1a_64;
+use l10n4x_core::store::{
+    hash_params, translate_to_writer_with_status, TranslateStatus,
+};
 use wasm_bindgen::prelude::*;
+
+struct CachedTranslate {
+    locale_hash: u64,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+    text: Arc<str>,
+}
+
+thread_local! {
+    static LAST_TRANSLATE: RefCell<Option<CachedTranslate>> = const { RefCell::new(None) };
+    static TRANSLATE_BUF: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+fn cache_lookup(
+    locale_hash: u64,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+) -> Option<Arc<str>> {
+    LAST_TRANSLATE.with(|cell| {
+        let cached = cell.borrow();
+        let entry = cached.as_ref()?;
+        if entry.locale_hash == locale_hash
+            && entry.key_hash == key_hash
+            && entry.context_hash == context_hash
+            && entry.params_key == params_key
+        {
+            Some(Arc::clone(&entry.text))
+        } else {
+            None
+        }
+    })
+}
+
+fn clear_translate_cache() {
+    LAST_TRANSLATE.with(|cell| *cell.borrow_mut() = None);
+}
+
+fn cache_store(
+    locale_hash: u64,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params_key: u64,
+    text: Arc<str>,
+) {
+    LAST_TRANSLATE.with(|cell| {
+        *cell.borrow_mut() = Some(CachedTranslate {
+            locale_hash,
+            key_hash,
+            context_hash,
+            params_key,
+            text,
+        });
+    });
+}
+
+fn translate_cached(
+    locale: &str,
+    key_hash: u64,
+    context_hash: Option<u64>,
+    params: &[(&str, &str)],
+) -> String {
+    let locale_hash = fnv1a_64(locale.as_bytes());
+    let params_key = if params.is_empty() {
+        if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, 0) {
+            return cached.to_string();
+        }
+        0
+    } else {
+        let pk = hash_params(params);
+        if let Some(cached) = cache_lookup(locale_hash, key_hash, context_hash, pk) {
+            return cached.to_string();
+        }
+        pk
+    };
+
+    let (text, key_found) = TRANSLATE_BUF.with(|cell| {
+        let mut guard = cell.borrow_mut();
+        guard.clear();
+        let status = translate_to_writer_with_status(
+            locale,
+            key_hash,
+            context_hash,
+            params,
+            &mut *guard,
+        )
+        .unwrap_or(TranslateStatus {
+            key_found: false,
+            locale_loaded: false,
+        });
+        (std::mem::take(&mut *guard), status.key_found)
+    });
+
+    if key_found {
+        let shared = Arc::<str>::from(text.as_str());
+        cache_store(locale_hash, key_hash, context_hash, params_key, Arc::clone(&shared));
+        shared.to_string()
+    } else {
+        text
+    }
+}
 
 #[wasm_bindgen]
 pub fn l10n4x_set_verify_key(key: &[u8]) -> bool {
@@ -37,6 +146,7 @@ pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> 
     match l10n4x_core::pak::decompress_pak(bytes) {
         Ok(decompressed) => {
             if l10n4x_core::loader::load_raw_bytes(locale, decompressed) {
+                clear_translate_cache();
                 Ok(())
             } else {
                 Err(JsValue::from_str(
@@ -53,7 +163,7 @@ pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> 
 
 #[wasm_bindgen]
 pub fn l10n4x_translate(locale: &str, key_hash: u64) -> String {
-    l10n4x_core::store::translate(locale, key_hash, None, &[])
+    translate_cached(locale, key_hash, None, &[])
 }
 
 #[wasm_bindgen]
@@ -71,13 +181,13 @@ pub fn l10n4x_translate_with_params(
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    l10n4x_core::store::translate(locale, key_hash, None, &params)
+    translate_cached(locale, key_hash, None, &params)
 }
 
 /// Translates a key with context suffix support (e.g. `friend_male` → key = `friend`).
 #[wasm_bindgen]
 pub fn l10n4x_translate_with_context(locale: &str, key_hash: u64, context_hash: u64) -> String {
-    l10n4x_core::store::translate(locale, key_hash, Some(context_hash), &[])
+    translate_cached(locale, key_hash, Some(context_hash), &[])
 }
 
 /// Translate with context and parameters.
@@ -97,7 +207,7 @@ pub fn l10n4x_translate_with_context_and_params(
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    l10n4x_core::store::translate(locale, key_hash, Some(context_hash), &params)
+    translate_cached(locale, key_hash, Some(context_hash), &params)
 }
 
 #[wasm_bindgen]
@@ -122,6 +232,7 @@ pub fn l10n4x_register_formatter(name: &str, callback: js_sys::Function) {
 #[wasm_bindgen]
 pub fn l10n4x_clear() {
     l10n4x_core::store::clear_translations();
+    clear_translate_cache();
 }
 
 /// Registers a JS callback invoked when a locale is loaded or cleared.
@@ -179,5 +290,14 @@ mod export_tests {
     fn get_loaded_locales_empty_after_clear() {
         super::l10n4x_clear();
         assert!(super::l10n4x_get_loaded_locales().is_empty());
+    }
+
+    #[test]
+    fn translate_cache_hit_param_free() {
+        super::l10n4x_clear();
+        let key = 0xdead_beef_u64;
+        let r1 = super::translate_cached("en", key, None, &[]);
+        let r2 = super::translate_cached("en", key, None, &[]);
+        assert_eq!(r1, r2);
     }
 }

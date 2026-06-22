@@ -1,23 +1,16 @@
 # l10n4x Roadmap
 
-Prioritized plan to improve **scalability**, **maintainability**, and **robustness** — informed by the current `main` branch (post performance work) and comparison with ecosystem tools such as i18next.
+Prioritized plan to improve **scalability**, **maintainability**, and **robustness** for enterprise deployments — compile-time validation, signed artifacts, namespace ownership, and polyglot runtimes.
 
-l10n4x and i18next solve different problems:
+l10n4x targets the same organizational problems as **Angular's compile-time i18n** and **SAP's centralized message management**: governed releases, team-scoped namespaces, and audit-friendly pipelines — with sub-microsecond runtime lookups and mandatory artifact signing.
 
-| Dimension | l10n4x | i18next |
-|-----------|--------|---------|
-| Performance | Sub-µs lookups, precompiled bytecode | JSON resolution at runtime |
-| Security | Signed `.pak` artifacts (Ed25519), optional encryption | Plain JSON resources |
-| Targets | `no_std`, native FFI, WASM, multi-language bindings | JavaScript-first |
-| Errors | Compile-time validation, typed bindings | Often runtime-only discovery |
-
-This roadmap does **not** aim to clone i18next. It strengthens l10n4x where it is already differentiated (compiled runtime, security, native performance) while closing gaps in **operability**, **developer experience**, and **organizational scale**.
+For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTION.md](./ENTERPRISE_ADOPTION.md).
 
 ---
 
-## Already shipped (baseline)
+## Already shipped
 
-Do not re-implement these; build on them.
+### Baseline (pre-0.3.0)
 
 - Sub-microsecond lookup hot path (`translate_to_writer`, offset maps, TLS caches)
 - `Option<Arc>` for empty `lazy_cache` / `offset_maps` (cheap `swap_store` on empty stores)
@@ -29,151 +22,31 @@ Do not re-implement these; build on them.
 - Dev server with hot reload, `validate` / `extract` CLI commands
 - Core + FFI benchmarks, basic fuzz targets (`lookup`, `decompress_pak`)
 
----
+### P0 — Production blockers ✅ (v0.3.0)
 
-## P0 — Production blockers
+| Item | Summary |
+|------|---------|
+| **P0.1** Thread-safe reload | Writers serialized; readers lock-free RCU |
+| **P0.2** Modular bundles | `{locale}/{namespace}.pak` + `namespaces.json`; `load_namespace` / `init_modular` |
+| **P0.3** Debug keys | `debug-keys` feature + `validate --report-misses` |
+| **P0.4** Pak versioning | L10N v2, `min_runtime_version`, `RuntimeTooOld` error |
 
-Required before confident multi-threaded / multi-tenant production use.
+### P1 — High ROI ✅ (v0.3.0)
 
-### P0.1 — Thread-safe reload (`load` / `clear`)
-
-**Problem:** Load and clear operations are not thread-safe; callers must serialize them externally. Concurrent readers + writers risk torn state.
-
-**Deliverables:**
-
-- Atomic publish of new store snapshots for `load_raw_bytes`, `load_pak_*`, and `clear_translations` under the same RCU model used for reads
-- Documented contract: readers never block; writers publish immutable snapshots
-- Stress tests extending `test_lock_free_concurrency_rcu` (N readers + 1 reloader, no panics, consistent lookups)
-
-**Primary files:** `packages/core/src/store.rs`, `packages/core/src/loader.rs`, `packages/core/tests/integration_tests.rs`
-
----
-
-### P0.2 — Modular bundles (namespace scale)
-
-**Problem:** One `.pak` per locale does not scale for large apps (memory, deploy size, team ownership).
-
-**Deliverables:**
-
-- Official convention: per-namespace artifacts (e.g. `en/auth.pak`, `en/billing.pak`)
-- Runtime API: `load_namespace(locale, namespace)` with optional unload
-- CLI: `build` emits namespace paks plus a manifest (`namespaces.json`)
-- Fallback policy: missing namespace skips gracefully (no crash); keys fall through fallback chain
-
-**Primary files:** `packages/compiler/`, `packages/core/src/loader.rs`, `packages/cli/src/main.rs`, `docs/ARCHITECTURE.md`
+| Item | Summary |
+|------|---------|
+| **P1.1** OTA updates | `try_ota_reload_pak` / `try_ota_rollback` + FFI + metrics |
+| **P1.2** COW locales | Per-entry `Arc<StoreData>` via `upsert_locale` / `remove_locale` |
+| **P1.3** Hot-path parity | Shared `hash_params`; FFI/WASM TLS cache alignment |
+| **P1.4** Observability | v2 `metrics_string`, optional `tracing`, CI bench regression (5%) |
+| **P1.5** Test hardening | wasmtime smoke, interval plural E2E, FFI locale test, dev server backoff |
+| **P1.6** Web runtime | [`l10n4x-js`](https://github.com/xdvi/l10n4x-js): `@l10n4x/react`, `@l10n4x/runtime`, `examples/vite-spa` |
 
 ---
 
-### P0.3 — Debug mode: hash → human key
+## P2 — Strategic (active backlog)
 
-**Problem:** Runtime uses `u64` key hashes; misses return hex strings. Hard to debug vs string-key systems like i18next.
-
-**Deliverables:**
-
-- Optional dev-only embedded table (`key_hash → "common.welcome"`)
-- Compile-time feature `debug-keys` (zero cost in release builds)
-- CLI `validate --report-misses` with human-readable keys and source file hints
-
-**Primary files:** `packages/compiler/src/binary_writer.rs`, `packages/core/src/store.rs`, `packages/cli/`
-
----
-
-### P0.4 — `.pak` versioning and compatibility
-
-**Problem:** No explicit format/runtime compatibility policy blocks safe OTA updates and rollbacks.
-
-**Deliverables:**
-
-- Header fields: `format_version`, `min_runtime_version`
-- Runtime rejects incompatible paks with typed errors (no panic)
-- Documented breaking-change policy in `CHANGELOG.md` and `docs/PAK_FORMAT.md`
-
-**Primary files:** `packages/core/src/binary_format.rs`, `packages/compiler/`, `docs/PAK_FORMAT.md`
-
----
-
-## P1 — High ROI (3–6 months)
-
-Improves operability and adoption without rewriting the lookup engine.
-
-### P1.1 — OTA translation updates
-
-**Deliverables:**
-
-- Protocol: download signed `.pak` → verify → atomic `swap_store`
-- Rollback to previous pak (retain one retired snapshot)
-- Metrics: `pak_reload_total`, `pak_verify_failures`, `pak_rollback_total`
-
-**Depends on:** P0.1, P0.4
-
----
-
-### P1.2 — Fine-grained COW for `locales`
-
-**Problem:** `Arc::make_mut` on the locales `Vec` clones the entire vector when readers hold the `Arc`, even if only one locale entry changes.
-
-**Deliverables:**
-
-- Structural sharing per locale entry (`im::Vector`, or `Arc` per `(locale, StoreData)` pair)
-- `load_raw_bytes_reload` benchmark stable under concurrent readers
-- Complements existing `Option<Arc>` optimization for `offset_maps` / `lazy_cache`
-
-**Primary files:** `packages/core/src/store.rs`, `packages/core/src/loader.rs`
-
----
-
-### P1.3 — Unify hot path: core / FFI / WASM
-
-**Problem:** Three divergent translation paths (core TLS cache, FFI TLS + `Arc<str>`, WASM calling `translate()` with extra allocations).
-
-**Deliverables:**
-
-- Shared `hash_params` in core (FFI consumes it, remove duplication)
-- WASM: TLS cache + `translate_to_writer` where applicable
-- FFI: check thread-local cache before `hash_params` on parametric hits
-
-**Primary files:** `packages/core/src/store.rs`, `packages/ffi/src/lib.rs`, `packages/wasm/src/lib.rs`
-
----
-
-### P1.4 — Production observability
-
-**Deliverables:**
-
-- Exportable metrics: `translate_total`, `cache_hit_ratio`, `miss_by_locale`, `format_errors`
-- Optional `tracing` integration (feature-gated)
-- CI bench regression: criterion baseline comparison, fail PR if hot path regresses >5%
-
-**Primary files:** `packages/core/src/metrics.rs`, `.github/workflows/`, `packages/core/benches/`, `packages/ffi/benches/`
-
----
-
-### P1.5 — Close test gaps (see `REPORT.md`)
-
-| Gap | Action |
-|-----|--------|
-| WASM bindings | CI test with `wasmtime` (not only Rust signature checks) |
-| Interval plurals | End-to-end `compile_translations` → `translate` |
-| `l10n4c_get_loaded_locales` | Dedicated FFI integration test |
-| Dev server flaky test | Deterministic port binding or retry policy |
-
----
-
-### P1.6 — Official web runtime libraries
-
-**Problem:** Code generators exist for TypeScript/Vue/Svelte, but there is no first-class runtime like `react-i18next`.
-
-**Deliverables:**
-
-- Minimal `@l10n4x/react`: `useTranslation` hook, locale-change subscription
-- End-to-end example in `examples/typescript`
-- Migration guide: i18next → l10n4x feature parity table
-
----
-
-## P2 — Strategic (ecosystem & ICU parity)
-
-Large investment; valuable once native/game/SaaS adoption is established.
+Large investment; valuable once native/game/SaaS adoption is established. Prioritize by customer demand.
 
 ### P2.1 — TMS integration (Crowdin / Lokalise / Phrase)
 
@@ -200,7 +73,7 @@ Large investment; valuable once native/game/SaaS adoption is established.
 
 ---
 
-### P2.4 — Plugin system (i18next-style)
+### P2.4 — Plugin system
 
 - `L10nPlugin` trait: `post_process`, `missing_key`, `load_backend`
 - Runtime registration (Rust) and CLI generator hooks
@@ -216,36 +89,37 @@ Large investment; valuable once native/game/SaaS adoption is established.
 
 ---
 
+### P2.6 — JS runtime bridge (l10n4x-js)
+
+Close gaps between Rust core features and the web packages:
+
+- WASM exports for `load_namespace` and OTA (`l10n4x_ota_*`)
+- Wire `bundles.modular` in `@l10n4x/runtime` engine
+- CI + npm publish pipeline for `@l10n4x/*`
+
+---
+
 ## Recommended execution order
 
 ```mermaid
 graph TD
-    P01[P0.1 Thread-safe reload]
-    P02[P0.2 Modular bundles]
-    P03[P0.3 Debug keys]
-    P04[P0.4 Pak versioning]
-    P11[P1.1 OTA paks]
-    P12[P1.2 COW locales]
-    P13[P1.3 FFI/WASM parity]
-    P14[P1.4 Observability]
-    P15[P1.5 Test gaps]
-    P16[P1.6 React runtime]
+    P21[P2.1 TMS sync]
+    P22[P2.2 ICU MF2]
+    P25[P2.5 Multi-tenant]
+    P24[P2.4 Plugins]
+    P23[P2.3 Advanced i18n]
+    P26[P2.6 JS bridge]
 
-    P01 --> P11
-    P04 --> P11
-    P02 --> P11
-    P01 --> P12
-    P15 --> P14
-    P13 --> P16
+    P26 --> P21
+    P21 --> P22
+    P26 --> P25
 ```
 
 | Sprint | Focus |
 |--------|-------|
-| **Sprint 1** | P0.1 + P0.3 + P0.4 (safe reload, debuggability, format contract) |
-| **Sprint 2** | P0.2 + P1.2 (organizational scale, concurrent reload perf) |
-| **Sprint 3** | P1.1 + P1.4 + P1.5 (OTA, observability, test hardening) |
-| **Sprint 4** | P1.3 + P1.6 (binding parity, web adoption) |
-| **Backlog** | P2.x driven by user demand (TMS, full ICU, plugins) |
+| **Next** | P2.6 JS bridge (WASM parity for modular + OTA) |
+| **Then** | P2.1 TMS — unlocks enterprise translation workflows |
+| **Backlog** | P2.2 ICU, P2.5 multi-tenant, P2.3/P2.4 by demand |
 
 ---
 
@@ -253,23 +127,24 @@ graph TD
 
 | Phase | Done when |
 |-------|-----------|
-| **P0** | 8 concurrent readers + 1 reloader: no crash, consistent output; staging misses show human keys |
-| **P1** | OTA pak swap in <50 ms with zero read downtime; WASM bench within ~10% of FFI; CI fails on >5% bench regression |
-| **P2** | Translation team syncs via TMS; React app migrates from i18next in <1 day using official guide |
+| **P0** ✅ | 8 concurrent readers + 1 reloader: no crash, consistent output; staging misses show human keys |
+| **P1** ✅ | OTA pak swap with zero read downtime; WASM bench within ~10% of FFI; CI fails on >5% bench regression |
+| **P2** | Translation team syncs via TMS; scoped locale overrides for SaaS; React/native apps use modular OTA without FFI-only APIs |
 
 ---
 
 ## Non-goals (for now)
 
-- Replicating i18next's entire npm plugin ecosystem
-- Runtime JSON parsing as the primary format (conflicts with signed bytecode model)
+- Ad-hoc runtime JSON as the primary format (conflicts with signed bytecode model)
+- Replicating lightweight client-only i18n plugin ecosystems
 - Full ICU C API compatibility layer
 
 ---
 
 ## Related documents
 
+- [ENTERPRISE_ADOPTION.md](./ENTERPRISE_ADOPTION.md) — governance, CI/CD, roles, OTA
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — data flow and package layout
 - [PAK_FORMAT.md](./PAK_FORMAT.md) — binary format specification
 - [THREAT_MODEL.md](./THREAT_MODEL.md) — security assumptions
-- [REPORT.md](../REPORT.md) — V3 implementation status and known gaps
+- [l10n4x-js](https://github.com/xdvi/l10n4x-js) — official JavaScript / React packages

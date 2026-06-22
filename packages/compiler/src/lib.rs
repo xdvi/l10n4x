@@ -964,6 +964,49 @@ mod tests {
     }
 
     #[test]
+    fn compile_translations_interval_plural_e2e_translate() {
+        use l10n4x_core::binary_format::fnv1a_64;
+        use l10n4x_core::integrity;
+        use l10n4x_core::loader::try_load_pak_bytes;
+        use l10n4x_core::store::{clear_translations, translate};
+        use std::fs;
+
+        let tmp = std::env::temp_dir().join("l10n4x_test_int_e2e");
+        let _ = fs::remove_dir_all(&tmp);
+        let en_dir = tmp.join("en");
+        fs::create_dir_all(&en_dir).unwrap();
+        fs::write(
+            en_dir.join("common.json"),
+            r#"{"messages": "(0)[none];(1)[one];(2-7)[few];(7-inf)[many]"}"#,
+        )
+        .unwrap();
+
+        let seed = [33u8; 32];
+        let _ = crate::signing::set_signing_key(&seed);
+        let pubkey = crate::signing::signing_public_key().unwrap();
+        assert!(integrity::set_verify_key(&pubkey));
+
+        let out = tmp.join("out");
+        compile_translations(&tmp, &out, false, 6).unwrap();
+        let pak = fs::read(out.join("en.pak")).unwrap();
+
+        clear_translations();
+        try_load_pak_bytes("en", &pak).unwrap();
+
+        let key = fnv1a_64(b"common.messages");
+        assert_eq!(
+            translate("en", key, None, &[("count", "0")]),
+            "none",
+            "count=0 should select exact interval case"
+        );
+        assert_eq!(translate("en", key, None, &[("count", "1")]), "one");
+        assert_eq!(translate("en", key, None, &[("count", "5")]), "few");
+        assert_eq!(translate("en", key, None, &[("count", "99")]), "many");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn compile_translations_not_a_directory() {
         use std::fs;
         let tmp = std::env::temp_dir().join("l10n4x_test_file.txt");
