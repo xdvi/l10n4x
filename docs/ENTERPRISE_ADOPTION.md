@@ -213,8 +213,13 @@ See [THREAT_MODEL.md](./THREAT_MODEL.md) for full detail. Enterprise summary:
 
 ---
 
+## TMS handoff
+
+Use `l10n4x sync` to exchange locale JSON with translation teams and push signed paks to a webhook. See [TMS.md](./TMS.md).
+
 ## Related documents
 
+- [TMS.md](./TMS.md) — export/import and webhook push
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — package layout and data flow
 - [PAK_FORMAT.md](./PAK_FORMAT.md) — binary format and versioning
 - [THREAT_MODEL.md](./THREAT_MODEL.md) — security assumptions

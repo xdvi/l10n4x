@@ -69,8 +69,16 @@ fn wasmtime_load_and_call_clear() {
     let engine = Engine::default();
     let module = Module::from_file(&engine, &wasm_path).expect("parse l10n4x.wasm");
 
-    let has_clear = module.exports().any(|e| e.name() == "l10n4x_clear");
-    assert!(has_clear, "l10n4x_clear export missing from wasm module");
+    for export in [
+        "l10n4x_clear",
+        "l10n4x_load_namespace_bytes",
+        "l10n4x_ota_reload_pak",
+        "l10n4x_ota_rollback",
+        "l10n4x_ota_can_rollback",
+    ] {
+        let found = module.exports().any(|e| e.name() == export);
+        assert!(found, "{export} export missing from wasm module");
+    }
 
     let mut linker = Linker::new(&engine);
     link_import_stubs(&mut linker, &module).expect("link import stubs");

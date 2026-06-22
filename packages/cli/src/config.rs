@@ -5,6 +5,27 @@ use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
+pub struct TmsConfig {
+    /// TMS provider: `file`, `webhook`, or `crowdin`.
+    #[serde(default = "default_tms_provider")]
+    pub provider: String,
+    /// HTTP endpoint for signed `.pak` upload (`webhook` provider).
+    #[serde(default)]
+    pub webhook_url: Option<String>,
+    /// Env var holding bearer token for webhook auth.
+    #[serde(default)]
+    pub webhook_token_env: Option<String>,
+    /// Run webhook push automatically after `l10n4x build`.
+    #[serde(default)]
+    pub push_on_build: bool,
+}
+
+fn default_tms_provider() -> String {
+    "file".to_string()
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct BundlesConfig {
     /// `monolith` (default) or `modular`.
     #[serde(default = "default_bundle_mode")]
@@ -54,6 +75,8 @@ pub struct Config {
     pub debug_keys: bool,
     #[serde(default)]
     pub bundles: BundlesConfig,
+    #[serde(default)]
+    pub tms: Option<TmsConfig>,
     pub targets: Vec<Target>,
 }
 
@@ -329,6 +352,7 @@ mod config_io_and_env_tests {
             cors_origins: None,
             debug_keys: false,
             bundles: BundlesConfig::default(),
+            tms: None,
             targets: vec![],
         };
         save_config(&cfg).unwrap();
@@ -372,6 +396,7 @@ mod config_io_and_env_tests {
             cors_origins: None,
             debug_keys: false,
             bundles: BundlesConfig::default(),
+            tms: None,
             targets: vec![],
         };
 

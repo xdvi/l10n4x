@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-06-22
+
+### Added
+- **P2.6 JS bridge**: WASM exports `l10n4x_load_namespace_bytes`, `l10n4x_ota_reload_pak`, `l10n4x_ota_rollback`, `l10n4x_ota_can_rollback`.
+- **P2.1 TMS integration**: `l10n4x sync --provider file|crowdin|webhook` with export/import/push; optional `tms.pushOnBuild` webhook after `build`.
+- **TMS docs**: `docs/TMS.md` — exchange format and webhook payload.
+
 ## [0.3.0] - 2026-06-22
 
 ### Added

@@ -1,6 +1,7 @@
 mod config;
 mod generator;
 mod targets;
+mod tms;
 
 use clap::{Parser, Subcommand};
 use config::{
@@ -108,6 +109,21 @@ enum Commands {
         /// Print what would change without writing any files.
         #[arg(long)]
         dry_run: bool,
+    },
+    /// TMS exchange: export/import locale JSON or push signed paks to a webhook.
+    Sync {
+        /// Provider: `file`, `webhook`, or `crowdin`.
+        #[arg(long, default_value = "file")]
+        provider: String,
+        /// Direction: `export`, `import`, or `push`.
+        #[arg(long)]
+        direction: String,
+        /// Output directory for export (default: `tms-export` or `tms-crowdin`).
+        #[arg(long, value_name = "DIR")]
+        out: Option<String>,
+        /// Input directory for import.
+        #[arg(long, value_name = "DIR")]
+        from: Option<String>,
     },
 }
 
@@ -304,6 +320,8 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
         config.encrypt,
         &config.encrypt_key_env,
     )?;
+
+    tms::maybe_push_webhook_after_build(&config)?;
 
     println!("Build completed successfully.");
     Ok(())
@@ -1415,6 +1433,7 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         cors_origins: None,
         debug_keys: false,
         bundles: config::BundlesConfig::default(),
+        tms: None,
         targets,
     };
 
@@ -1716,6 +1735,20 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Extract { src, dry_run } => {
             let result = extract_command(src, dry_run);
             if let Err(e) = result {
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        }
+        Commands::Sync {
+            provider,
+            direction,
+            out,
+            from,
+        } => {
+            let config = load_config()?;
+            let dir = tms::SyncDirection::parse(&direction)?;
+            if let Err(e) = tms::run_sync(&config, &provider, dir, out.as_deref(), from.as_deref())
+            {
                 eprintln!("Error: {}", e);
                 std::process::exit(1);
             }

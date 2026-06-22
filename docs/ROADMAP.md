@@ -46,13 +46,26 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 
 ## P2 — Strategic (active backlog)
 
-Large investment; valuable once native/game/SaaS adoption is established. Prioritize by customer demand.
+### P2.1 — TMS integration ✅ (v0.4.0)
 
-### P2.1 — TMS integration (Crowdin / Lokalise / Phrase)
+| Deliverable | Status |
+|-------------|--------|
+| `l10n4x-tms.json` export/import | ✅ `l10n4x sync --provider file` |
+| Crowdin-compatible tree export/import | ✅ `--provider crowdin` |
+| Post-build webhook push | ✅ `--provider webhook`, `tms.pushOnBuild` |
+| Crowdin/Lokalise API automation | Backlog |
 
-- Export/import compiler JSON format
-- Post-build webhook to upload signed paks
-- CLI: `l10n4x sync --provider <name>`
+See [TMS.md](./TMS.md).
+
+---
+
+### P2.6 — JS runtime bridge ✅ (v0.4.0 + l10n4x-js)
+
+| Deliverable | Status |
+|-------------|--------|
+| WASM `load_namespace` + OTA exports | ✅ |
+| `@l10n4x/runtime` modular + OTA | ✅ |
+| CI + npm publish pipeline | ✅ [l10n4x-js](https://github.com/xdvi/l10n4x-js) |
 
 ---
 
@@ -89,37 +102,21 @@ Large investment; valuable once native/game/SaaS adoption is established. Priori
 
 ---
 
-### P2.6 — JS runtime bridge (l10n4x-js)
-
-Close gaps between Rust core features and the web packages:
-
-- WASM exports for `load_namespace` and OTA (`l10n4x_ota_*`)
-- Wire `bundles.modular` in `@l10n4x/runtime` engine
-- CI + npm publish pipeline for `@l10n4x/*`
-
----
-
 ## Recommended execution order
 
 ```mermaid
 graph TD
-    P21[P2.1 TMS sync]
     P22[P2.2 ICU MF2]
     P25[P2.5 Multi-tenant]
     P24[P2.4 Plugins]
     P23[P2.3 Advanced i18n]
-    P26[P2.6 JS bridge]
-
-    P26 --> P21
-    P21 --> P22
-    P26 --> P25
+    P21b[P2.1 TMS API automation]
 ```
 
 | Sprint | Focus |
 |--------|-------|
-| **Next** | P2.6 JS bridge (WASM parity for modular + OTA) |
-| **Then** | P2.1 TMS — unlocks enterprise translation workflows |
-| **Backlog** | P2.2 ICU, P2.5 multi-tenant, P2.3/P2.4 by demand |
+| **Next** | P2.2 ICU MF2 or P2.5 multi-tenant (by demand) |
+| **Backlog** | P2.1 Crowdin API, P2.3/P2.4 |
 
 ---
 

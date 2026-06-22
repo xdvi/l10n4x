@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use l10n4x_core::binary_format::fnv1a_64;
+use l10n4x_core::ota::{ota_can_rollback, try_ota_reload_pak, try_ota_rollback};
 use l10n4x_core::store::{
     hash_params, translate_to_writer_with_status, TranslateStatus,
 };
@@ -136,6 +137,33 @@ pub fn l10n4x_set_fallback_chain(locales: Vec<String>) {
     l10n4x_core::store::set_fallback_chain(&refs);
 }
 
+/// Merges a signed namespace `.pak` into an existing locale (modular bundle mode).
+#[wasm_bindgen]
+pub fn l10n4x_load_namespace_bytes(bytes: &[u8], locale: &str, namespace: &str) -> Result<(), JsValue> {
+    if !l10n4x_core::integrity::verify_key_configured() {
+        return Err(JsValue::from_str(
+            "Signature verification failed: verify key not set or invalid",
+        ));
+    }
+    match l10n4x_core::pak::decompress_pak(bytes) {
+        Ok(decompressed) => match l10n4x_core::loader::try_load_namespace_bytes(
+            locale,
+            namespace,
+            decompressed,
+        ) {
+            Ok(()) => {
+                clear_translate_cache();
+                Ok(())
+            }
+            Err(err) => Err(JsValue::from_str(&format!("Namespace load failed: {}", err))),
+        },
+        Err(err) => Err(JsValue::from_str(&format!(
+            "Invalid format or decompression failed: {}",
+            err
+        ))),
+    }
+}
+
 #[wasm_bindgen]
 pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> {
     if !l10n4x_core::integrity::verify_key_configured() {
@@ -262,6 +290,41 @@ pub fn l10n4x_key_exists(locale: &str, key_hash: u64) -> bool {
 #[wasm_bindgen]
 pub fn l10n4x_key_exists_with_context(locale: &str, key_hash: u64, context_hash: u64) -> bool {
     l10n4x_core::store::key_exists(locale, key_hash, Some(context_hash))
+}
+
+/// Atomically reloads a signed locale `.pak`, retaining one retired snapshot for rollback.
+#[wasm_bindgen]
+pub fn l10n4x_ota_reload_pak(locale: &str, bytes: &[u8]) -> Result<(), JsValue> {
+    if !l10n4x_core::integrity::verify_key_configured() {
+        return Err(JsValue::from_str(
+            "Signature verification failed: verify key not set or invalid",
+        ));
+    }
+    match try_ota_reload_pak(locale, bytes) {
+        Ok(()) => {
+            clear_translate_cache();
+            Ok(())
+        }
+        Err(err) => Err(JsValue::from_str(&format!("OTA reload failed: {}", err))),
+    }
+}
+
+/// Restores the retired OTA snapshot for `locale` when available.
+#[wasm_bindgen]
+pub fn l10n4x_ota_rollback(locale: &str) -> Result<(), JsValue> {
+    match try_ota_rollback(locale) {
+        Ok(()) => {
+            clear_translate_cache();
+            Ok(())
+        }
+        Err(err) => Err(JsValue::from_str(&format!("OTA rollback failed: {}", err))),
+    }
+}
+
+/// Returns `true` when an OTA rollback snapshot exists for `locale`.
+#[wasm_bindgen]
+pub fn l10n4x_ota_can_rollback(locale: &str) -> bool {
+    ota_can_rollback(locale)
 }
 
 /// Returns the list of locale codes that are currently loaded in memory.
