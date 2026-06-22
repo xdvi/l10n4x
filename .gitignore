@@ -32,4 +32,8 @@ examples/csharp/obj/
 /locales/
 /examples/dist/
 
+# Internal docs and reports
+/docs/reports/
+/docs/superpowers/
+
 

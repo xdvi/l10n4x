@@ -20,6 +20,7 @@ extern "C" {
 #define L10N4C_IO_ERROR            7  /* File/directory I/O failure                  */
 #define L10N4C_SIGNATURE_INVALID   8  /* Ed25519 signature mismatch (tampered pak)   */
 #define L10N4C_VERIFY_KEY_NOT_SET  9  /* Call l10n4c_set_verify_key first            */
+#define L10N4C_NOT_INITIALIZED    10  /* Call l10n4c_load_pak_directory first        */
 #define L10N4C_DECRYPT_KEY_NOT_SET 11 /* Call l10n4c_set_decrypt_key first (L10E)    */
 #define L10N4C_BUFFER_OVERFLOW     12 /* Operation resulted in buffer overflow        */
 
@@ -69,6 +70,20 @@ char *l10n4c_translate_with_params_alloc(
     const char *locale, const char *key, const L10n4cParam *params, size_t param_count);
 void  l10n4c_free_string(char *ptr);
 
+/* ── Custom Formatters ─────────────────────────────────────────────────────── */
+
+/** Custom formatter function type: takes value, locale, and options, returns allocated string. */
+typedef char* (*l10n4c_custom_formatter_fn)(const char *value, const char *locale, const char *options);
+
+/**
+ * Registers a custom formatter with the given name.
+ * The formatter is called for ICU message syntax like `{var, formatterName}`.
+ * @param name  Formatter name (e.g. "uppercase", "rot13")
+ * @param formatter  Function pointer, or NULL to unregister.
+ * @return L10N4C_OK or error code.
+ */
+int32_t l10n4c_register_formatter(const char *name, l10n4c_custom_formatter_fn formatter);
+
 /* ── Callbacks ─────────────────────────────────────────────────────────────── */
 
 /** Callback type for missing translation key events. */
@@ -79,6 +94,28 @@ typedef void (*l10n4c_missing_key_fn)(const char *locale, const char *key);
  * Pass NULL to unregister. Thread-safe for concurrent translate calls.
  */
 void l10n4c_set_missing_key_handler(l10n4c_missing_key_fn handler);
+
+/**
+ * Writes comma-separated loaded locale codes into out_buf (up to out_len bytes).
+ * Returns the number of bytes written (excluding null terminator),
+ * or L10N4C_BUFFER_TOO_SMALL if the buffer is too small.
+ */
+int32_t l10n4c_get_loaded_locales(uint8_t *out_buf, size_t out_len);
+
+/**
+ * Returns comma-separated metrics counters: total translations, cache hits,
+ * cache misses, locale loads, format errors — as a UTF-8 string.
+ * Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
+ */
+int32_t l10n4c_get_metrics(uint8_t *out_buf, size_t out_len);
+
+/* ── Version ─────────────────────────────────────────────────────────────────── */
+
+/**
+ * Returns the library version string (e.g. "0.2.0").
+ * The returned string is owned by the caller and must be freed with l10n4c_free_string.
+ */
+char *l10n4c_get_version(void);
 
 #ifdef __cplusplus
 }

@@ -27,6 +27,8 @@ pub const L10N4C_SIGNATURE_INVALID: i32 = 8;
 /// Ed25519 verify public key has not been configured. Call `l10n4c_set_verify_key`
 /// before loading any `.pak` files.
 pub const L10N4C_VERIFY_KEY_NOT_SET: i32 = 9;
+/// Library not initialized — call l10n4c_load_pak_directory or l10n4c_load_pak_locale first.
+pub const L10N4C_NOT_INITIALIZED: i32 = 10;
 /// AES decrypt key has not been configured. Required only for `L10E`-encrypted paks.
 /// Call `l10n4c_set_decrypt_key` before loading encrypted `.pak` files.
 pub const L10N4C_DECRYPT_KEY_NOT_SET: i32 = 11;
@@ -44,5 +46,6 @@ const _: () = assert!(L10N4C_INVALID_ENCODING == 6);
 const _: () = assert!(L10N4C_IO_ERROR == 7);
 const _: () = assert!(L10N4C_SIGNATURE_INVALID == 8);
 const _: () = assert!(L10N4C_VERIFY_KEY_NOT_SET == 9);
+const _: () = assert!(L10N4C_NOT_INITIALIZED == 10);
 const _: () = assert!(L10N4C_DECRYPT_KEY_NOT_SET == 11);
 const _: () = assert!(L10N4C_BUFFER_OVERFLOW == 12);
