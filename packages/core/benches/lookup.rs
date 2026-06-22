@@ -125,6 +125,20 @@ fn bench_lookup(c: &mut Criterion) {
         });
     });
 
+    let params = [("name", "Diego")];
+    let _ = translate("es", hello_name_hash, None, &params);
+
+    c.bench_function("translate_with_params_cache_hit", |b| {
+        b.iter(|| {
+            let _ = translate(
+                black_box("es"),
+                black_box(hello_name_hash),
+                None,
+                black_box(&params),
+            );
+        });
+    });
+
     c.bench_function("translate_fallback", |b| {
         b.iter(|| {
             let mut buf = String::new();
