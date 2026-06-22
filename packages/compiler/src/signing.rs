@@ -1,3 +1,4 @@
+use crate::CompileError;
 use ed25519_dalek::{Signer, SigningKey};
 use std::sync::OnceLock;
 
@@ -15,15 +16,19 @@ pub fn set_signing_key(seed: &[u8]) -> bool {
 }
 
 /// Derives the public key from the configured signing seed.
-pub fn signing_public_key() -> Result<[u8; 32], &'static str> {
-    let seed = SIGNING_KEY.get().ok_or("Signing key not configured")?;
+pub fn signing_public_key() -> Result<[u8; 32], CompileError> {
+    let seed = SIGNING_KEY
+        .get()
+        .ok_or(CompileError::SigningKeyNotConfigured)?;
     let signing_key = SigningKey::from_bytes(seed);
     Ok(signing_key.verifying_key().to_bytes())
 }
 
 /// Signs a message with the configured signing seed.
-pub fn sign(message: &[u8]) -> Result<[u8; 64], &'static str> {
-    let seed = SIGNING_KEY.get().ok_or("Signing key not configured")?;
+pub fn sign(message: &[u8]) -> Result<[u8; 64], CompileError> {
+    let seed = SIGNING_KEY
+        .get()
+        .ok_or(CompileError::SigningKeyNotConfigured)?;
     let signing_key = SigningKey::from_bytes(seed);
     let signature = signing_key.sign(message);
     Ok(signature.to_bytes())

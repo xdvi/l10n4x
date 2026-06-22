@@ -91,6 +91,8 @@ pub enum CompileError {
     CoreIntegrityError(String),
     #[error("Failed to parse translation template: {0}")]
     TemplateParseError(String),
+    #[error("Signing key not configured")]
+    SigningKeyNotConfigured,
 }
 
 /// Resolves `MessageNode::KeyRef` cross-references by inlining the target key's nodes.
@@ -159,14 +161,6 @@ fn resolve_single(
     resolving.remove(&key);
 }
 
-/// Extracts the BCP-47 parent locale by stripping the last subtag.
-fn bcp47_parent(locale: &str) -> Option<&str> {
-    locale
-        .rfind(|c: char| ['-', '_'].contains(&c))
-        .filter(|&pos| pos > 0)
-        .map(|pos| &locale[..pos])
-}
-
 /// Compiles directories of JSON localization files into signed `.pak` files.
 /// When `encrypt` is true, wraps each pak in an optional `L10E` AES-GCM envelope.
 pub fn compile_translations(
@@ -185,15 +179,16 @@ pub fn compile_translations(
     sorted_locales.sort();
     for locale in sorted_locales {
         let nodes = &compiled[locale];
-        let parent = bcp47_parent(locale);
-        let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> = match parent.and_then(|p| compiled.get(p)) {
-            Some(parent_map) => nodes
-                .iter()
-                .filter(|(hash, v)| parent_map.get(hash) != Some(v))
-                .map(|(k, v)| (*k, v.clone()))
-                .collect(),
-            None => nodes.clone(),
-        };
+        let parent = l10n4x_core::locale_parent(locale);
+        let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> =
+            match parent.and_then(|p| compiled.get(p)) {
+                Some(parent_map) => nodes
+                    .iter()
+                    .filter(|(hash, v)| parent_map.get(hash) != Some(v))
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect(),
+                None => nodes.clone(),
+            };
         let effective_parent = parent.filter(|p| compiled.contains_key(*p));
 
         let binary_bytes = write_binary_format(&to_write);
@@ -202,8 +197,7 @@ pub fn compile_translations(
             .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
 
         let unsigned = build_unsigned(&compressed_bytes, effective_parent);
-        let signature = signing::sign(&unsigned)
-            .map_err(|e| CompileError::CoreIntegrityError(e.to_string()))?;
+        let signature = signing::sign(&unsigned)?;
         let signed = seal(&unsigned, &signature);
         let pak_bytes = if encrypt {
             envelope::wrap_encrypted(&signed)
@@ -240,7 +234,8 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
     for file_entry in std::fs::read_dir(&lang_path)? {
         let file_entry = file_entry?;
         let file_path = file_entry.path();
-        if !file_path.is_file() || file_path.extension().is_none_or(|e| e != "json") {
+        let is_json = matches!(file_path.extension().and_then(|e| e.to_str()), Some("json"));
+        if !file_path.is_file() || !is_json {
             continue;
         }
         let file_name = file_path
@@ -266,15 +261,8 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
     Ok(result)
 }
 
-/// FNV-1a 64-bit hash for translation keys. Deterministic, fast, collision-free.
-pub fn fnv1a_64(data: &[u8]) -> u64 {
-    let mut hash: u64 = 0xcbf29ce484222325;
-    for byte in data {
-        hash ^= *byte as u64;
-        hash = hash.wrapping_mul(0x100000001b3);
-    }
-    hash
-}
+/// FNV-1a 64-bit hash for translation keys. Re-exported from `l10n4x-core`.
+pub use l10n4x_core::binary_format::fnv1a_64;
 
 /// Internal: read translations from a source directory, parse ICU, resolve refs.
 /// Returns a map of locale → compiled MessageNode AST.
