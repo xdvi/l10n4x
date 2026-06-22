@@ -90,6 +90,11 @@ pub fn format_message<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> core::fmt::Result {
+    // Fast path: single raw text node (bytes don't start with an opcode 0x01..0x0D)
+    if !bytecode.is_empty() && (bytecode[0] == 0x00 || bytecode[0] > 0x0D) {
+        let text = core::str::from_utf8(bytecode).map_err(|_| core::fmt::Error)?;
+        return writer.write_str(text);
+    }
     let mut pos = 0;
     while pos < bytecode.len() {
         if pos + 1 > bytecode.len() {

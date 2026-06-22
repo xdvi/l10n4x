@@ -13,6 +13,52 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use core::sync::atomic::AtomicUsize;
 
 #[cfg(feature = "std")]
+use std::cell::RefCell;
+#[cfg(feature = "std")]
+use std::collections::HashMap;
+
+#[cfg(feature = "std")]
+const TRANSLATE_CACHE_CAPACITY: usize = 128;
+
+#[cfg(feature = "std")]
+thread_local! {
+    static TRANSLATE_BUF: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+#[cfg(feature = "std")]
+thread_local! {
+    static TRANSLATE_CACHE: RefCell<HashMap<(u64, u64), String>> = RefCell::new(HashMap::new());
+}
+
+#[cfg(feature = "std")]
+fn cache_translate(locale: &str, key_hash: u64, params: &[(&str, &str)]) -> Option<String> {
+    // Only cache translations without parameters (most repetitive calls: labels, titles)
+    if !params.is_empty() {
+        return None;
+    }
+    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+    TRANSLATE_CACHE.with(|cell| {
+        let cache = cell.borrow();
+        cache.get(&(locale_hash, key_hash)).cloned()
+    })
+}
+
+#[cfg(feature = "std")]
+fn cache_insert(locale: &str, key_hash: u64, params: &[(&str, &str)], result: &str) {
+    if !params.is_empty() {
+        return;
+    }
+    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
+    TRANSLATE_CACHE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if cache.len() >= TRANSLATE_CACHE_CAPACITY {
+            cache.clear();
+        }
+        cache.insert((locale_hash, key_hash), result.to_string());
+    });
+}
+
+#[cfg(feature = "std")]
 fn default_chain() -> Arc<[Arc<str>]> {
     use std::sync::OnceLock;
     static CHAIN: OnceLock<Arc<[Arc<str>]>> = OnceLock::new();
@@ -542,9 +588,29 @@ pub fn translate(
     context_hash: Option<u64>,
     params: &[(&str, &str)],
 ) -> String {
-    let mut buf = String::new();
-    let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut buf);
-    buf
+    #[cfg(feature = "std")]
+    {
+        // Check cache first (only for param-free translations like labels, titles)
+        if context_hash.is_none() {
+            if let Some(cached) = cache_translate(locale, key_hash, params) {
+                return cached;
+            }
+        }
+        let result = TRANSLATE_BUF.with(|cell| {
+            let mut guard = cell.borrow_mut();
+            guard.clear();
+            let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut *guard);
+            (*guard).clone()
+        });
+        cache_insert(locale, key_hash, params, &result);
+        result
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let mut buf = String::new();
+        let _ = translate_to_writer(locale, key_hash, context_hash, params, &mut buf);
+        buf
+    }
 }
 
 #[cfg(test)]

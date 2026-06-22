@@ -3,6 +3,12 @@ use crate::icu_parser::{
 };
 
 fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
+    // Optimization: single Text node emits raw bytes (no opcode 0x01 prefix)
+    if nodes.len() == 1 {
+        if let MessageNode::Text(t) = &nodes[0] {
+            return t.as_bytes().to_vec();
+        }
+    }
     let mut buf = Vec::new();
     for node in nodes {
         match node {
@@ -235,10 +241,8 @@ mod tests {
     fn test_serialize_text() {
         let nodes = vec![MessageNode::Text("Hello World".to_string())];
         let bytes = serialize_nodes(&nodes);
-        assert_eq!(bytes[0], 0x01);
-        let len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
-        assert_eq!(len, 11);
-        assert_eq!(&bytes[5..5 + 11], b"Hello World");
+        // Single text node emits raw bytes with no opcode prefix
+        assert_eq!(&bytes, b"Hello World");
     }
 
     #[test]
@@ -522,7 +526,8 @@ mod tests {
         // Verify we can read it back
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
         let val = reader.lookup(fnv1a_64(b"key1")).unwrap();
-        assert_eq!(val, b"\x01\x00\x00\x00\x05Hello");
+        // Single text node: stored as raw bytes without opcode prefix
+        assert_eq!(val, b"Hello");
     }
 
     #[test]
@@ -538,13 +543,11 @@ mod tests {
         // keys should be sorted
         assert!(reader.lookup(fnv1a_64(b"a")).is_some());
         assert!(reader.lookup(fnv1a_64(b"b")).is_some());
-        // Verify the bytecode values are correct
+        // Verify the bytecode values are correct (single text = raw bytes)
         let val_a = reader.lookup(fnv1a_64(b"a")).unwrap();
         let val_b = reader.lookup(fnv1a_64(b"b")).unwrap();
-        let text_len_a = u32::from_be_bytes(val_a[1..5].try_into().unwrap()) as usize;
-        assert_eq!(&val_a[5..5 + text_len_a], b"first");
-        let text_len_b = u32::from_be_bytes(val_b[1..5].try_into().unwrap()) as usize;
-        assert_eq!(&val_b[5..5 + text_len_b], b"second");
+        assert_eq!(val_a, b"first");
+        assert_eq!(val_b, b"second");
     }
 
     #[test]
