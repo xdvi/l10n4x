@@ -42,12 +42,18 @@ pub const PAK_EXT_HEADER_SIZE: usize = 16;
 /// Ed25519 signature length.
 pub const PAK_SIGNATURE_SIZE: usize = 64;
 
-/// Builds the unsigned container (extended header + DEFLATE payload).
+/// Builds the unsigned container (extended header + zstd payload).
 pub fn build_unsigned(compressed: &[u8], parent_locale: Option<&str>) -> Vec<u8> {
     let mut flags: u32 = 0;
     let parent_bytes = parent_locale.map(|p| p.as_bytes()).unwrap_or(b"");
-    if !parent_bytes.is_empty() { flags |= 1; }
-    let extra = if flags & 1 != 0 { 1 + parent_bytes.len() } else { 0 };
+    if !parent_bytes.is_empty() {
+        flags |= 1;
+    }
+    let extra = if flags & 1 != 0 {
+        1 + parent_bytes.len()
+    } else {
+        0
+    };
     let mut out = Vec::with_capacity(PAK_EXT_HEADER_SIZE + extra + compressed.len());
     out.extend_from_slice(PAK_MAGIC);
     out.extend_from_slice(&PAK_VERSION.to_be_bytes());
@@ -85,39 +91,49 @@ pub fn parse_signed(data: &[u8]) -> CoreResult<ParsedSignedPak<'_>> {
     if version != PAK_VERSION {
         return Err(UnsupportedVersion(version));
     }
-    let (_flags, payload_offset, payload_len, parent) = if data.len() >= PAK_EXT_HEADER_SIZE + PAK_SIGNATURE_SIZE {
-        let raw_flags = u32::from_be_bytes(data[8..12].try_into().unwrap());
-        if raw_flags & !1 == 0 {
-            let payload_len = u32::from_be_bytes(data[12..16].try_into().unwrap()) as usize;
-            let fits = payload_len > 0 && PAK_EXT_HEADER_SIZE + payload_len + PAK_SIGNATURE_SIZE <= data.len();
-            if fits {
-                let mut pos = PAK_EXT_HEADER_SIZE;
-                let parent = if raw_flags & 1 != 0 {
-                    if pos + 1 > data.len() { return Err(BufferTooShort("parent len truncated")); }
-                    let parent_len = data[pos] as usize;
-                    pos += 1;
-                    if pos + parent_len > data.len() { return Err(BufferTooShort("parent bytes truncated")); }
-                    let s = core::str::from_utf8(&data[pos..pos + parent_len])
-                        .map_err(|_| InvalidFormat("Invalid parent_locale UTF-8"))?;
-                    pos += parent_len;
-                    Some(s)
-                } else { None };
-                (raw_flags, pos, payload_len, parent)
+    let (_flags, payload_offset, payload_len, parent) =
+        if data.len() >= PAK_EXT_HEADER_SIZE + PAK_SIGNATURE_SIZE {
+            let raw_flags = u32::from_be_bytes(data[8..12].try_into().unwrap());
+            if raw_flags & !1 == 0 {
+                let payload_len = u32::from_be_bytes(data[12..16].try_into().unwrap()) as usize;
+                let fits = payload_len > 0
+                    && PAK_EXT_HEADER_SIZE + payload_len + PAK_SIGNATURE_SIZE <= data.len();
+                if fits {
+                    let mut pos = PAK_EXT_HEADER_SIZE;
+                    let parent = if raw_flags & 1 != 0 {
+                        if pos + 1 > data.len() {
+                            return Err(BufferTooShort("parent len truncated"));
+                        }
+                        let parent_len = data[pos] as usize;
+                        pos += 1;
+                        if pos + parent_len > data.len() {
+                            return Err(BufferTooShort("parent bytes truncated"));
+                        }
+                        let s = core::str::from_utf8(&data[pos..pos + parent_len])
+                            .map_err(|_| InvalidFormat("Invalid parent_locale UTF-8"))?;
+                        pos += parent_len;
+                        Some(s)
+                    } else {
+                        None
+                    };
+                    (raw_flags, pos, payload_len, parent)
+                } else {
+                    let payload_len = raw_flags as usize;
+                    (0u32, PAK_HEADER_SIZE, payload_len, None)
+                }
             } else {
                 let payload_len = raw_flags as usize;
                 (0u32, PAK_HEADER_SIZE, payload_len, None)
             }
         } else {
-            let payload_len = raw_flags as usize;
+            let payload_len = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
             (0u32, PAK_HEADER_SIZE, payload_len, None)
-        }
-    } else {
-        let payload_len = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
-        (0u32, PAK_HEADER_SIZE, payload_len, None)
-    };
-    let message_end = payload_offset.checked_add(payload_len)
+        };
+    let message_end = payload_offset
+        .checked_add(payload_len)
         .ok_or(Overflow("Pak payload length overflow"))?;
-    let sig_end = message_end.checked_add(PAK_SIGNATURE_SIZE)
+    let sig_end = message_end
+        .checked_add(PAK_SIGNATURE_SIZE)
         .ok_or(Overflow("Pak signature overflow"))?;
     if data.len() < sig_end {
         return Err(BufferTooShort("Pak file truncated"));
@@ -137,10 +153,8 @@ pub fn decompress_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
     decompress_signed_pak(&signed)
 }
 
-/// Verifies signature and decompresses a signed `L10P` container.
-pub fn decompress_signed_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
-    let (message, compressed, signature, _parent) = parse_signed(data)?;
-    integrity::verify(message, signature)?;
+/// Decompresses a raw zstd payload into inner `L10N` binary bytes.
+pub(crate) fn decompress_zstd_payload(compressed: &[u8]) -> CoreResult<Vec<u8>> {
     use ruzstd::frame_decoder::BlockDecodingStrategy;
     use ruzstd::io::Read;
 
@@ -166,18 +180,37 @@ pub fn decompress_signed_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
     Ok(output)
 }
 
+/// Verifies signature and decompresses a signed `L10P` container.
+pub fn decompress_signed_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
+    let (message, compressed, signature, _parent) = parse_signed(data)?;
+    integrity::verify(message, signature)?;
+    decompress_zstd_payload(compressed)
+}
+
 /// Extracts the optional parent locale from a raw pak byte slice.
 /// Returns `None` for old-format files, truncated buffers, or when the flag is unset.
 pub fn get_parent_locale(data: &[u8]) -> Option<&str> {
-    if data.len() < PAK_EXT_HEADER_SIZE { return None; }
-    if &data[0..4] != PAK_MAGIC { return None; }
+    if data.len() < PAK_EXT_HEADER_SIZE {
+        return None;
+    }
+    if &data[0..4] != PAK_MAGIC {
+        return None;
+    }
     let version = u32::from_be_bytes(data[4..8].try_into().ok()?);
-    if version != PAK_VERSION { return None; }
-    if data.len() < PAK_EXT_HEADER_SIZE + 1 { return None; }
+    if version != PAK_VERSION {
+        return None;
+    }
+    if data.len() < PAK_EXT_HEADER_SIZE + 1 {
+        return None;
+    }
     let flags = u32::from_be_bytes(data[8..12].try_into().ok()?);
-    if flags & 1 == 0 { return None; }
+    if flags & 1 == 0 {
+        return None;
+    }
     let parent_len = *data.get(PAK_EXT_HEADER_SIZE)? as usize;
-    if parent_len == 0 || PAK_EXT_HEADER_SIZE + 1 + parent_len > data.len() { return None; }
+    if parent_len == 0 || PAK_EXT_HEADER_SIZE + 1 + parent_len > data.len() {
+        return None;
+    }
     core::str::from_utf8(&data[PAK_EXT_HEADER_SIZE + 1..PAK_EXT_HEADER_SIZE + 1 + parent_len]).ok()
 }
 
@@ -205,13 +238,13 @@ mod tests {
         let verifying_key = signing_key.verifying_key();
         assert!(integrity::set_verify_key(verifying_key.as_bytes()));
 
-        let body = build_unsigned(b"deflate-bytes", None);
+        let body = build_unsigned(b"zstd-payload", None);
         let sig = signing_key.sign(&body).to_bytes();
         let pak = seal(&body, &sig);
 
         let (msg, payload, sig_slice, parent) = parse_signed(&pak).unwrap();
         assert_eq!(msg, &body);
-        assert_eq!(payload, b"deflate-bytes");
+        assert_eq!(payload, b"zstd-payload");
         assert!(integrity::verify(msg, sig_slice).is_ok());
         assert_eq!(parent, None);
     }

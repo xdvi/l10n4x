@@ -38,7 +38,7 @@ pub mod list_format;
 pub mod loader;
 /// Locale-aware number formatting (decimal, percent, integer styles).
 pub mod number_format;
-/// Outer `.pak` container format (DEFLATE + Ed25519).
+/// Outer `.pak` container format (zstd + Ed25519).
 pub mod pak;
 /// CLDR-accurate plural rule resolution for 120+ locales.
 pub mod plural_rules;
@@ -47,7 +47,7 @@ pub(crate) mod reclaim;
 pub mod reltime;
 /// Thread-safe RCU store swap and lookup management.
 pub mod store;
-pub use store::{init_embedded, load_static_bytes, StoreData};
+pub use store::{init_embedded, load_static_bytes, locale_parent, StoreData};
 #[cfg(test)]
 pub(crate) mod test_fixtures;
 

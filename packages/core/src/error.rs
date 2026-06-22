@@ -34,6 +34,9 @@ pub enum CoreError {
     TrailingData(&'static str),
 }
 
+#[cfg(feature = "std")]
+impl std::error::Error for CoreError {}
+
 impl core::fmt::Display for CoreError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {

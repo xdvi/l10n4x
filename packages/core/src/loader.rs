@@ -1,4 +1,5 @@
 extern crate alloc;
+use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 use crate::store::{emit_locale_changed, read_store, swap_store, StoreData, TranslationStore};
 use alloc::string::ToString;
@@ -54,12 +55,8 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
     }
     #[cfg(not(feature = "std"))]
     {
-        let (mut new_vec, fallback_chain) = read_store(|store| {
-            (
-                (*store.locales).clone(),
-                Arc::clone(&store.fallback_chain),
-            )
-        });
+        let (mut new_vec, fallback_chain) =
+            read_store(|store| ((*store.locales).clone(), Arc::clone(&store.fallback_chain)));
         let entry = (locale_str.to_string(), StoreData::Owned(Arc::new(bytes)));
         match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
             Ok(pos) => new_vec[pos] = entry,
@@ -76,29 +73,36 @@ pub fn load_raw_bytes(locale_str: &str, bytes: Vec<u8>) -> bool {
 
 /// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
 pub fn load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> bool {
-    match decompress_pak(pak_bytes) {
-        Ok(decompressed) => load_raw_bytes(locale_str, decompressed),
-        Err(_) => false,
+    try_load_pak_bytes(locale_str, pak_bytes).is_ok()
+}
+
+/// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
+pub fn try_load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
+    let decompressed = decompress_pak(pak_bytes)?;
+    if load_raw_bytes(locale_str, decompressed) {
+        Ok(())
+    } else {
+        Err(crate::CoreError::IoError(
+            "failed to load decompressed bytes",
+        ))
     }
 }
 
-/// Verifies signature and stores raw compressed `.pak` bytes without decomppressing.
+/// Verifies signature and stores the zstd payload without decompressing.
 /// Decompression is deferred until the first `translate` call for the locale.
 /// Only available under `feature = "std"`.
 #[cfg(feature = "std")]
 pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
+    try_load_pak_lazy(locale_str, pak_bytes).is_ok()
+}
+
+/// Verifies signature and stores the zstd payload without decompressing.
+#[cfg(feature = "std")]
+pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     crate::metrics::inc_locale_loads();
-    let signed = match crate::envelope::open_outer(pak_bytes) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let (message, _compressed, signature, _parent) = match crate::pak::parse_signed(&signed) {
-        Ok(p) => p,
-        Err(_) => return false,
-    };
-    if crate::integrity::verify(message, signature).is_err() {
-        return false;
-    }
+    let signed = crate::envelope::open_outer(pak_bytes)?;
+    let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
+    crate::integrity::verify(message, signature)?;
     let (mut new_vec, fallback_chain, mut lazy_cache, mut offset_maps) = read_store(|store| {
         (
             (*store.locales).clone(),
@@ -108,7 +112,10 @@ pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
         )
     });
     let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-    let entry = (locale_str.to_string(), StoreData::Lazy(Arc::new(pak_bytes.to_vec())));
+    let entry = (
+        locale_str.to_string(),
+        StoreData::Lazy(Arc::new(compressed.to_vec())),
+    );
     match new_vec.binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str)) {
         Ok(pos) => {
             lazy_cache.remove(&locale_hash);
@@ -118,8 +125,12 @@ pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
             new_vec[pos] = entry;
         }
         Err(pos) => {
-            lazy_cache.entry(locale_hash).or_insert_with(|| Arc::new(OnceLock::new()));
-            offset_maps.entry(locale_hash).or_insert_with(|| Arc::new(HashMap::new()));
+            lazy_cache
+                .entry(locale_hash)
+                .or_insert_with(|| Arc::new(OnceLock::new()));
+            offset_maps
+                .entry(locale_hash)
+                .or_insert_with(|| Arc::new(HashMap::new()));
             new_vec.insert(pos, entry);
         }
     }
@@ -130,23 +141,39 @@ pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
         offset_maps,
     });
     emit_locale_changed(locale_str);
-    true
+    Ok(())
 }
 
 /// Decompresses and loads a single `.pak` file for a given locale (requires std).
 #[cfg(feature = "std")]
 pub fn load_pak_locale(locale_str: &str, path_str: &str) -> bool {
-    if let Ok(bytes) = std::fs::read(path_str) {
-        load_pak_bytes(locale_str, &bytes)
-    } else {
-        false
-    }
+    try_load_pak_locale(locale_str, path_str).is_ok()
 }
 
-/// Loads a static (compile-time embedded) L10N binary buffer into the global store.
-/// Convenience wrapper around `store::load_static_bytes`.
+/// Decompresses and loads a single `.pak` file for a given locale (requires std).
+#[cfg(feature = "std")]
+pub fn try_load_pak_locale(locale_str: &str, path_str: &str) -> CoreResult<()> {
+    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    try_load_pak_bytes(locale_str, &bytes)
+}
+
+/// Convenience wrapper around [`crate::store::load_static_bytes`].
 pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified: bool) -> bool {
-    crate::store::load_static_bytes(locale_str, data, already_verified)
+    try_load_static_bytes(locale_str, data, already_verified).is_ok()
+}
+
+/// Loads a static (compile-time embedded) L10N buffer into the global store.
+pub fn try_load_static_bytes(
+    locale_str: &str,
+    data: &'static [u8],
+    already_verified: bool,
+) -> CoreResult<()> {
+    crate::binary_format::BinaryFormatReader::new(data)?;
+    if crate::store::load_static_bytes(locale_str, data, already_verified) {
+        Ok(())
+    } else {
+        Err(crate::CoreError::IoError("failed to load static bytes"))
+    }
 }
 
 /// Scans a directory for all `.pak` files and automatically loads them (requires std).
@@ -223,6 +250,12 @@ mod tests {
     fn load_pak_bytes_invalid_fails() {
         let result = load_pak_bytes("xx", b"not a pak");
         assert!(!result);
+    }
+
+    #[test]
+    fn try_load_pak_bytes_invalid_returns_err() {
+        let result = try_load_pak_bytes("xx", b"not a pak");
+        assert!(result.is_err());
     }
 
     #[test]

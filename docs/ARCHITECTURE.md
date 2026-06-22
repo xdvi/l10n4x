@@ -15,7 +15,7 @@ l10n4x is a localization toolkit built around a compile-time pipeline: JSON tran
      |-- icu_parser -- ICUMF2 AST (MessageNode)
      |-- resolve_key_refs -- $t(key) cross-references
      |-- binary_writer -- serialize to L10N opcode bytecode
-     |-- miniz_oxide -- DEFLATE compression
+     |-- zstd -- zstd compression
      |-- Ed25519 signing -- mandatory
      |-- optional AES-GCM envelope (L10E)
          |
@@ -152,7 +152,7 @@ For full specification, see [PAK_FORMAT.md](./PAK_FORMAT.md).
 ### Outer container (`L10P`)
 
 ```
-[L10P magic: 4B][Version: 4B][Payload len: 4B][DEFLATE payload: N B][Ed25519 sig: 64B]
+[L10P magic: 4B][Version: 4B][Payload len: 4B][zstd payload: N B][Ed25519 sig: 64B]
 ```
 
 ### Optional encrypted envelope (`L10E`)

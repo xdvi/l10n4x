@@ -990,6 +990,7 @@ dependencies = [
  "criterion",
  "crossbeam-epoch",
  "ed25519-dalek",
+ "l10n4x-compiler",
  "log",
  "ruzstd",
  "serde_json",

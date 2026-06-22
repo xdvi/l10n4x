@@ -13,9 +13,6 @@ use core::sync::atomic::{AtomicPtr, Ordering};
 use core::sync::atomic::AtomicUsize;
 
 #[cfg(feature = "std")]
-use ruzstd::io::Read;
-
-#[cfg(feature = "std")]
 use std::cell::RefCell;
 #[cfg(feature = "std")]
 use std::collections::HashMap;
@@ -148,9 +145,9 @@ impl StoreData {
     }
 }
 
-/// Per-locale lazy decompression cache: maps locale_hash to a one-time decompression lock.
+/// Per-locale lazy decompression cache: maps locale_hash to decompressed bytes and offset map.
 #[cfg(feature = "std")]
-type LazyDecompressCache = HashMap<u64, Arc<OnceLock<Vec<u8>>>>;
+type LazyDecompressCache = HashMap<u64, Arc<OnceLock<(Vec<u8>, OffsetMap)>>>;
 /// Per-locale O(1) offset cache: maps locale_hash to key-hash-based (offset, length) pairs.
 #[cfg(feature = "std")]
 type OffsetMap = Arc<HashMap<u64, (u32, u32)>>;
@@ -202,27 +199,17 @@ impl TranslationStore {
                     .lazy_cache
                     .get(&locale_hash)
                     .expect("lazy_cache entry must exist for StoreData::Lazy locale");
-                let decompressed = entry.get_or_init(|| {
-                    let mut decoder = ruzstd::FrameDecoder::new();
-                    let mut reader = compressed.as_slice();
-                    decoder
-                        .reset(&mut reader)
-                        .expect("zstd decompression: init failed");
-                    decoder
-                        .decode_blocks(&mut reader, ruzstd::frame_decoder::BlockDecodingStrategy::All)
-                        .expect("zstd decompression: decode failed");
-                    let mut output = Vec::new();
-                    let mut buf = [0u8; 4096];
-                    loop {
-                        let n = decoder
-                            .read(&mut buf)
-                            .expect("zstd decompression: read failed");
-                        if n == 0 {
-                            break;
-                        }
-                        output.extend_from_slice(&buf[..n]);
-                    }
-                    output
+                let (decompressed, _) = entry.get_or_init(|| {
+                    let output = crate::pak::decompress_zstd_payload(compressed.as_slice())
+                        .expect("zstd decompression failed");
+                    let offsets = if let Ok(reader) =
+                        crate::binary_format::BinaryFormatReader::new(&output)
+                    {
+                        Arc::new(reader.to_offsets())
+                    } else {
+                        Arc::new(HashMap::new())
+                    };
+                    (output, offsets)
                 });
                 Some(decompressed.as_slice())
             }
@@ -439,7 +426,7 @@ pub fn key_exists(locale: &str, key_hash: u64, context_hash: Option<u64>) -> boo
     let chain = get_fallback_chain();
     read_store(|store| {
         let mut candidates = alloc::vec![locale];
-        if let Some(p) = subtag_parent(locale) {
+        if let Some(p) = locale_parent(locale) {
             candidates.push(p);
         }
         for fb in chain.iter() {
@@ -522,12 +509,8 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     }
     #[cfg(not(feature = "std"))]
     {
-        let (mut new_vec, fallback_chain) = read_store(|store| {
-            (
-                (*store.locales).clone(),
-                Arc::clone(&store.fallback_chain),
-            )
-        });
+        let (mut new_vec, fallback_chain) =
+            read_store(|store| ((*store.locales).clone(), Arc::clone(&store.fallback_chain)));
         let entry = (
             locale_str.to_string(),
             StoreData::Static(data, already_verified),
@@ -576,7 +559,7 @@ pub fn init_embedded(locales: &[(&str, &'static [u8])]) {
 
 /// Returns the parent language tag by stripping the last subtag component.
 /// `"en-US"` → `Some("en")`, `"zh-Hans-CN"` → `Some("zh-Hans")`, `"en"` → `None`.
-fn subtag_parent(locale: &str) -> Option<&str> {
+pub fn locale_parent(locale: &str) -> Option<&str> {
     let pos = locale.rfind(['-', '_'])?;
     if pos == 0 {
         return None;
@@ -644,7 +627,16 @@ fn try_locale<W: core::fmt::Write>(
         #[cfg(feature = "std")]
         {
             let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
-            if let Some(map) = store.offset_maps.get(&locale_hash) {
+            let lazy_offsets = store
+                .lazy_cache
+                .get(&locale_hash)
+                .and_then(|entry| entry.get().map(|(_, offsets)| offsets));
+            let map = store
+                .offset_maps
+                .get(&locale_hash)
+                .filter(|m| !m.is_empty())
+                .or(lazy_offsets);
+            if let Some(map) = map {
                 if let Some(ctx_hash) = context_hash {
                     if let Some(&(off, len)) = map.get(&ctx_hash) {
                         let start = off as usize;
@@ -715,7 +707,7 @@ pub fn translate_to_writer<W: core::fmt::Write>(
         }
 
         // 2. BCP-47 subtag negotiation: en-US → en
-        if let Some(parent) = subtag_parent(locale) {
+        if let Some(parent) = locale_parent(locale) {
             if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer)
             {
                 return Some(());
@@ -728,7 +720,7 @@ pub fn translate_to_writer<W: core::fmt::Write>(
             if fb_str == locale {
                 continue;
             }
-            if let Some(parent) = subtag_parent(locale) {
+            if let Some(parent) = locale_parent(locale) {
                 if fb_str == parent {
                     continue;
                 }
@@ -909,28 +901,28 @@ mod bcp47_tests {
     use super::*;
 
     #[test]
-    fn subtag_parent_strips_last_component() {
-        assert_eq!(subtag_parent("en-US"), Some("en"));
-        assert_eq!(subtag_parent("zh-Hans-CN"), Some("zh-Hans"));
-        assert_eq!(subtag_parent("pt_BR"), Some("pt"));
+    fn locale_parent_strips_last_component() {
+        assert_eq!(locale_parent("en-US"), Some("en"));
+        assert_eq!(locale_parent("zh-Hans-CN"), Some("zh-Hans"));
+        assert_eq!(locale_parent("pt_BR"), Some("pt"));
     }
 
     #[test]
-    fn subtag_parent_returns_none_for_root_tag() {
-        assert_eq!(subtag_parent("en"), None);
-        assert_eq!(subtag_parent("fr"), None);
-        assert_eq!(subtag_parent(""), None);
+    fn locale_parent_returns_none_for_root_tag() {
+        assert_eq!(locale_parent("en"), None);
+        assert_eq!(locale_parent("fr"), None);
+        assert_eq!(locale_parent(""), None);
     }
 
     #[test]
-    fn subtag_parent_handles_underscore_separator() {
-        assert_eq!(subtag_parent("zh_Hant"), Some("zh"));
+    fn locale_parent_handles_underscore_separator() {
+        assert_eq!(locale_parent("zh_Hant"), Some("zh"));
     }
 
     #[test]
-    fn subtag_parent_dash_at_start_returns_none() {
+    fn locale_parent_dash_at_start_returns_none() {
         // If the separator is at position 0, should return None
-        assert_eq!(subtag_parent("-en"), None);
+        assert_eq!(locale_parent("-en"), None);
     }
 }
 

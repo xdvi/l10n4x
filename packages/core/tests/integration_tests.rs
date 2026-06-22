@@ -5,10 +5,10 @@ use l10n4x_core::plural_rules::get_plural_category;
 #[cfg(feature = "std")]
 use l10n4x_core::store::read_store;
 use l10n4x_core::store::{swap_store, translate, StoreData, TranslationStore};
+use std::collections::HashMap;
 use std::sync::Arc;
 #[cfg(feature = "std")]
 use std::thread;
-use std::collections::HashMap;
 
 #[test]
 fn test_binary_format_reader_mock() {
@@ -180,14 +180,14 @@ fn test_lock_free_concurrency_rcu() {
 
             let mut locales = Vec::new();
             locales.push(("en".to_string(), StoreData::Owned(Arc::new(mock_data))));
-    let store = TranslationStore {
-        locales: Arc::new(locales),
-        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: HashMap::new(),
-        offset_maps: HashMap::new(),
-    };
-    swap_store(store);
-    thread::yield_now();
+            let store = TranslationStore {
+                locales: Arc::new(locales),
+                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+                lazy_cache: HashMap::new(),
+                offset_maps: HashMap::new(),
+            };
+            swap_store(store);
+            thread::yield_now();
         }
     });
 
@@ -251,13 +251,13 @@ fn test_ebr_stress() {
                 "es".to_string(),
                 StoreData::Owned(Arc::new(vec![count as u8])),
             ));
-    let store = TranslationStore {
-        locales: Arc::new(locales),
-        fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
-        lazy_cache: HashMap::new(),
-        offset_maps: HashMap::new(),
-    };
-    swap_store(store);
+            let store = TranslationStore {
+                locales: Arc::new(locales),
+                fallback_chain: Arc::from(vec![Arc::from("en") as Arc<str>].into_boxed_slice()),
+                lazy_cache: HashMap::new(),
+                offset_maps: HashMap::new(),
+            };
+            swap_store(store);
             count = count.wrapping_add(1);
             thread::sleep(std::time::Duration::from_millis(10));
         }
@@ -295,4 +295,40 @@ fn test_ebr_stress() {
     for reader in readers {
         reader.join().unwrap();
     }
+}
+
+#[test]
+fn test_load_pak_lazy_then_translate() {
+    use l10n4x_core::integrity;
+    use l10n4x_core::loader::try_load_pak_lazy;
+    use l10n4x_core::store::{clear_translations, translate};
+    use std::fs;
+    use std::path::Path;
+
+    clear_translations();
+
+    let seed = [22u8; 32];
+    assert!(l10n4x_compiler::signing::set_signing_key(&seed));
+    let pubkey = l10n4x_compiler::signing::signing_public_key().unwrap();
+    assert!(integrity::set_verify_key(&pubkey));
+
+    let temp_src = Path::new("temp_lazy_src");
+    let en_dir = temp_src.join("en");
+    fs::create_dir_all(&en_dir).unwrap();
+    fs::write(en_dir.join("common.json"), r#"{"greeting": "Hello lazy!"}"#).unwrap();
+
+    let temp_out = Path::new("temp_lazy_out");
+    fs::create_dir_all(temp_out).unwrap();
+    l10n4x_compiler::compile_translations(temp_src, temp_out, false, 8).unwrap();
+
+    let pak_bytes = fs::read(temp_out.join("en.pak")).unwrap();
+    assert!(try_load_pak_lazy("en", &pak_bytes).is_ok());
+
+    let key_hash = fnv1a_64(b"common.greeting");
+    let result = translate("en", key_hash, None, &[]);
+    assert_eq!(result, "Hello lazy!");
+
+    let _ = fs::remove_dir_all(temp_src);
+    let _ = fs::remove_dir_all(temp_out);
+    clear_translations();
 }
