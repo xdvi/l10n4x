@@ -22,7 +22,7 @@ jobs:
       - name: Generate coverage report
         run: cargo tarpaulin --workspace --all-features --out xml --timeout 300
       - name: Upload to codecov
-        uses: codecov/codecov-action@v4
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
