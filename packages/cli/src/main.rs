@@ -45,6 +45,12 @@ enum PluginCommands {
         /// Plugin id (e.g. `crowdin`).
         name: String,
     },
+    /// Validate plugin contract (binary name, CLI, config). Alias: `lint`.
+    #[command(visible_alias = "lint")]
+    Validate {
+        /// Plugin id (default: all discovered + known plugins).
+        name: Option<String>,
+    },
 }
 
 #[derive(Parser)]
@@ -1726,6 +1732,13 @@ async fn main() -> Result<(), anyhow::Error> {
             PluginCommands::List => plugins::list_plugins(),
             PluginCommands::Info { name } => {
                 if let Err(e) = plugins::plugin_info(&name) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+            PluginCommands::Validate { name } => {
+                let config = crate::config::load_config().ok();
+                if let Err(e) = plugins::validate_plugins(name.as_deref(), config.as_ref()) {
                     eprintln!("Error: {}", e);
                     std::process::exit(1);
                 }

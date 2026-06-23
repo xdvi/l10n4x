@@ -10,9 +10,25 @@ Exchange locale JSON with translation teams and push signed `.pak` artifacts to 
 | **Plugins** (optional install) | `crowdin` → `l10n4x-plugin-crowdin` |
 
 ```bash
-l10n4x plugin list          # core + optional plugins
-l10n4x plugin info crowdin  # install hints
+l10n4x plugin list              # core + optional plugins
+l10n4x plugin info crowdin      # install + contract hints
+l10n4x plugin validate crowdin  # lint plugin binary/CLI (alias: plugin lint)
+l10n4x plugin validate          # all discovered plugins
 ```
+
+### Plugin contract (for authors)
+
+| Rule | Requirement |
+|------|-------------|
+| Binary name | `l10n4x-plugin-<id>` on `PATH` |
+| Plugin id | `[a-z][a-z0-9-]*`, not `file` or `webhook` |
+| Sync CLI | `sync export\|import\|push --config l10n4x.config.json [--out] [--from]` |
+| Help | `--help` exits 0 and mentions `sync` |
+| Info | `info` subcommand recommended |
+| Config | optional `plugins.<id>` in `l10n4x.config.json` |
+| Exit code | `0` success, non-zero on error |
+
+A shell script is valid if it is executable and implements the CLI above.
 
 ## Core providers
 

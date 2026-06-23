@@ -1,9 +1,13 @@
 //! Optional TMS plugin registry (`crowdin`, future: `lokalise`, …).
 
+mod validate;
+
 use crate::config::Config;
 use l10n4x_tms::{SyncContext, SyncDirection};
 use std::path::Path;
 use std::process::{Command, Stdio};
+
+pub use validate::{discover_plugin_ids_on_path, is_valid_plugin_id, validate_plugins};
 
 pub const CORE_PROVIDERS: &[&str] = &["file", "webhook"];
 
@@ -18,7 +22,16 @@ pub fn list_plugins() {
     for id in CORE_PROVIDERS {
         println!("  - {id}");
     }
-    println!("\nOptional TMS plugins:");
+
+    let discovered = discover_plugin_ids_on_path();
+    if !discovered.is_empty() {
+        println!("\nDiscovered on PATH (l10n4x-plugin-<id>):");
+        for id in &discovered {
+            println!("  - {id}");
+        }
+    }
+
+    println!("\nDocumented optional plugins:");
     for (id, install) in KNOWN_PLUGINS {
         let linked = in_process_plugin(id);
         let status = if linked {
@@ -31,27 +44,34 @@ pub fn list_plugins() {
         println!("  - {id} [{status}]");
         println!("    install: {install}");
     }
+    println!("\nValidate: l10n4x plugin validate [id]");
 }
 
 pub fn plugin_info(name: &str) -> Result<(), anyhow::Error> {
-    let known = KNOWN_PLUGINS.iter().find(|(id, _)| *id == name);
-    match known {
-        Some((id, install)) => {
-            println!("Plugin: {id}");
-            println!("Install: {install}");
-            println!("Usage: l10n4x sync --provider {id} --direction export|import|push");
-            println!("Config: plugins.{id} in l10n4x.config.json");
-            Ok(())
-        }
-        None => anyhow::bail!(
-            "Unknown plugin '{name}'. Known plugins: {}",
-            KNOWN_PLUGINS
-                .iter()
-                .map(|(id, _)| *id)
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+    if !is_valid_plugin_id(name) {
+        anyhow::bail!("invalid plugin id '{name}'");
     }
+    if CORE_PROVIDERS.contains(&name) {
+        anyhow::bail!("'{name}' is a core TMS provider, not a plugin");
+    }
+
+    let install = KNOWN_PLUGINS
+        .iter()
+        .find(|(id, _)| *id == name)
+        .map(|(_, cmd)| *cmd)
+        .unwrap_or("place an executable l10n4x-plugin-<id> on PATH");
+
+    println!("Plugin: {name}");
+    println!("Binary: l10n4x-plugin-{name}");
+    println!("Install: {install}");
+    println!("Validate: l10n4x plugin validate {name}");
+    println!("Usage: l10n4x sync --provider {name} --direction export|import|push");
+    println!("Config: plugins.{name} in l10n4x.config.json");
+    println!("\nContract:");
+    println!("  l10n4x-plugin-{name} sync <export|import|push> --config l10n4x.config.json [--out DIR] [--from DIR]");
+    println!("  l10n4x-plugin-{name} info   (recommended)");
+    println!("  l10n4x-plugin-{name} --help  (must exit 0)");
+    Ok(())
 }
 
 pub fn run_plugin_sync(
@@ -61,6 +81,13 @@ pub fn run_plugin_sync(
     out: Option<&str>,
     from: Option<&str>,
 ) -> Result<(), anyhow::Error> {
+    if !is_valid_plugin_id(plugin_id) {
+        anyhow::bail!("invalid plugin id '{plugin_id}'");
+    }
+    if CORE_PROVIDERS.contains(&plugin_id) {
+        anyhow::bail!("'{plugin_id}' is a core provider; use l10n4x sync --provider {plugin_id}");
+    }
+
     let ctx = sync_context_from_config(config, plugin_id);
 
     if in_process_plugin(plugin_id) {
@@ -75,11 +102,12 @@ pub fn run_plugin_sync(
         .iter()
         .find(|(id, _)| *id == plugin_id)
         .map(|(_, cmd)| *cmd)
-        .unwrap_or("see https://github.com/xdvi/l10n4x");
+        .unwrap_or("install l10n4x-plugin-<id> on PATH (see: l10n4x plugin validate)");
 
     anyhow::bail!(
         "TMS plugin '{plugin_id}' is not installed.\n\
          Install it, then retry:\n  {install_hint}\n\
+         Validate: l10n4x plugin validate {plugin_id}\n\
          Or use a core provider: {}",
         CORE_PROVIDERS.join(", ")
     );
@@ -119,7 +147,7 @@ fn run_in_process_plugin(
     }
 }
 
-fn in_process_plugin(id: &str) -> bool {
+pub(crate) fn in_process_plugin(id: &str) -> bool {
     match id {
         #[cfg(feature = "plugin-crowdin")]
         "crowdin" => true,
@@ -127,7 +155,7 @@ fn in_process_plugin(id: &str) -> bool {
     }
 }
 
-fn plugin_binary_name(id: &str) -> String {
+pub(crate) fn plugin_binary_name(id: &str) -> String {
     format!("l10n4x-plugin-{id}")
 }
 
