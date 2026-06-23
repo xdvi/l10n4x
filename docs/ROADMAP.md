@@ -10,7 +10,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 
 ## Already shipped
 
-### Baseline (pre-0.3.0)
+### Baseline (pre-0.2.0)
 
 - Sub-microsecond lookup hot path (`translate_to_writer`, offset maps, TLS caches)
 - `Option<Arc>` for empty `lazy_cache` / `offset_maps` (cheap `swap_store` on empty stores)
@@ -22,7 +22,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 - Dev server with hot reload, `validate` / `extract` CLI commands
 - Core + FFI benchmarks, basic fuzz targets (`lookup`, `decompress_pak`)
 
-### P0 — Production blockers ✅ (v0.3.0)
+### P0 — Production blockers ✅ (v0.2.0)
 
 | Item | Summary |
 |------|---------|
@@ -31,7 +31,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 | **P0.3** Debug keys | `debug-keys` feature + `validate --report-misses` |
 | **P0.4** Pak versioning | L10N v2, `min_runtime_version`, `RuntimeTooOld` error |
 
-### P1 — High ROI ✅ (v0.3.0)
+### P1 — High ROI ✅ (v0.2.0)
 
 | Item | Summary |
 |------|---------|
@@ -46,7 +46,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 
 ## P2 — Strategic (active backlog)
 
-### P2.1 — TMS integration ✅ (v0.3.0)
+### P2.1 — TMS integration ✅ (v0.2.0)
 
 | Deliverable | Status |
 |-------------|--------|
@@ -59,7 +59,7 @@ See [TMS.md](./TMS.md).
 
 ---
 
-### P2.6 — JS runtime bridge ✅ (v0.3.0 + l10n4x-js)
+### P2.6 — JS runtime bridge ✅ (v0.2.0 + l10n4x-js)
 
 | Deliverable | Status |
 |-------------|--------|
