@@ -12,11 +12,11 @@ documentation = "https://docs.rs/l10n4c"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-l10n4x-core = { version = "0.4.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
+l10n4x-core = { version = "0.3.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
 
 [dev-dependencies]
-l10n4x-core = { version = "0.4.0", path = "../core", features = ["std"] }
-l10n4x-compiler = { version = "0.4.0", path = "../compiler" }
+l10n4x-core = { version = "0.3.0", path = "../core", features = ["std"] }
+l10n4x-compiler = { version = "0.3.0", path = "../compiler" }
 bindgen = "0.69"
 criterion = "0.5"
 

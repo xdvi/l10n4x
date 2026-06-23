@@ -46,7 +46,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 
 ## P2 — Strategic (active backlog)
 
-### P2.1 — TMS integration ✅ (v0.4.0)
+### P2.1 — TMS integration ✅ (v0.3.0)
 
 | Deliverable | Status |
 |-------------|--------|
@@ -59,7 +59,7 @@ See [TMS.md](./TMS.md).
 
 ---
 
-### P2.6 — JS runtime bridge ✅ (v0.4.0 + l10n4x-js)
+### P2.6 — JS runtime bridge ✅ (v0.3.0 + l10n4x-js)
 
 | Deliverable | Status |
 |-------------|--------|
