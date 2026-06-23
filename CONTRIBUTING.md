@@ -209,4 +209,4 @@ This project follows the [Rust Code of Conduct](https://www.rust-lang.org/polici
 - Discuss architecture decisions in issues before opening large PRs.
 - For questions about the `.pak` format, see `docs/PAK_FORMAT.md`.
 - For the threat model and security considerations, see `docs/THREAT_MODEL.md`.
-- For migration from i18next, see `docs/MIGRATION.md`.
+- For enterprise adoption patterns, see `docs/ENTERPRISE_ADOPTION.md`.

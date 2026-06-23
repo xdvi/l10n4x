@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **P1.3 Hot-path parity**: public `hash_params` in core; FFI/WASM thread-local caches check before param hash on empty params; WASM uses `translate_to_writer_with_status`.
 - **P1.4 Production observability**: v2 `metrics_string` (`cache_hit_ratio`, `miss_by_locale`, OTA counters); optional `tracing` feature; CI bench regression script (5% threshold).
 - **P1.5 Test hardening**: wasmtime smoke test for WASM; interval plural compile→translate E2E; strengthened `l10n4c_get_loaded_locales` FFI test; dev server 15s exponential backoff.
-- **Enterprise adoption guide**: `docs/ENTERPRISE_ADOPTION.md` — governance, CI/CD, namespace ownership, OTA (Angular/SAP-style patterns).
+- **Enterprise adoption guide**: `docs/ENTERPRISE_ADOPTION.md` — governance, CI/CD, namespace ownership, OTA.
 - **P2.6 JS bridge**: WASM exports `l10n4x_load_namespace_bytes`, `l10n4x_ota_reload_pak`, `l10n4x_ota_rollback`, `l10n4x_ota_can_rollback`.
 - **P2.1 TMS integration**: `l10n4x sync --provider file|crowdin|webhook` with export/import/push; optional `tms.pushOnBuild` webhook after `build`.
 - **TMS docs**: `docs/TMS.md` — exchange format and webhook payload.

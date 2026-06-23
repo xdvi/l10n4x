@@ -89,7 +89,7 @@ l10n4c_free_string(out);
 
 | Document | Description |
 |----------|-------------|
-| [Enterprise Adoption](docs/ENTERPRISE_ADOPTION.md) | Governance, CI/CD, namespaces, OTA — Angular/SAP-style patterns |
+| [Enterprise Adoption](docs/ENTERPRISE_ADOPTION.md) | Governance, CI/CD, namespaces, OTA |
 | [Architecture](docs/ARCHITECTURE.md) | Data flow and package layout |
 | [Roadmap](docs/ROADMAP.md) | P2 backlog and shipped milestones |
 | [l10n4x-js](https://github.com/xdvi/l10n4x-js) | Official `@l10n4x/react` and `@l10n4x/runtime` packages |

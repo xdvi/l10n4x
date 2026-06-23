@@ -1,21 +1,21 @@
 # Enterprise Adoption Guide
 
-How to deploy l10n4x in organizations that need **governance**, **auditability**, and **scale** — the same qualities that drive Angular's compile-time i18n pipeline and SAP's centralized message management, without sacrificing runtime performance.
+How to deploy l10n4x in organizations that need **governance**, **auditability**, and **scale** — governed releases, team-scoped namespaces, and audit-friendly pipelines without sacrificing runtime performance.
 
-l10n4x is not a drop-in for ad-hoc JSON loaders. It is a **compiled localization platform**: translations are validated, signed, and versioned artifacts consumed by a minimal runtime across native, WASM, and FFI targets.
+l10n4x is a **compiled localization platform**: translations are validated, signed, and versioned artifacts consumed by a minimal runtime across native, WASM, and FFI targets. Runtime JSON parsing is not the primary model.
 
 ---
 
 ## Design principles (enterprise alignment)
 
-| Principle | Angular / SAP analogue | l10n4x implementation |
-|-----------|------------------------|----------------------|
-| **Separation of concerns** | Translators work in XLIFF / TMS; devs work in source | JSON source → `l10n4x build` → signed `.pak`; runtime never parses JSON |
-| **Compile-time safety** | `$localize` extraction + build fails on missing keys | `validate`, typed codegen (`generated.ts`, Go structs, etc.), `debug-keys` for staging |
-| **Namespace ownership** | Feature modules / SAP message classes | Modular bundles: `{locale}/{namespace}.pak` + `namespaces.json` manifest |
-| **Release governance** | Locale-specific builds, transport requests | Ed25519-signed artifacts, format v2 + `min_runtime_version`, OTA reload + rollback |
-| **Operational visibility** | Central monitoring, transport logs | v2 metrics (`cache_hit_ratio`, `miss_by_locale`, OTA counters), optional `tracing` |
-| **Polyglot footprint** | Same message repository, many consumers | Core `no_std` + FFI + WASM; bindings for Go, TS/React, C#, Flutter, Python |
+| Principle | Enterprise pattern | l10n4x implementation |
+|-----------|-------------------|----------------------|
+| **Separation of concerns** | Translators work in TMS; engineering owns source structure | JSON source → `l10n4x build` → signed `.pak`; runtime never parses JSON |
+| **Compile-time safety** | Build fails on missing or inconsistent keys | `validate`, typed codegen (`generated.ts`, Go structs, etc.), `debug-keys` for staging |
+| **Namespace ownership** | One bounded context per team or domain | Modular bundles: `{locale}/{namespace}.pak` + `namespaces.json` manifest |
+| **Release governance** | Signed artifacts, versioned promotions, rollback path | Ed25519-signed artifacts, format v2 + `min_runtime_version`, OTA reload + rollback |
+| **Operational visibility** | Central monitoring and release audit trail | v2 metrics (`cache_hit_ratio`, `miss_by_locale`, OTA counters), optional `tracing` |
+| **Polyglot footprint** | Single message repository, many runtimes | Core `no_std` + FFI + WASM; bindings for Go, TS/React, C#, Flutter, Python |
 
 ---
 
@@ -75,7 +75,7 @@ flowchart LR
 
 ## Project layout (modular enterprise)
 
-Mirror Angular feature modules or SAP message classes with **one namespace per bounded context**:
+Assign **one namespace per bounded context** (team, product area, or compliance domain):
 
 ```
 locales/
@@ -161,7 +161,7 @@ Monitor:
 - `pak_verify_failures` — rejected tampered or incompatible artifacts
 - `pak_rollback_total` — manual or automated rollbacks
 
-Reject incompatible format with `RuntimeTooOld` (error code 13) rather than panicking — aligns with SAP-style transport compatibility checks.
+Reject incompatible format with `RuntimeTooOld` (error code 13) rather than panicking — explicit compatibility gates for mixed deployments.
 
 ---
 
