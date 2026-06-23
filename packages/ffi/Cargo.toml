@@ -18,7 +18,7 @@ l10n4x-core = { version = "0.2.0", path = "../core", default-features = false, f
 l10n4x-core = { version = "0.2.0", path = "../core", features = ["std"] }
 l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
 bindgen = "0.69"
-criterion = "0.5"
+criterion = "0.8"
 
 [[bench]]
 name = "translate"
