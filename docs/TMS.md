@@ -2,17 +2,56 @@
 
 Exchange locale JSON with translation teams and push signed `.pak` artifacts to enterprise endpoints.
 
-## Providers
+## Architecture
+
+| Layer | Providers |
+|-------|-----------|
+| **Core** (built into `l10n4x`) | `file`, `webhook` |
+| **Plugins** (optional install) | `crowdin` → `l10n4x-plugin-crowdin` |
+
+```bash
+l10n4x plugin list          # core + optional plugins
+l10n4x plugin info crowdin  # install hints
+```
+
+## Core providers
 
 | Provider | Export | Import | Push |
 |----------|--------|--------|------|
 | `file` | `l10n4x-tms.json` bundle | merge into `sourceDir` | — |
-| `crowdin` | `locale/namespace.json` tree | from download dir | manual via Crowdin UI |
 | `webhook` | — | — | POST signed paks (base64 + SHA-256) |
 
-## Configuration
+## Crowdin plugin
 
-Add to `l10n4x.config.json`:
+Install (optional — linked by default in official builds):
+
+```bash
+cargo install l10n4x-plugin-crowdin
+```
+
+Config:
+
+```json
+{
+  "plugins": {
+    "crowdin": {
+      "projectId": "12345",
+      "tokenEnv": "CROWDIN_TOKEN"
+    }
+  },
+  "tms": {
+    "provider": "crowdin"
+  }
+}
+```
+
+| Direction | Today | Planned |
+|-----------|-------|---------|
+| `export` | `locale/namespace.json` tree | same |
+| `import` | `--from <download-dir>` | API pull when `projectId` + `tokenEnv` set |
+| `push` | manual export + Crowdin UI | API upload |
+
+## Webhook configuration
 
 ```json
 {
@@ -28,19 +67,19 @@ Add to `l10n4x.config.json`:
 ## Commands
 
 ```bash
-# Export portable bundle for offline TMS handoff
+# Export portable bundle for offline TMS handoff (core)
 l10n4x sync --provider file --direction export --out ./tms-export
 
-# Import translated bundle back into source JSON
+# Import translated bundle back into source JSON (core)
 l10n4x sync --provider file --direction import --from ./tms-export
 
-# Crowdin-compatible directory (upload per locale file)
+# Crowdin-compatible directory (plugin)
 l10n4x sync --provider crowdin --direction export --out ./tms-crowdin
 
-# Import Crowdin download directory
+# Import Crowdin download directory (plugin)
 l10n4x sync --provider crowdin --direction import --from ./crowdin-download
 
-# Push signed paks after build (or standalone)
+# Push signed paks after build (core)
 l10n4x build
 l10n4x sync --provider webhook --direction push
 ```
@@ -87,4 +126,4 @@ Runtime consumers must still verify Ed25519 signatures — the webhook digest is
 ## Related
 
 - [ENTERPRISE_ADOPTION.md](./ENTERPRISE_ADOPTION.md) — roles and CI/CD
-- [ROADMAP.md](./ROADMAP.md) — future Crowdin API automation
+- [ROADMAP.md](./ROADMAP.md) — Crowdin API automation (plugin backlog)

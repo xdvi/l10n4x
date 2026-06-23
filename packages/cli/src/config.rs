@@ -1,12 +1,13 @@
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct TmsConfig {
-    /// TMS provider: `file`, `webhook`, or `crowdin`.
+    /// TMS provider: core `file`|`webhook`, or plugin id e.g. `crowdin`.
     #[serde(default = "default_tms_provider")]
     pub provider: String,
     /// HTTP endpoint for signed `.pak` upload (`webhook` provider).
@@ -77,6 +78,9 @@ pub struct Config {
     pub bundles: BundlesConfig,
     #[serde(default)]
     pub tms: Option<TmsConfig>,
+    /// Per-plugin settings keyed by plugin id (`crowdin`, `lokalise`, …).
+    #[serde(default)]
+    pub plugins: HashMap<String, serde_json::Value>,
     pub targets: Vec<Target>,
 }
 
@@ -353,6 +357,7 @@ mod config_io_and_env_tests {
             debug_keys: false,
             bundles: BundlesConfig::default(),
             tms: None,
+            plugins: HashMap::new(),
             targets: vec![],
         };
         save_config(&cfg).unwrap();
@@ -397,6 +402,7 @@ mod config_io_and_env_tests {
             debug_keys: false,
             bundles: BundlesConfig::default(),
             tms: None,
+            plugins: HashMap::new(),
             targets: vec![],
         };
 

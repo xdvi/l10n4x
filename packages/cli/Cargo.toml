@@ -11,7 +11,8 @@ name = "l10n4x"
 path = "src/main.rs"
 
 [features]
-default = []
+default = ["plugin-crowdin"]
+plugin-crowdin = ["dep:l10n4x-plugin-crowdin"]
 debug-keys = ["l10n4x-compiler/debug-keys"]
 
 [dependencies]
@@ -25,6 +26,8 @@ anyhow = "1"
 thiserror = "1"
 l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
 l10n4x-core = { version = "0.2.0", path = "../core" }
+l10n4x-tms = { version = "0.2.0", path = "../tms" }
+l10n4x-plugin-crowdin = { version = "0.2.0", path = "../plugins/crowdin", optional = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors", "timeout"] } # For browser cross-origin dev server requests
 subtle = "2.5"

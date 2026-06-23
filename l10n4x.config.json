@@ -16,6 +16,7 @@
     "preload": []
   },
   "tms": null,
+  "plugins": {},
   "targets": [
     {
       "type": "go",

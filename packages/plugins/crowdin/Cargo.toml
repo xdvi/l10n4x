@@ -1,0 +1,27 @@
+[package]
+name = "l10n4x-plugin-crowdin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Crowdin TMS plugin for l10n4x — locale tree export/import"
+
+[lib]
+name = "l10n4x_plugin_crowdin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "l10n4x-plugin-crowdin"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+l10n4x-compiler = { version = "0.2.0", path = "../../compiler" }
+l10n4x-tms = { version = "0.2.0", path = "../../tms" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3"

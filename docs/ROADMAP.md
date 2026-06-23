@@ -18,7 +18,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 - Mandatory Ed25519 signing, optional AES-GCM envelope (`L10E`)
 - Context suffixes (`friend_male`), fallback chains, locale-change callbacks
 - ICU-lite bytecode formatter (opcodes `0x01`–`0x0C`), CLDR plural rules (120+ locales)
-- Multi-target codegen (Go, TypeScript, Python, C, Flutter, Vue, Svelte, Angular)
+- Multi-target codegen (Go, TypeScript, Python, C, Flutter); web bindings in [l10n4x-js](https://github.com/xdvi/l10n4x-js)
 - Dev server with hot reload, `validate` / `extract` CLI commands
 - Core + FFI benchmarks, basic fuzz targets (`lookup`, `decompress_pak`)
 
@@ -53,7 +53,7 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 | `l10n4x-tms.json` export/import | ✅ `l10n4x sync --provider file` |
 | Crowdin-compatible tree export/import | ✅ `--provider crowdin` |
 | Post-build webhook push | ✅ `--provider webhook`, `tms.pushOnBuild` |
-| Crowdin/Lokalise API automation | Backlog |
+| Crowdin/Lokalise API automation | Backlog (`l10n4x-plugin-crowdin`; offline tree export/import ✅) |
 
 See [TMS.md](./TMS.md).
 

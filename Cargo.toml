@@ -8,6 +8,8 @@ members = [
     "packages/core",
     "packages/ffi",
     "packages/cli",
+    "packages/tms",
+    "packages/plugins/crowdin",
     "packages/wasm",
 ]
 

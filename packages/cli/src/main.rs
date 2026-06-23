@@ -1,5 +1,6 @@
 mod config;
 mod generator;
+mod plugins;
 mod targets;
 mod tms;
 
@@ -34,6 +35,17 @@ use tokio::sync::broadcast;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 use tower_http::cors::CorsLayer;
+
+#[derive(Subcommand)]
+enum PluginCommands {
+    /// List core providers and optional TMS plugins.
+    List,
+    /// Show install and config hints for a plugin.
+    Info {
+        /// Plugin id (e.g. `crowdin`).
+        name: String,
+    },
+}
 
 #[derive(Parser)]
 #[command(name = "l10n4x")]
@@ -110,9 +122,14 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// List or inspect optional TMS plugins (`crowdin`, …).
+    Plugin {
+        #[command(subcommand)]
+        command: PluginCommands,
+    },
     /// TMS exchange: export/import locale JSON or push signed paks to a webhook.
     Sync {
-        /// Provider: `file`, `webhook`, or `crowdin`.
+        /// Provider: core `file`|`webhook`, or plugin `crowdin` (requires install).
         #[arg(long, default_value = "file")]
         provider: String,
         /// Direction: `export`, `import`, or `push`.
@@ -1399,6 +1416,7 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         debug_keys: false,
         bundles: config::BundlesConfig::default(),
         tms: None,
+        plugins: std::collections::HashMap::new(),
         targets,
     };
 
@@ -1704,6 +1722,15 @@ async fn main() -> Result<(), anyhow::Error> {
                 std::process::exit(1);
             }
         }
+        Commands::Plugin { command } => match command {
+            PluginCommands::List => plugins::list_plugins(),
+            PluginCommands::Info { name } => {
+                if let Err(e) = plugins::plugin_info(&name) {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        },
         Commands::Sync {
             provider,
             direction,
@@ -1711,7 +1738,7 @@ async fn main() -> Result<(), anyhow::Error> {
             from,
         } => {
             let config = load_config()?;
-            let dir = tms::SyncDirection::parse(&direction)?;
+            let dir = l10n4x_tms::SyncDirection::parse(&direction)?;
             if let Err(e) = tms::run_sync(&config, &provider, dir, out.as_deref(), from.as_deref())
             {
                 eprintln!("Error: {}", e);
