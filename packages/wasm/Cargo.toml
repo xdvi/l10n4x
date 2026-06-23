@@ -18,8 +18,20 @@ l10n4x-core = { version = "0.2.0", path = "../core", features = ["std", "encrypt
 [target.'cfg(target_family = "wasm")'.dependencies]
 getrandom = { version = "0.2", features = ["js"] }
 
-[package.metadata.wasm-pack.profile.release]
-wasm-opt = false
+# Used by `wasm-pack build --profile release-size` (maps to profile.custom).
+[package.metadata.wasm-pack.profile.custom]
+wasm-opt = [
+  "-Oz",
+  "--enable-bulk-memory",
+  "--enable-nontrapping-float-to-int",
+  "--enable-sign-ext",
+]
+
+[package.metadata.wasm-pack.profile.custom.wasm-bindgen]
+debug-js-glue = false
+demangle-name-section = false
+dwarf-debug-info = false
+omit-default-module-path = false
 
 [dev-dependencies]
 wasmtime = "29"

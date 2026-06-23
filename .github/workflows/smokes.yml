@@ -35,7 +35,7 @@ jobs:
       - name: Build l10n4x-wasm (Node.js target)
         run: |
           cargo install wasm-pack --locked
-          wasm-pack build packages/wasm --target nodejs --out-dir ../../_wasm_pkg --out-name l10n4x
+          wasm-pack build packages/wasm --profile release-size --target nodejs --out-dir ../../_wasm_pkg --out-name l10n4x
           ls -la _wasm_pkg/
 
       - name: Compile fixture .pak files

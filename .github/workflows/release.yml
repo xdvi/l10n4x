@@ -91,12 +91,12 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Build WASM
-        run: cargo build --target wasm32-unknown-unknown --release -p l10n4x-wasm
+        run: cargo build --target wasm32-unknown-unknown --profile release-size -p l10n4x-wasm
 
       - name: Prepare WASM asset
         run: |
           mkdir -p dist-wasm
-          cp target/wasm32-unknown-unknown/release/l10n4x.wasm dist-wasm/l10n4x.wasm
+          cp target/wasm32-unknown-unknown/release-size/l10n4x.wasm dist-wasm/l10n4x.wasm
 
       - name: Upload WASM artifact
         uses: actions/upload-artifact@v4
