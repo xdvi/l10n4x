@@ -1296,17 +1296,7 @@ fn detect_project_type() -> Vec<String> {
     let mut targets = Vec::new();
     if Path::new("package.json").exists() {
         targets.push("typescript".to_string());
-        if let Ok(content) = std::fs::read_to_string("package.json") {
-            if content.contains("\"react\"") || content.contains("\"react-dom\"") {
-                targets.push("react".to_string());
-            }
-            if content.contains("\"vue\"") {
-                targets.push("vue".to_string());
-            }
-            if content.contains("\"svelte\"") {
-                targets.push("svelte".to_string());
-            }
-        }
+        let _ = std::fs::read_to_string("package.json");
     }
     if Path::new("go.mod").exists() {
         targets.push("go".to_string());
@@ -1348,23 +1338,8 @@ fn init_wizard() -> Result<(), anyhow::Error> {
                     out_dir: "./backend/pkg/i18n".to_string(),
                     options: serde_json::json!({ "package": "i18n" }),
                 },
-                "react" => Target {
-                    r#type: "typescript".to_string(),
-                    out_dir: "./frontend/src/i18n".to_string(),
-                    options: serde_json::json!({ "flavor": "react", "strictTypes": true }),
-                },
                 "typescript" => Target {
                     r#type: "typescript".to_string(),
-                    out_dir: "./frontend/src/i18n".to_string(),
-                    options: serde_json::json!({ "flavor": "react", "strictTypes": true }),
-                },
-                "vue" => Target {
-                    r#type: "vue".to_string(),
-                    out_dir: "./src/i18n".to_string(),
-                    options: serde_json::json!({}),
-                },
-                "svelte" => Target {
-                    r#type: "svelte".to_string(),
                     out_dir: "./src/i18n".to_string(),
                     options: serde_json::json!({}),
                 },
@@ -1405,17 +1380,7 @@ fn init_wizard() -> Result<(), anyhow::Error> {
         });
         targets.push(Target {
             r#type: "typescript".to_string(),
-            out_dir: "./i18n/ts".to_string(),
-            options: serde_json::json!({}),
-        });
-        targets.push(Target {
-            r#type: "vue".to_string(),
-            out_dir: "./i18n/vue".to_string(),
-            options: serde_json::json!({}),
-        });
-        targets.push(Target {
-            r#type: "svelte".to_string(),
-            out_dir: "./i18n/svelte".to_string(),
+            out_dir: "./i18n/generated".to_string(),
             options: serde_json::json!({}),
         });
     }

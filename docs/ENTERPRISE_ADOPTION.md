@@ -137,12 +137,15 @@ hotfix      →  OTA reload signed pak           →  rollback if metrics spike
 | Platform | Package / binding | Load model |
 |----------|-------------------|------------|
 | **Web (React)** | [`l10n4x-js`](https://github.com/xdvi/l10n4x-js): `@l10n4x/react`, `@l10n4x/runtime` | WASM + fetch/fs loaders; `L10nProvider` + `useTranslation` |
+| **Web (Vue)** | `@l10n4x/vue` | `createL10nPlugin()` + `useTranslation()` |
+| **Web (Svelte)** | `@l10n4x/svelte` | `createL10nStores()` |
+| **Web (Angular)** | `@l10n4x/angular` | `provideL10n()`, `I18nService`, `I18nPipe` |
 | **Web (SSR)** | `@l10n4x/runtime` with `fsPakLoader` | Node reads `.pak` from disk at request time |
 | **Native services** | `l10n4c` FFI | `l10n4c_load_pak`, `l10n4c_load_namespace`, thread-safe RCU reads |
 | **Mobile** | Flutter/Dart generated bindings | Asset bundle or OTA download |
 | **Polyglot backend** | Go / Python / C# examples | Shared `libl10n4c` + generated wrappers |
 
-Web apps should depend on **`@l10n4x/react`** (published from `l10n4x-js`), not embed runtime logic in CLI-generated files. The CLI emits a thin `generated.ts` with key hashes and types only.
+Web apps should depend on **`@l10n4x/*`** packages (published from `l10n4x-js`), not embed runtime logic in CLI-generated files. The CLI emits a thin `generated.ts` with key hashes and types only.
 
 ---
 

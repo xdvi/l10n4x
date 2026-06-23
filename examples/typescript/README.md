@@ -113,18 +113,21 @@ export async function GET(req: Request) {
 
 ## Generated code (CLI output)
 
-The template in `packages/cli/src/templates/ts_generated.ts` now exports three
-loaders that consumers can use directly:
+The CLI target `typescript` emits a thin `generated.ts` with typed key hashes only
+(`packages/cli/src/templates/ts_keys.ts`). Runtime and loaders live in
+[`@l10n4x/runtime`](https://github.com/xdvi/l10n4x-js):
 
 ```ts
-import { initializeI18n, fetchPakLoader, fsPakLoader, autoPakLoader } from "./generated/i18n";
+import { createL10n } from "@l10n4x/runtime";
+import { Keys } from "./generated";
 
-// Force browser fetch (e.g. always use CDN, even in SSR streaming):
-await initializeI18n({ loader: fetchPakLoader, localesPath: "https://cdn.example.com/locales" });
+const l10n = createL10n({
+  outputDir: "/locales",
+  verifyPublicKey: "…64 hex…",
+  fallback: "en",
+});
 
-// Force Node.js fs (e.g. in a CLI tool):
-await initializeI18n({ loader: fsPakLoader, localesPath: "/opt/app/locales" });
-
-// Auto-detect (default — same as omitting the loader option):
-await initializeI18n({ loader: autoPakLoader });
+await l10n.initialize();
+await l10n.loadLocale("en");
+l10n.t("en", Keys.WelcomeTitle);
 ```

@@ -112,30 +112,6 @@ pub fn generate_bindings(
                     to_upper_snake_case,
                 )?;
             }
-            "vue" => {
-                let params_map =
-                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
-                        .unwrap_or_default();
-                targets::vue::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
-            }
-            "svelte" => {
-                let params_map =
-                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
-                        .unwrap_or_default();
-                targets::svelte::generate(out_dir, &key_pairs, &target.options, &ctx, &params_map)?;
-            }
-            "angular" => {
-                let params_map =
-                    l10n4x_compiler::extract_params_map(std::path::Path::new(ctx.source_dir))
-                        .unwrap_or_default();
-                targets::angular::generate(
-                    out_dir,
-                    &key_pairs,
-                    &target.options,
-                    &ctx,
-                    &params_map,
-                )?;
-            }
             other => {
                 println!("Warning: Unknown target type '{}' ignored.", other);
             }
@@ -252,21 +228,6 @@ mod tests {
             Target {
                 r#type: "python".to_string(),
                 out_dir: temp.path().join("py").to_str().unwrap().to_string(),
-                options: serde_json::json!({}),
-            },
-            Target {
-                r#type: "vue".to_string(),
-                out_dir: temp.path().join("vue").to_str().unwrap().to_string(),
-                options: serde_json::json!({}),
-            },
-            Target {
-                r#type: "svelte".to_string(),
-                out_dir: temp.path().join("svelte").to_str().unwrap().to_string(),
-                options: serde_json::json!({}),
-            },
-            Target {
-                r#type: "angular".to_string(),
-                out_dir: temp.path().join("angular").to_str().unwrap().to_string(),
                 options: serde_json::json!({}),
             },
         ];

@@ -110,17 +110,17 @@ Commands:
 | `pseudo` | Generate pseudolocale for layout/overflow testing |
 | `stats` | Translation coverage report |
 
-Target generators (6):
+CLI binding targets (5):
 
 | Target | Path | Output |
 |--------|------|--------|
-| TypeScript/React | `targets/typescript.rs` | `generated.ts` with typed `t()`, React `useTranslation` hook |
-| Vue | `targets/vue.rs` | `useI18n.ts` composable |
-| Svelte | `targets/svelte.rs` | `i18n.ts` Svelte stores |
+| TypeScript | `targets/typescript.rs` | Thin `generated.ts` — `Keys`, `LocaleKey`, param types only |
 | Go | `targets/go.rs` | `generated.go` with typed `T()` function |
 | Python | `targets/python.rs` | `generated.py` with `translate()` function |
 | C | `targets/c.rs` | `l10n4c.h` + `generated.c` with typed `LOCALE_KEY_*` constants |
 | Flutter/Dart | `targets/flutter.rs` | `generated.dart` with typed getters |
+
+Web runtime and framework adapters (React, Vue, Svelte, Angular) live in the separate [`l10n4x-js`](https://github.com/xdvi/l10n4x-js) monorepo: `@l10n4x/wasm`, `@l10n4x/runtime`, `@l10n4x/react`, `@l10n4x/vue`, `@l10n4x/svelte`, `@l10n4x/angular`.
 
 ### `l10n4c` (C FFI)
 

@@ -1,23 +1,11 @@
 /// Canonical binding targets accepted by `generate` and documented in the CLI.
-pub const SUPPORTED_TARGETS: &[&str] = &[
-    "go",
-    "typescript",
-    "python",
-    "c",
-    "flutter",
-    "angular",
-    "vue",
-    "svelte",
-];
+pub const SUPPORTED_TARGETS: &[&str] = &["go", "typescript", "python", "c", "flutter"];
 
-pub mod angular;
 pub mod c;
 pub mod flutter;
 pub mod go;
 pub mod python;
-pub mod svelte;
 pub mod typescript;
-pub mod vue;
 
 /// Shared runtime/build settings passed to binding generators.
 pub struct GenerateContext<'a> {
