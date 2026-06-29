@@ -1,0 +1,32 @@
+{
+  "project": "l10n4x_project",
+  "sourceDir": "./locales",
+  "outputDir": "./examples/dist/locales",
+  "fallback": "en",
+  "signingKeyEnv": "L10N4X_SIGNING_KEY",
+  "verifyPublicKey": "23bc54912c1e6e92c4a86825c867e27ffdc555bffbd4244f17a26abfffee965d",
+  "encrypt": false,
+  "compressionLevel": 8,
+  "encryptKeyEnv": "L10N4X_ENCRYPT_KEY",
+  "corsOrigins": null,
+  "debugKeys": false,
+  "bundles": {
+    "mode": "",
+    "splitBy": "",
+    "preload": []
+  },
+  "tms": null,
+  "plugins": {},
+  "targets": [
+    {
+      "type": "go",
+      "outDir": "./i18n/go",
+      "options": {}
+    },
+    {
+      "type": "typescript",
+      "outDir": "./i18n/ts",
+      "options": {}
+    }
+  ]
+}

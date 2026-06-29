@@ -1,0 +1,76 @@
+name: Conventional Commits
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  pull-requests: read
+  contents: read
+
+jobs:
+  pr-title:
+    name: PR title follows conventional commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2
+        with:
+          egress-policy: audit
+      - uses: amannn/action-semantic-pull-request@48f256284bd46cdaab1048c3721360e808335d50  # v6.1.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          types: |
+            feat
+            fix
+            perf
+            refactor
+            docs
+            test
+            ci
+            chore
+            build
+            revert
+            release
+          requireScope: false
+          subjectPattern: ^[A-Z].+[^.]$
+          subjectPatternError: |
+            Subject must start with a capital letter and not end with a period.
+
+            Examples:
+              feat: Add user authentication
+              fix: Resolve buffer overflow in lookup
+              docs: Update API documentation
+
+  commit-messages:
+    name: Commit messages follow conventional commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@67ef31d5b988238dd797d409d6f9574278e20537  # master
+        with:
+          toolchain: stable
+      - name: Install cocogitto
+        run: cargo install cocogitto --locked
+      - name: Check all commits in PR
+        run: |
+          git fetch origin main
+          cog check origin/main..HEAD || {
+            echo "commit messages in this PR do not follow conventional commits format."
+            echo ""
+            echo "Valid types: feat, fix, perf, refactor, docs, test, ci, chore, build, revert, release"
+            echo "Format: type(optional-scope): description"
+            echo "Examples:"
+            echo "  feat(store): add sharded lookup"
+            echo "  fix: resolve buffer overflow in lookup"
+            echo "  docs: update API reference"
+            exit 1
+          }
+

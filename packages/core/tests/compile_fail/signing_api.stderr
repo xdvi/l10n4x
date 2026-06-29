@@ -1,0 +1,5 @@
+error[E0425]: cannot find function `set_signing_key` in module `l10n4x_core::integrity`
+ --> tests/compile_fail/signing_api.rs:3:37
+  |
+3 |     let _ = l10n4x_core::integrity::set_signing_key(b"seed");
+  |                                     ^^^^^^^^^^^^^^^ not found in `l10n4x_core::integrity`

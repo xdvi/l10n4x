@@ -1,0 +1,25 @@
+[package]
+name = "l10n4x-compiler"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Compile JSON/YAML locale trees into compact l10n4x binary packages"
+documentation = "https://docs.rs/l10n4x-compiler"
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = []
+debug-keys = ["l10n4x-core/debug-keys"]
+
+[dev-dependencies]
+tempfile = "3"
+
+[dependencies]
+serde_json = "1.0"
+l10n4x-core = { version = "0.1.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
+zstd = "0.13"
+thiserror = "1.0"
+ed25519-dalek = { version = "2.1", default-features = false, features = ["alloc", "std"] }

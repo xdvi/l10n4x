@@ -1,0 +1,40 @@
+[package]
+name = "l10n4x-core"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "High-performance, no_std compatible l10n runtime for l10n4x"
+documentation = "https://docs.rs/l10n4x-core"
+keywords.workspace = true
+categories.workspace = true
+
+[features]
+default = ["std"]
+alloc = ["dep:ed25519-dalek"]
+std = ["alloc", "encryption", "dep:crossbeam-epoch", "dep:log", "dep:serde", "dep:serde_json"]
+encryption = ["dep:aes-gcm", "aes-gcm?/std", "aes-gcm?/getrandom"]
+debug-keys = []
+tracing = ["dep:tracing", "std"]
+
+[dependencies]
+ruzstd = { version = "0.7", default-features = false }
+ed25519-dalek = { version = "2.1", optional = true, default-features = false, features = ["alloc"] }
+aes-gcm = { version = "0.10.3", optional = true, default-features = false, features = ["aes"] }
+crossbeam-epoch = { version = "0.9.18", optional = true, default-features = false, features = ["std"] }
+log = { version = "0.4", optional = true, default-features = false }
+serde = { version = "1.0", optional = true, features = ["derive"] }
+serde_json = { version = "1.0", optional = true }
+tracing = { version = "0.1", optional = true, default-features = false }
+
+[dev-dependencies]
+serde_json = "1.0"
+criterion = "0.5"
+trybuild = "1"
+zstd = "0.13"
+l10n4x-compiler = { path = "../compiler" }
+
+[[bench]]
+name = "lookup"
+harness = false

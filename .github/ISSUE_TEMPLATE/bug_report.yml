@@ -1,0 +1,45 @@
+name: Bug Report
+description: Report a bug or unexpected behavior
+labels: [bug]
+body:
+  - type: textarea
+    attributes:
+      label: Description
+      description: What happened? What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: Steps to Reproduce
+      description: |
+        1. Given ...
+        2. When ...
+        3. Then ...
+      placeholder: |
+        1. Load locale 'en' with key 'greeting'
+        2. Call translate("es") with fallback chain ["en"]
+        3. Expected "Hello", got empty string
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Affected Component
+      options:
+        - l10n4x-core (runtime)
+        - l10n4x-compiler (build)
+        - l10n4x-toolkit (CLI)
+        - l10n4c (C FFI)
+        - l10n4x-wasm
+        - Plugin (Crowdin)
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Version
+      description: Which version of the crate(s) are you using?
+      placeholder: "0.2.0"
+  - type: textarea
+    attributes:
+      label: Additional Context
+      description: Logs, screenshots, or anything else that helps.

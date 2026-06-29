@@ -1,0 +1,21 @@
+[package]
+name = "l10n4x-core-fuzz"
+version = "0.0.1"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+l10n4x-core = { path = ".." }
+
+[[bin]]
+name = "decompress_pak"
+path = "fuzz_targets/decompress_pak.rs"
+
+[[bin]]
+name = "lookup"
+path = "fuzz_targets/lookup.rs"

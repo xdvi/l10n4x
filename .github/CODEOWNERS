@@ -1,0 +1,8 @@
+# CODEOWNERS — Required reviewers for critical paths
+
+# Supply-chain and dependency policy
+Cargo.toml       @xdvi
+deny.toml        @xdvi
+
+# FFI boundary (security-sensitive, ABI stability)
+packages/ffi/    @xdvi
