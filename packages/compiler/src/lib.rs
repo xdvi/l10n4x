@@ -15,6 +15,7 @@ use serde_json::Value;
 use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
+use std::io::BufReader;
 use std::path::Path;
 use std::sync::Mutex;
 
@@ -438,8 +439,9 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
             .and_then(|s| s.to_str())
             .ok_or(CompileError::InvalidFileName)?
             .to_string();
-        let content = std::fs::read_to_string(&file_path)?;
-        let parsed_json: serde_json::Value = serde_json::from_str(&content)?;
+        let file = std::fs::File::open(&file_path)?;
+        let reader = std::io::BufReader::new(file);
+        let parsed_json: serde_json::Value = serde_json::from_reader(reader)?;
         let mut flat: HashMap<String, String> = HashMap::new();
         flatten_value(file_name, &parsed_json, &mut flat);
 
@@ -506,9 +508,10 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
                     .ok_or(CompileError::InvalidFileName)?
                     .to_string();
 
-                let content = fs::read_to_string(&file_path)?;
-                let parsed_json: Value = serde_json::from_str(&content)?;
-
+                let file = fs::File::open(&file_path)?;
+                let reader = BufReader::new(file);
+                let parsed_json: Value = serde_json::from_reader(reader)?;
+ 
                 flatten_value(file_name, &parsed_json, &mut raw_flat_translations);
                 file_count += 1;
             }
@@ -579,8 +582,9 @@ fn compile_namespace_file(
     file_path: &Path,
     namespace: &str,
 ) -> Result<HashMap<u64, Vec<icu_parser::MessageNode>>, CompileError> {
-    let content = fs::read_to_string(file_path)?;
-    let parsed_json: Value = serde_json::from_str(&content)?;
+    let file = fs::File::open(file_path)?;
+    let reader = BufReader::new(file);
+    let parsed_json: Value = serde_json::from_reader(reader)?;
     let mut raw_flat_translations = HashMap::new();
     flatten_value(
         namespace.to_string(),
@@ -600,8 +604,9 @@ fn compile_namespace_key_names(
     file_path: &Path,
     namespace: &str,
 ) -> Result<HashMap<u64, String>, CompileError> {
-    let content = fs::read_to_string(file_path)?;
-    let parsed_json: Value = serde_json::from_str(&content)?;
+    let file = fs::File::open(file_path)?;
+    let reader = BufReader::new(file);
+    let parsed_json: Value = serde_json::from_reader(reader)?;
     let mut raw_flat = HashMap::new();
     flatten_value(namespace.to_string(), &parsed_json, &mut raw_flat);
     Ok(raw_flat
@@ -680,8 +685,9 @@ pub fn compile_key_pairs(src_path: &Path) -> Result<Vec<(u64, String)>, CompileE
                     .and_then(|s| s.to_str())
                     .ok_or(CompileError::InvalidFileName)?
                     .to_string();
-                let content = fs::read_to_string(&file_path)?;
-                let parsed: Value = serde_json::from_str(&content)?;
+                let file = fs::File::open(&file_path)?;
+                let reader = BufReader::new(file);
+                let parsed: Value = serde_json::from_reader(reader)?;
                 let mut raw_flat = HashMap::new();
                 flatten_value(file_name, &parsed, &mut raw_flat);
                 for k in raw_flat.keys() {
