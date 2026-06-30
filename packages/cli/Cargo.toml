@@ -1,6 +1,6 @@
 [package]
 name = "l10n4x-toolkit"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -28,10 +28,10 @@ axum = "0.7"
 notify = "6"
 anyhow = "1"
 thiserror = "1"
-l10n4x-compiler = { version = "0.1.0", path = "../compiler" }
-l10n4x-core = { version = "0.1.0", path = "../core" }
-l10n4x-tms = { version = "0.1.0", path = "../tms" }
-l10n4x-plugin-crowdin = { version = "0.1.0", path = "../plugins/crowdin", optional = true }
+l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
+l10n4x-core = { version = "0.2.0", path = "../core" }
+l10n4x-tms = { version = "0.2.0", path = "../tms" }
+l10n4x-plugin-crowdin = { version = "0.2.0", path = "../plugins/crowdin", optional = true }
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors", "timeout"] } # For browser cross-origin dev server requests
 subtle = "2.5"

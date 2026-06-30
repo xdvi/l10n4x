@@ -7,6 +7,13 @@ automate releases. Entries below are generated from conventional commits.
 
 ---
 
+## [0.2.0](https://github.com/xdvi/l10n4x/compare/v0.1.0...v0.2.0) (2026-06-30)
+
+
+### Features
+
+* initial release — l10n4x localization engine v0.1.0 ([88a6efd](https://github.com/xdvi/l10n4x/commit/88a6efd29fb09997bc53c27a6a9ac86da489ae60))
+
 ## [0.1.0] - 2026-06-29
 
 ### Initial Release

@@ -1,6 +1,6 @@
 [package]
 name = "l10n4c"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -12,11 +12,11 @@ documentation = "https://docs.rs/l10n4c"
 crate-type = ["cdylib", "staticlib", "rlib"]
 
 [dependencies]
-l10n4x-core = { version = "0.1.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
+l10n4x-core = { version = "0.2.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
 
 [dev-dependencies]
-l10n4x-core = { version = "0.1.0", path = "../core", features = ["std"] }
-l10n4x-compiler = { version = "0.1.0", path = "../compiler" }
+l10n4x-core = { version = "0.2.0", path = "../core", features = ["std"] }
+l10n4x-compiler = { version = "0.2.0", path = "../compiler" }
 bindgen = "0.69"
 criterion = "0.5"
 
