@@ -44,6 +44,7 @@ fn create_fixture(base: &PathBuf, locale_count: usize, files_per_locale: usize, 
                         format!("error_{}", k),
                         format!("Error code {}: {{error_message}}", k),
                     ),
+                    _ => unreachable!(),
                 };
                 entries.insert(key, serde_json::Value::String(value));
             }
@@ -68,24 +69,18 @@ fn bench_compile_pipeline(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(20));
 
     group.bench_function("medium_8loc_5files_50keys", |b| {
-        b.iter_batched(
-            || {
-                let out = std::env::temp_dir().join("l10n4x_bench_out_med");
-                let _ = fs::remove_dir_all(&out);
-                out
-            },
-            |out| {
-                let result = l10n4x_compiler::compile_translations(
-                    black_box(&medium_src),
-                    black_box(&out),
-                    false,
-                    6,
-                );
-                let _ = fs::remove_dir_all(&out);
-                black_box(result)
-            },
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| {
+            let out = std::env::temp_dir().join("l10n4x_bench_out_med");
+            let _ = fs::remove_dir_all(&out);
+            let result = l10n4x_compiler::compile_translations(
+                black_box(&medium_src),
+                black_box(&out),
+                false,
+                6,
+            );
+            let _ = fs::remove_dir_all(&out);
+            black_box(result)
+        });
     });
 
     // --- Small test: 2 locales x 2 files x 10 keys ---
@@ -94,24 +89,18 @@ fn bench_compile_pipeline(c: &mut Criterion) {
     create_fixture(&small_src, 2, 2, 10);
 
     group.bench_function("small_2loc_2files_10keys", |b| {
-        b.iter_batched(
-            || {
-                let out = std::env::temp_dir().join("l10n4x_bench_out_small");
-                let _ = fs::remove_dir_all(&out);
-                out
-            },
-            |out| {
-                let result = l10n4x_compiler::compile_translations(
-                    black_box(&small_src),
-                    black_box(&out),
-                    false,
-                    6,
-                );
-                let _ = fs::remove_dir_all(&out);
-                black_box(result)
-            },
-            criterion::BatchSize::SmallInput,
-        );
+        b.iter(|| {
+            let out = std::env::temp_dir().join("l10n4x_bench_out_small");
+            let _ = fs::remove_dir_all(&out);
+            let result = l10n4x_compiler::compile_translations(
+                black_box(&small_src),
+                black_box(&out),
+                false,
+                6,
+            );
+            let _ = fs::remove_dir_all(&out);
+            black_box(result)
+        });
     });
 
     group.finish();
