@@ -115,6 +115,47 @@ pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, St
     }
 }
 
+/// Like flatten_value, but invokes `on_pair` for each (key, value) leaf instead
+/// of inserting into a map.
+pub fn flatten_value_cb<F: FnMut(String, &str)>(
+    prefix: String,
+    value: &Value,
+    on_pair: &mut F,
+) {
+    match value {
+        Value::Object(obj) => {
+            for (k, v) in obj {
+                let new_prefix = if prefix.is_empty() {
+                    k.clone()
+                } else {
+                    format!("{}.{}", prefix, k)
+                };
+                flatten_value_cb(new_prefix, v, on_pair);
+            }
+        }
+        Value::Array(arr) => {
+            if arr.iter().all(|v| {
+                matches!(
+                    v,
+                    Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null
+                )
+            }) {
+                let json_str = serde_json::to_string(value).unwrap_or_default();
+                on_pair(prefix, &json_str);
+            } else {
+                for (i, v) in arr.iter().enumerate() {
+                    let new_prefix = format!("{}.{}", prefix, i);
+                    flatten_value_cb(new_prefix, v, on_pair);
+                }
+            }
+        }
+        Value::String(s) => on_pair(prefix, s),
+        Value::Number(n) => on_pair(prefix, &n.to_string()),
+        Value::Bool(b) => on_pair(prefix, if *b { "true" } else { "false" }),
+        Value::Null => on_pair(prefix, "null"),
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum CompileError {
     #[error("Source is not a directory")]
@@ -493,8 +534,10 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             .ok_or(CompileError::InvalidDirectoryName)?
             .to_string();
 
-        let mut raw_flat_translations = HashMap::new();
         let mut file_count = 0;
+        let parse_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+        let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
+            HashMap::new();
 
         let files = fs::read_dir(&lang_path)?;
 
@@ -511,8 +554,14 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
                 let file = fs::File::open(&file_path)?;
                 let reader = BufReader::new(file);
                 let parsed_json: Value = serde_json::from_reader(reader)?;
- 
-                flatten_value(file_name, &parsed_json, &mut raw_flat_translations);
+
+                flatten_value_cb(file_name, &parsed_json, &mut |key, template| {
+                    if let Err(e) = parse_flat_translations_inline(
+                        &lang, &key, template, &mut parsed_translations,
+                    ) {
+                        parse_errors.lock().unwrap().push(e);
+                    }
+                });
                 file_count += 1;
             }
         }
@@ -521,7 +570,9 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             continue;
         }
 
-        let mut parsed_translations = parse_flat_translations(&lang, raw_flat_translations)?;
+        if let Some(first) = parse_errors.into_inner().unwrap().into_iter().next() {
+            return Err(first);
+        }
         resolve_key_refs(&mut parsed_translations);
 
         let hashed: HashMap<u64, Vec<icu_parser::MessageNode>> = parsed_translations
@@ -548,33 +599,32 @@ fn validate_template_nodes(
     })
 }
 
-fn parse_flat_translations(
+fn parse_flat_translations_inline(
     locale: &str,
-    raw_flat: HashMap<String, String>,
-) -> Result<HashMap<String, Vec<icu_parser::MessageNode>>, CompileError> {
-    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
-    for (k, template) in raw_flat {
-        if let Some(interval_cases) = icu_parser::parse_interval_plural(&template) {
-            let nodes = vec![icu_parser::MessageNode::Plural {
-                var: "count".to_string(),
-                ordinal: false,
-                cases: interval_cases,
-            }];
-            parsed_translations.insert(k, nodes);
-        } else {
-            let parser = MessageParser::new(&template);
-            let nodes = parser
-                .parse()
-                .map_err(|message| CompileError::TemplateParseError {
-                    locale: locale.to_string(),
-                    key: k.clone(),
-                    message,
-                })?;
-            validate_template_nodes(locale, &k, &nodes)?;
-            parsed_translations.insert(k, nodes);
-        }
+    key: &str,
+    template: &str,
+    parsed_translations: &mut HashMap<String, Vec<icu_parser::MessageNode>>,
+) -> Result<(), CompileError> {
+    if let Some(interval_cases) = icu_parser::parse_interval_plural(template) {
+        let nodes = vec![icu_parser::MessageNode::Plural {
+            var: "count".to_string(),
+            ordinal: false,
+            cases: interval_cases,
+        }];
+        parsed_translations.insert(key.to_string(), nodes);
+    } else {
+        let parser = MessageParser::new(template);
+        let nodes = parser
+            .parse()
+            .map_err(|message| CompileError::TemplateParseError {
+                locale: locale.to_string(),
+                key: key.to_string(),
+                message,
+            })?;
+        validate_template_nodes(locale, key, &nodes)?;
+        parsed_translations.insert(key.to_string(), nodes);
     }
-    Ok(parsed_translations)
+    Ok(())
 }
 
 fn compile_namespace_file(
@@ -585,13 +635,21 @@ fn compile_namespace_file(
     let file = fs::File::open(file_path)?;
     let reader = BufReader::new(file);
     let parsed_json: Value = serde_json::from_reader(reader)?;
-    let mut raw_flat_translations = HashMap::new();
-    flatten_value(
-        namespace.to_string(),
-        &parsed_json,
-        &mut raw_flat_translations,
-    );
-    let mut parsed_translations = parse_flat_translations(locale, raw_flat_translations)?;
+    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
+    let parse_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+
+    flatten_value_cb(namespace.to_string(), &parsed_json, &mut |key, template| {
+        if let Err(e) = parse_flat_translations_inline(
+            locale, &key, template, &mut parsed_translations,
+        ) {
+            parse_errors.lock().unwrap().push(e);
+        }
+    });
+
+    if let Some(first) = parse_errors.into_inner().unwrap().into_iter().next() {
+        return Err(first);
+    }
+
     resolve_key_refs(&mut parsed_translations);
     Ok(parsed_translations
         .into_iter()
