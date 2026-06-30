@@ -1,46 +1,49 @@
 use ahash::AHashMap;
+use std::io::{self, Write};
 use crate::icu_parser::{
     DateStyle, ListStyle, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle,
 };
 
 /// Serialize parsed message nodes to ICU bytecode.
 pub fn serialize_message(nodes: &[MessageNode]) -> Vec<u8> {
-    serialize_nodes(nodes)
+    let mut buf = Vec::new();
+    serialize_nodes(nodes, &mut buf).unwrap();
+    buf
 }
 
-fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
+fn serialize_nodes<W: Write>(nodes: &[MessageNode], w: &mut W) -> io::Result<()> {
     // Optimization: single Text node emits raw bytes (no opcode 0x01 prefix)
     if nodes.len() == 1 {
         if let MessageNode::Text(t) = &nodes[0] {
-            return t.as_bytes().to_vec();
+            w.write_all(t.as_bytes())?;
+            return Ok(());
         }
     }
-    let mut buf = Vec::with_capacity(nodes.len() * 64);
     for node in nodes {
         match node {
             MessageNode::Text(t) => {
-                buf.push(0x01);
+                w.write_all(&[0x01])?;
                 let bytes = t.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(bytes);
+                w.write_all(&(bytes.len() as u32).to_be_bytes())?;
+                w.write_all(bytes)?;
             }
             MessageNode::RawVariable(v) => {
                 // Unescaped variable ({- name} syntax). Emits 0x0B with raw flag.
-                buf.push(0x0B);
+                w.write_all(&[0x0B])?;
                 let bytes = v.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(bytes);
-                buf.push(0x01); // flags: 0x01 = raw (no escaping)
+                w.write_all(&(bytes.len() as u32).to_be_bytes())?;
+                w.write_all(bytes)?;
+                w.write_all(&[0x01])?; // flags: 0x01 = raw (no escaping)
             }
             MessageNode::Variable(v) => {
                 // Variables are escaped by default (opcode 0x0B with flags byte).
                 // The `{- var}` unescape marker is handled at the parser level and
                 // emitted as a separate RawVariable node.
-                buf.push(0x0B);
+                w.write_all(&[0x0B])?;
                 let bytes = v.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(bytes);
-                buf.push(0x00); // flags: 0 = escaped by default
+                w.write_all(&(bytes.len() as u32).to_be_bytes())?;
+                w.write_all(bytes)?;
+                w.write_all(&[0x00])?; // flags: 0 = escaped by default
             }
             MessageNode::Plural {
                 var,
@@ -48,114 +51,116 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 cases,
             } => {
                 if *ordinal {
-                    buf.push(0x0A); // ordinal plural
+                    w.write_all(&[0x0A])?; // ordinal plural
                 } else {
-                    buf.push(0x03); // cardinal plural
+                    w.write_all(&[0x03])?; // cardinal plural
                 }
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
-                buf.extend_from_slice(&(cases.len() as u16).to_be_bytes());
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
+                w.write_all(&(cases.len() as u16).to_be_bytes())?;
                 for (key, pattern) in cases {
                     match key {
-                        PluralCaseKey::Other => buf.push(0x00),
+                        PluralCaseKey::Other => w.write_all(&[0x00])?,
                         PluralCaseKey::Exact(val) => {
-                            buf.push(0x01);
-                            buf.extend_from_slice(&val.to_be_bytes());
+                            w.write_all(&[0x01])?;
+                            w.write_all(&val.to_be_bytes())?;
                         }
-                        PluralCaseKey::Zero => buf.push(0x02),
-                        PluralCaseKey::One => buf.push(0x03),
-                        PluralCaseKey::Two => buf.push(0x04),
-                        PluralCaseKey::Few => buf.push(0x05),
-                        PluralCaseKey::Many => buf.push(0x06),
+                        PluralCaseKey::Zero => w.write_all(&[0x02])?,
+                        PluralCaseKey::One => w.write_all(&[0x03])?,
+                        PluralCaseKey::Two => w.write_all(&[0x04])?,
+                        PluralCaseKey::Few => w.write_all(&[0x05])?,
+                        PluralCaseKey::Many => w.write_all(&[0x06])?,
                         PluralCaseKey::Range(min, max) => {
-                            buf.push(0x07);
-                            buf.extend_from_slice(&min.to_be_bytes());
-                            buf.extend_from_slice(&max.to_be_bytes());
+                            w.write_all(&[0x07])?;
+                            w.write_all(&min.to_be_bytes())?;
+                            w.write_all(&max.to_be_bytes())?;
                         }
                     }
-                    let pattern_bytecode = serialize_nodes(pattern);
-                    buf.extend_from_slice(&(pattern_bytecode.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(&pattern_bytecode);
+                    let mut sub = Vec::new();
+                    serialize_nodes(pattern, &mut sub)?;
+                    w.write_all(&(sub.len() as u32).to_be_bytes())?;
+                    w.write_all(&sub)?;
                 }
             }
             MessageNode::Select { var, cases } => {
-                buf.push(0x04);
+                w.write_all(&[0x04])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
-                buf.extend_from_slice(&(cases.len() as u16).to_be_bytes());
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
+                w.write_all(&(cases.len() as u16).to_be_bytes())?;
                 for (key, pattern) in cases {
                     let key_bytes = key.as_bytes();
-                    buf.extend_from_slice(&(key_bytes.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(key_bytes);
-                    let pattern_bytecode = serialize_nodes(pattern);
-                    buf.extend_from_slice(&(pattern_bytecode.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(&pattern_bytecode);
+                    w.write_all(&(key_bytes.len() as u32).to_be_bytes())?;
+                    w.write_all(key_bytes)?;
+                    let mut sub = Vec::new();
+                    serialize_nodes(pattern, &mut sub)?;
+                    w.write_all(&(sub.len() as u32).to_be_bytes())?;
+                    w.write_all(&sub)?;
                 }
             }
             MessageNode::Number { var, style } => {
-                buf.push(0x05);
+                w.write_all(&[0x05])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
                 match style {
                     NumberStyle::Decimal => {
-                        buf.push(0x00);
+                        w.write_all(&[0x00])?;
                     }
                     NumberStyle::Percent => {
-                        buf.push(0x01);
+                        w.write_all(&[0x01])?;
                     }
                     NumberStyle::Integer => {
-                        buf.push(0x02);
+                        w.write_all(&[0x02])?;
                     }
                     NumberStyle::Currency(code) => {
-                        buf.push(0x03);
+                        w.write_all(&[0x03])?;
                         let code_bytes = code.as_bytes();
-                        buf.extend_from_slice(&(code_bytes.len() as u32).to_be_bytes());
-                        buf.extend_from_slice(code_bytes);
+                        w.write_all(&(code_bytes.len() as u32).to_be_bytes())?;
+                        w.write_all(code_bytes)?;
                     }
                 }
             }
             MessageNode::Date { var, style } => {
-                buf.push(0x06);
+                w.write_all(&[0x06])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
                 let style_byte: u8 = match style {
                     DateStyle::Date => 0x00,
                     DateStyle::Time => 0x01,
                     DateStyle::DateTime => 0x02,
                 };
-                buf.push(style_byte);
+                w.write_all(&[style_byte])?;
             }
             MessageNode::VariableWithDefault { name, default } => {
-                buf.push(0x0C);
+                w.write_all(&[0x0C])?;
                 let name_bytes = name.as_bytes();
                 let default_bytes = default.as_bytes();
-                buf.extend_from_slice(&(name_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(name_bytes);
-                buf.extend_from_slice(&(default_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(default_bytes);
-                buf.push(0x00); // flags: 0 = escaped by default
+                w.write_all(&(name_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(name_bytes)?;
+                w.write_all(&(default_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(default_bytes)?;
+                w.write_all(&[0x00])?; // flags: 0 = escaped by default
             }
             MessageNode::List { var, style } => {
-                buf.push(0x09);
+                w.write_all(&[0x09])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
                 let style_byte: u8 = match style {
                     ListStyle::Conjunction => 0x00,
                     ListStyle::Disjunction => 0x01,
                     ListStyle::Unit => 0x02,
                 };
-                buf.push(style_byte);
+                w.write_all(&[style_byte])?;
             }
             MessageNode::RelTime { var, style } => {
-                buf.push(0x08);
+                w.write_all(&[0x08])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
                 let style_byte: u8 = match style {
                     RelTimeStyle::Auto => 0x00,
                     RelTimeStyle::Seconds => 0x01,
@@ -166,7 +171,7 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                     RelTimeStyle::Months => 0x06,
                     RelTimeStyle::Years => 0x07,
                 };
-                buf.push(style_byte);
+                w.write_all(&[style_byte])?;
             }
             MessageNode::Markup { .. } => {}
             MessageNode::Custom {
@@ -174,17 +179,17 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 literal_operand,
                 format,
             } => {
-                buf.push(0x0D);
+                w.write_all(&[0x0D])?;
                 let var_bytes = var.as_bytes();
-                buf.extend_from_slice(&(var_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(var_bytes);
+                w.write_all(&(var_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(var_bytes)?;
                 let lit = literal_operand.as_deref().unwrap_or("");
                 let lit_bytes = lit.as_bytes();
-                buf.extend_from_slice(&(lit_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(lit_bytes);
+                w.write_all(&(lit_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(lit_bytes)?;
                 let fmt_bytes = format.formatter.as_bytes();
-                buf.extend_from_slice(&(fmt_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(fmt_bytes);
+                w.write_all(&(fmt_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(fmt_bytes)?;
                 let opts_str = format
                     .options
                     .iter()
@@ -192,15 +197,15 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                     .collect::<Vec<_>>()
                     .join(",");
                 let opt_bytes = opts_str.as_bytes();
-                buf.extend_from_slice(&(opt_bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(opt_bytes);
+                w.write_all(&(opt_bytes.len() as u32).to_be_bytes())?;
+                w.write_all(opt_bytes)?;
             }
             MessageNode::KeyRef(ref_key) => {
                 // KeyRef should be resolved before writing, but emit as Text if not.
-                buf.push(0x01);
+                w.write_all(&[0x01])?;
                 let bytes = ref_key.as_bytes();
-                buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
-                buf.extend_from_slice(bytes);
+                w.write_all(&(bytes.len() as u32).to_be_bytes())?;
+                w.write_all(bytes)?;
             }
             MessageNode::Mf2Match {
                 selectors,
@@ -208,46 +213,47 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
                 locals,
                 variants,
             } => {
-                buf.push(0x0E);
-                buf.push(selectors.len() as u8);
+                w.write_all(&[0x0E])?;
+                w.write_all(&[selectors.len() as u8])?;
                 for sel in selectors {
                     let b = sel.as_bytes();
-                    buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(b);
+                    w.write_all(&(b.len() as u32).to_be_bytes())?;
+                    w.write_all(b)?;
                 }
-                buf.extend_from_slice(&(inputs.len() as u16).to_be_bytes());
+                w.write_all(&(inputs.len() as u16).to_be_bytes())?;
                 for (name, expr) in inputs {
                     let nb = name.as_bytes();
-                    buf.extend_from_slice(&(nb.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(nb);
-                    buf.extend_from_slice(&serialize_decl_expr(expr));
+                    w.write_all(&(nb.len() as u32).to_be_bytes())?;
+                    w.write_all(nb)?;
+                    serialize_decl_expr(expr, w)?;
                 }
-                buf.extend_from_slice(&(locals.len() as u16).to_be_bytes());
+                w.write_all(&(locals.len() as u16).to_be_bytes())?;
                 for (name, expr) in locals {
                     let nb = name.as_bytes();
-                    buf.extend_from_slice(&(nb.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(nb);
-                    buf.extend_from_slice(&serialize_decl_expr(expr));
+                    w.write_all(&(nb.len() as u32).to_be_bytes())?;
+                    w.write_all(nb)?;
+                    serialize_decl_expr(expr, w)?;
                 }
-                buf.extend_from_slice(&(variants.len() as u16).to_be_bytes());
+                w.write_all(&(variants.len() as u16).to_be_bytes())?;
                 for (keys, pattern) in variants {
-                    buf.push(keys.len() as u8);
+                    w.write_all(&[keys.len() as u8])?;
                     for key in keys {
                         let kb = key.as_bytes();
-                        buf.extend_from_slice(&(kb.len() as u32).to_be_bytes());
-                        buf.extend_from_slice(kb);
+                        w.write_all(&(kb.len() as u32).to_be_bytes())?;
+                        w.write_all(kb)?;
                     }
-                    let pat_bc = serialize_nodes(pattern);
-                    buf.extend_from_slice(&(pat_bc.len() as u32).to_be_bytes());
-                    buf.extend_from_slice(&pat_bc);
+                    let mut sub = Vec::new();
+                    serialize_nodes(pattern, &mut sub)?;
+                    w.write_all(&(sub.len() as u32).to_be_bytes())?;
+                    w.write_all(&sub)?;
                 }
             }
         }
     }
-    buf
+    Ok(())
 }
 
-fn serialize_decl_expr(node: &MessageNode) -> Vec<u8> {
+fn serialize_decl_expr<W: Write>(node: &MessageNode, w: &mut W) -> io::Result<()> {
     let (var, literal, formatter, options) = match node {
         MessageNode::Custom {
             var,
@@ -270,13 +276,12 @@ fn serialize_decl_expr(node: &MessageNode) -> Vec<u8> {
         }
         _ => ("", "", "", String::new()),
     };
-    let mut buf = Vec::new();
     for s in [var, literal, formatter, options.as_str()] {
         let b = s.as_bytes();
-        buf.extend_from_slice(&(b.len() as u32).to_be_bytes());
-        buf.extend_from_slice(b);
+        w.write_all(&(b.len() as u32).to_be_bytes())?;
+        w.write_all(b)?;
     }
-    buf
+    Ok(())
 }
 
 pub fn write_binary_format(
@@ -292,7 +297,7 @@ pub fn write_binary_format_with_keys(
     use std::collections::BTreeMap;
     let mut entries = BTreeMap::new();
     for (&hash, nodes) in translations {
-        entries.insert(hash, serialize_nodes(nodes));
+        entries.insert(hash, serialize_message(nodes));
     }
     #[cfg(feature = "debug-keys")]
     let debug = key_names.map(|m| {
@@ -328,10 +333,16 @@ mod tests {
 
     use ahash::AHashMap;
 
+    fn serialize_nodes_vec(nodes: &[MessageNode]) -> Vec<u8> {
+        let mut buf = Vec::new();
+        serialize_nodes(nodes, &mut buf).unwrap();
+        buf
+    }
+
     #[test]
     fn test_serialize_text() {
         let nodes = vec![MessageNode::Text("Hello World".to_string())];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         // Single text node emits raw bytes with no opcode prefix
         assert_eq!(&bytes, b"Hello World");
     }
@@ -339,7 +350,7 @@ mod tests {
     #[test]
     fn test_serialize_variable() {
         let nodes = vec![MessageNode::Variable("name".to_string())];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0B);
         let len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         assert_eq!(len, 4);
@@ -350,7 +361,7 @@ mod tests {
     #[test]
     fn test_serialize_raw_variable() {
         let nodes = vec![MessageNode::RawVariable("html".to_string())];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0B);
         assert_eq!(bytes[9], 0x01); // raw flag
     }
@@ -371,7 +382,7 @@ mod tests {
                 ),
             ],
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x03); // cardinal plural
                                     // var name
         let var_len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
@@ -398,7 +409,7 @@ mod tests {
                 ),
             ],
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x03);
         let var_len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         let mut pos = 5 + var_len + 2;
@@ -431,7 +442,7 @@ mod tests {
                 ),
             ],
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0A); // ordinal plural
     }
 
@@ -450,7 +461,7 @@ mod tests {
                 ),
             ],
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x04); // select opcode
         let var_len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         assert_eq!(var_len, 6);
@@ -463,7 +474,7 @@ mod tests {
             var: "val".to_string(),
             style: NumberStyle::Decimal,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x05);
         assert_eq!(bytes[bytes.len() - 1], 0x00); // decimal style
     }
@@ -474,7 +485,7 @@ mod tests {
             var: "val".to_string(),
             style: NumberStyle::Percent,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[bytes.len() - 1], 0x01);
     }
 
@@ -484,7 +495,7 @@ mod tests {
             var: "val".to_string(),
             style: NumberStyle::Integer,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[bytes.len() - 1], 0x02);
     }
 
@@ -494,7 +505,7 @@ mod tests {
             var: "amt".to_string(),
             style: NumberStyle::Currency("USD".to_string()),
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[bytes.len() - 1 - 4 - 3], 0x03); // currency style
                                                           // currency code should appear
         let code_len_pos = bytes.len() - 4 - 3;
@@ -515,7 +526,7 @@ mod tests {
                 var: "d".to_string(),
                 style,
             }];
-            let bytes = serialize_nodes(&nodes);
+            let bytes = serialize_nodes_vec(&nodes);
             assert_eq!(bytes[bytes.len() - 1], expected_byte, "DateStyle variant");
         }
     }
@@ -526,7 +537,7 @@ mod tests {
             name: "user".to_string(),
             default: "Guest".to_string(),
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0C);
         let name_len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
         assert_eq!(name_len, 4);
@@ -551,7 +562,7 @@ mod tests {
             var: "items".to_string(),
             style: ListStyle::Conjunction,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x09);
         assert_eq!(bytes[bytes.len() - 1], 0x00);
     }
@@ -562,7 +573,7 @@ mod tests {
             var: "items".to_string(),
             style: ListStyle::Disjunction,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[bytes.len() - 1], 0x01);
     }
 
@@ -572,7 +583,7 @@ mod tests {
             var: "items".to_string(),
             style: ListStyle::Unit,
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[bytes.len() - 1], 0x02);
     }
 
@@ -592,7 +603,7 @@ mod tests {
                 var: "t".to_string(),
                 style,
             }];
-            let bytes = serialize_nodes(&nodes);
+            let bytes = serialize_nodes_vec(&nodes);
             assert_eq!(bytes[bytes.len() - 1], expected_byte);
         }
     }
@@ -610,7 +621,7 @@ mod tests {
                 options: opts,
             },
         }];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0D);
         // Should contain "wrap" and "prefix=<" and "suffix=>"
         let s = String::from_utf8_lossy(&bytes);
@@ -622,7 +633,7 @@ mod tests {
     #[test]
     fn test_serialize_keyref() {
         let nodes = vec![MessageNode::KeyRef("other.key".to_string())];
-        let bytes = serialize_nodes(&nodes);
+        let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x01); // emitted as text
         let s = String::from_utf8_lossy(&bytes);
         assert!(s.contains("other.key"));
