@@ -3,27 +3,15 @@ use l10n4x_compiler::signing;
 use std::fs;
 use std::path::PathBuf;
 
-/// Create a realistic multi-locale test fixture in a temp directory.
-/// Returns the (src_path, out_path).
-fn setup_fixture(
-    locale_count: usize,
-    files_per_locale: usize,
-    keys_per_file: usize,
-) -> (PathBuf, PathBuf) {
-    let tmp = std::env::temp_dir().join(format!(
-        "l10n4x_bench_{}_{}_{}",
-        locale_count, files_per_locale, keys_per_file
-    ));
-    let _ = fs::remove_dir_all(&tmp);
-
+/// Create a realistic multi-locale test fixture.
+fn create_fixture(base: &PathBuf, locale_count: usize, files_per_locale: usize, keys_per_file: usize) {
     let locales = [
-        "en", "es", "fr", "de", "pt", "it", "nl", "pl", "sv", "da",
-        "nb", "fi", "cs", "hu", "ro", "sk", "sl", "hr", "lt", "lv",
+        "en", "es", "fr", "de", "pt", "it", "nl", "pl", "sv",
     ];
 
     for i in 0..locale_count {
         let locale = locales[i % locales.len()];
-        let locale_dir = tmp.join(locale);
+        let locale_dir = base.join(locale);
         fs::create_dir_all(&locale_dir).unwrap();
 
         for f in 0..files_per_locale {
@@ -36,12 +24,10 @@ fn setup_fixture(
                     0 => (format!("title_{}", k), format!("Page Title {}", k)),
                     1 => (
                         format!("greeting_{}", k),
-                        // {name} is an ICU variable — escape as literal {{name}}
                         format!("Hello {{name}}! Welcome to {}", k),
                     ),
                     2 => (
                         format!("items_{}", k),
-                        // ICU plural with Rust format escaping: {{ → {, }} → }, {} → placeholder
                         format!(
                             "{{count, plural, =0 {{{} items}} =1 {{{} item}} other {{{} items}}}}",
                             k_str, k_str, k_str
@@ -58,7 +44,6 @@ fn setup_fixture(
                         format!("error_{}", k),
                         format!("Error code {}: {{error_message}}", k),
                     ),
-                    _ => unreachable!(),
                 };
                 entries.insert(key, serde_json::Value::String(value));
             }
@@ -67,59 +52,65 @@ fn setup_fixture(
             fs::write(locale_dir.join(format!("{}.json", ns)), json_content).unwrap();
         }
     }
-
-    (tmp.clone(), tmp.join("out"))
 }
 
 fn bench_compile_pipeline(c: &mut Criterion) {
-    // Standard test: 8 locales × 5 files × 100 keys = 4000 total translations
-    const LOCALE_COUNT: usize = 8;
-    const FILES_PER_LOCALE: usize = 5;
-    const KEYS_PER_FILE: usize = 100;
-
     let seed = [42u8; 32];
     assert!(signing::set_signing_key(&seed));
 
+    // --- Medium test: 8 locales x 5 files x 50 keys = 2000 translations ---
+    let medium_src = std::env::temp_dir().join("l10n4x_bench_medium");
+    let _ = fs::remove_dir_all(&medium_src);
+    create_fixture(&medium_src, 8, 5, 50);
+
     let mut group = c.benchmark_group("compile_pipeline");
-    group.sample_size(10);
+    group.sample_size(30);
+    group.measurement_time(std::time::Duration::from_secs(20));
 
-    group.bench_function(
-        &format!("{}loc_{}files_{}keys", LOCALE_COUNT, FILES_PER_LOCALE, KEYS_PER_FILE),
-        |b| {
-            b.iter_batched(
-                || {
-                    // Setup: create fresh fixture before each measurement
-                    let (src, out) = setup_fixture(LOCALE_COUNT, FILES_PER_LOCALE, KEYS_PER_FILE);
-                    (src, out)
-                },
-                |(src, out)| {
-                    let result = l10n4x_compiler::compile_translations(
-                        black_box(&src),
-                        black_box(&out),
-                        false,
-                        6,
-                    );
-                    black_box(result)
-                },
-                criterion::BatchSize::LargeInput,
-            );
-        },
-    );
-
-    // Small test: 2 locales × 2 files × 10 keys = 40 translations (quick smoke)
-    group.bench_function("small_2loc_2files_10keys", |b| {
+    group.bench_function("medium_8loc_5files_50keys", |b| {
         b.iter_batched(
-            || setup_fixture(2, 2, 10),
-            |(src, out)| {
+            || {
+                let out = std::env::temp_dir().join("l10n4x_bench_out_med");
+                let _ = fs::remove_dir_all(&out);
+                out
+            },
+            |out| {
                 let result = l10n4x_compiler::compile_translations(
-                    black_box(&src),
+                    black_box(&medium_src),
                     black_box(&out),
                     false,
                     6,
                 );
+                let _ = fs::remove_dir_all(&out);
                 black_box(result)
             },
-            criterion::BatchSize::LargeInput,
+            criterion::BatchSize::SmallInput,
+        );
+    });
+
+    // --- Small test: 2 locales x 2 files x 10 keys ---
+    let small_src = std::env::temp_dir().join("l10n4x_bench_small");
+    let _ = fs::remove_dir_all(&small_src);
+    create_fixture(&small_src, 2, 2, 10);
+
+    group.bench_function("small_2loc_2files_10keys", |b| {
+        b.iter_batched(
+            || {
+                let out = std::env::temp_dir().join("l10n4x_bench_out_small");
+                let _ = fs::remove_dir_all(&out);
+                out
+            },
+            |out| {
+                let result = l10n4x_compiler::compile_translations(
+                    black_box(&small_src),
+                    black_box(&out),
+                    false,
+                    6,
+                );
+                let _ = fs::remove_dir_all(&out);
+                black_box(result)
+            },
+            criterion::BatchSize::SmallInput,
         );
     });
 
