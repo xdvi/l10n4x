@@ -258,9 +258,19 @@ fn write_signed_pak(
     encrypt: bool,
     compression_level: i32,
 ) -> Result<Vec<u8>, CompileError> {
-    let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
-        .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
-    let unsigned = build_unsigned(&compressed_bytes, parent);
+    use std::io::Write;
+    let mut compressed = Vec::with_capacity(binary_bytes.len() / 2);
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed, compression_level)
+            .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
+        encoder
+            .write_all(&binary_bytes)
+            .map_err(|e| CompileError::Io(e))?;
+        encoder
+            .finish()
+            .map_err(|e| CompileError::Io(e))?;
+    }
+    let unsigned = build_unsigned(&compressed, parent);
     let signature = signing::sign(&unsigned)?;
     let signed = seal(&unsigned, &signature);
     if encrypt {
