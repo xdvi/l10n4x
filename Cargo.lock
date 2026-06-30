@@ -1487,6 +1487,7 @@ version = "0.1.0"
 name = "l10n4x-compiler"
 version = "0.1.0"
 dependencies = [
+ "criterion",
  "ed25519-dalek",
  "l10n4x-core",
  "rayon",
