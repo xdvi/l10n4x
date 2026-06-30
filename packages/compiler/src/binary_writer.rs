@@ -14,7 +14,7 @@ fn serialize_nodes(nodes: &[MessageNode]) -> Vec<u8> {
             return t.as_bytes().to_vec();
         }
     }
-    let mut buf = Vec::new();
+    let mut buf = Vec::with_capacity(nodes.len() * 64);
     for node in nodes {
         match node {
             MessageNode::Text(t) => {

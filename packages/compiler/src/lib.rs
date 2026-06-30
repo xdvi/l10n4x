@@ -325,11 +325,16 @@ fn compile_monolith(
             let parent = l10n4x_core::locale_parent(locale);
             let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> =
                 match parent.and_then(|p| compiled.get(p)) {
-                    Some(parent_map) => nodes
-                        .iter()
-                        .filter(|(hash, v)| parent_map.get(hash) != Some(v))
-                        .map(|(k, v)| (*k, v.clone()))
-                        .collect(),
+                    Some(parent_map) => {
+                        let mut map = HashMap::with_capacity(nodes.len());
+                        map.extend(
+                            nodes
+                                .iter()
+                                .filter(|(hash, v)| parent_map.get(hash) != Some(v))
+                                .map(|(k, v)| (*k, v.clone())),
+                        );
+                        map
+                    }
                     None => nodes.clone(),
                 };
             let effective_parent = parent.filter(|p| compiled.contains_key(*p));
@@ -534,36 +539,38 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             .ok_or(CompileError::InvalidDirectoryName)?
             .to_string();
 
-        let mut file_count = 0;
         let parse_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+        let entries: Vec<fs::DirEntry> = fs::read_dir(&lang_path)?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|e| {
+                let p = e.path();
+                p.is_file() && p.extension().is_some_and(|ext| ext == "json")
+            })
+            .collect();
+        let file_count = entries.len();
         let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
-            HashMap::new();
+            HashMap::with_capacity(file_count * 5);
 
-        let files = fs::read_dir(&lang_path)?;
-
-        for file_entry in files {
-            let file_entry = file_entry?;
+        for file_entry in entries {
             let file_path = file_entry.path();
-            if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
-                let file_name = file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or(CompileError::InvalidFileName)?
-                    .to_string();
+            let file_name = file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or(CompileError::InvalidFileName)?
+                .to_string();
 
-                let file = fs::File::open(&file_path)?;
-                let reader = BufReader::new(file);
-                let parsed_json: Value = serde_json::from_reader(reader)?;
+            let file = fs::File::open(&file_path)?;
+            let reader = BufReader::new(file);
+            let parsed_json: Value = serde_json::from_reader(reader)?;
 
-                flatten_value_cb(file_name, &parsed_json, &mut |key, template| {
-                    if let Err(e) = parse_flat_translations_inline(
-                        &lang, &key, template, &mut parsed_translations,
-                    ) {
-                        parse_errors.lock().unwrap().push(e);
-                    }
-                });
-                file_count += 1;
-            }
+            flatten_value_cb(file_name, &parsed_json, &mut |key, template| {
+                if let Err(e) = parse_flat_translations_inline(
+                    &lang, &key, template, &mut parsed_translations,
+                ) {
+                    parse_errors.lock().unwrap().push(e);
+                }
+            });
         }
 
         if file_count == 0 {
@@ -635,7 +642,8 @@ fn compile_namespace_file(
     let file = fs::File::open(file_path)?;
     let reader = BufReader::new(file);
     let parsed_json: Value = serde_json::from_reader(reader)?;
-    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
+    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
+        HashMap::with_capacity(50);
     let parse_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
 
     flatten_value_cb(namespace.to_string(), &parsed_json, &mut |key, template| {
