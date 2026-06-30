@@ -1,3 +1,4 @@
+use ahash::AHashMap;
 use crate::icu_parser::{
     DateStyle, ListStyle, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle,
 };
@@ -279,14 +280,14 @@ fn serialize_decl_expr(node: &MessageNode) -> Vec<u8> {
 }
 
 pub fn write_binary_format(
-    translations: &std::collections::HashMap<u64, Vec<MessageNode>>,
+    translations: &AHashMap<u64, Vec<MessageNode>>,
 ) -> Vec<u8> {
     write_binary_format_with_keys(translations, None)
 }
 
 pub fn write_binary_format_with_keys(
-    translations: &std::collections::HashMap<u64, Vec<MessageNode>>,
-    key_names: Option<&std::collections::HashMap<u64, String>>,
+    translations: &AHashMap<u64, Vec<MessageNode>>,
+    key_names: Option<&AHashMap<u64, String>>,
 ) -> Vec<u8> {
     use std::collections::BTreeMap;
     let mut entries = BTreeMap::new();
@@ -324,6 +325,8 @@ mod tests {
         CustomFormat, DateStyle, ListStyle, NumberStyle, PluralCaseKey, RelTimeStyle,
     };
     use std::collections::HashMap;
+
+    use ahash::AHashMap;
 
     #[test]
     fn test_serialize_text() {
@@ -627,7 +630,7 @@ mod tests {
 
     #[test]
     fn test_write_binary_format_empty() {
-        let translations = HashMap::new();
+        let translations = AHashMap::new();
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
         let version = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
@@ -638,7 +641,7 @@ mod tests {
 
     #[test]
     fn test_write_binary_format_single() {
-        let mut translations = HashMap::new();
+        let mut translations = AHashMap::new();
         translations.insert(
             fnv1a_64(b"key1"),
             vec![MessageNode::Text("Hello".to_string())],
@@ -656,7 +659,7 @@ mod tests {
 
     #[test]
     fn test_write_binary_format_multiple_sorted() {
-        let mut translations = HashMap::new();
+        let mut translations = AHashMap::new();
         translations.insert(
             fnv1a_64(b"b"),
             vec![MessageNode::Text("second".to_string())],
@@ -676,7 +679,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip_via_reader_and_formatter() {
-        let mut translations = HashMap::new();
+        let mut translations = AHashMap::new();
         translations.insert(
             fnv1a_64(b"greeting"),
             vec![

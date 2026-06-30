@@ -1,5 +1,6 @@
 use crate::SyncContext;
 use anyhow::Context;
+use ahash::AHashMap;
 use l10n4x_compiler::flatten_value;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -72,12 +73,12 @@ pub fn scan_source_bundle(ctx: &SyncContext) -> Result<TmsBundle, anyhow::Error>
                 .to_string();
             let content = fs::read_to_string(&file_path)?;
             let parsed: serde_json::Value = serde_json::from_str(&content)?;
-            let mut flat = HashMap::new();
+            let mut flat = AHashMap::new();
             flatten_value(namespace.clone(), &parsed, &mut flat);
             namespaces
                 .entry(namespace)
                 .or_default()
-                .insert(locale.clone(), flat);
+                .insert(locale.clone(), flat.into_iter().collect());
         }
     }
 

@@ -1,5 +1,6 @@
 //! Crowdin-compatible locale tree export/import for l10n4x.
 
+use ahash::AHashMap;
 use l10n4x_compiler::flatten_value;
 use l10n4x_tms::{
     scan_source_bundle, write_bundle_to_source, SyncContext, SyncDirection, TmsBundle, TmsProvider,
@@ -108,12 +109,12 @@ fn import_crowdin_tree(ctx: &SyncContext, from_dir: &Path) -> Result<(), anyhow:
                 .to_string();
             let content = fs::read_to_string(&file_path)?;
             let parsed: serde_json::Value = serde_json::from_str(&content)?;
-            let mut flat = HashMap::new();
+            let mut flat = AHashMap::new();
             flatten_value(namespace.clone(), &parsed, &mut flat);
             namespaces
                 .entry(namespace)
                 .or_default()
-                .insert(locale.clone(), flat);
+                .insert(locale.clone(), flat.into_iter().collect());
         }
     }
 

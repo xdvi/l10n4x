@@ -1,3 +1,4 @@
+use ahash::AHashMap;
 use crate::targets::GenerateContext;
 use serde_json::Value;
 use std::fs;
@@ -10,7 +11,7 @@ pub fn generate(
     key_pairs: &[(u64, String)],
     _options: &Value,
     _ctx: &GenerateContext<'_>,
-    params_map: &std::collections::HashMap<String, Vec<String>>,
+    params_map: &AHashMap<String, Vec<String>>,
 ) -> Result<(), anyhow::Error> {
     let mut key_entries = String::new();
     for (hash, name) in key_pairs {

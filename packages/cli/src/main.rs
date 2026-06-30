@@ -10,6 +10,7 @@ use config::{
     parse_verify_public_key, save_config, Config, Target,
 };
 use generator::generate_bindings;
+use ahash::AHashMap;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{stdin, stdout, Write};
@@ -166,7 +167,7 @@ fn get_flat_keys_for_lang_dir(lang_dir: &Path) -> Result<HashSet<String>, anyhow
             let file_stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let content = fs::read_to_string(&file_path)?;
             let parsed: serde_json::Value = serde_json::from_str(&content)?;
-            let mut flat_map = HashMap::new();
+            let mut flat_map = AHashMap::new();
             l10n4x_compiler::flatten_value(file_stem.to_string(), &parsed, &mut flat_map);
             for k in flat_map.keys() {
                 merged_keys.insert(k.clone());
@@ -1255,8 +1256,8 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
             let obj: serde_json::Value = serde_json::from_str(&content)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-            let mut flat: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
+            let mut flat: AHashMap<String, String> =
+                AHashMap::new();
             l10n4x_compiler::flatten_value(ns.clone(), &obj, &mut flat);
             for k in flat.keys() {
                 existing_keys.insert(k.clone());

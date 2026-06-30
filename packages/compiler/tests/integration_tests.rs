@@ -6,7 +6,7 @@ use l10n4x_compiler::icu_parser::{
 };
 use l10n4x_core::binary_format::BinaryFormatReader;
 use l10n4x_core::formatter::format_message;
-use std::collections::HashMap;
+use ahash::AHashMap;
 use std::fs;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ use std::path::Path;
 fn test_compiler_core_integration_zero_alloc() {
     // Compile a complex message with plural via binary_writer
     // and validate that BinaryFormatReader + formatter processes it
-    let mut translations = HashMap::new();
+    let mut translations = AHashMap::new();
 
     let parser =
         MessageParser::new("{count, plural, =0 {no messages} =1 {one message} other {# messages}}");
@@ -36,7 +36,7 @@ fn test_compiler_core_integration_zero_alloc() {
 
 #[test]
 fn test_binary_header_magic_and_version() {
-    let mut translations = HashMap::new();
+    let mut translations = AHashMap::new();
     translations.insert(
         fnv1a_64(b"test.key"),
         vec![MessageNode::Text("val".to_string())],
@@ -60,7 +60,7 @@ fn test_array_flattening() {
             "items": ["Home", "Settings", "Profile"]
         }
     });
-    let mut map = HashMap::new();
+    let mut map = AHashMap::new();
     l10n4x_compiler::flatten_value("config".to_string(), &val, &mut map);
     assert_eq!(
         map.get("config.menu.items").unwrap(),
@@ -70,7 +70,7 @@ fn test_array_flattening() {
 
 #[test]
 fn test_compression_ratio_estimate() {
-    let mut translations = HashMap::new();
+    let mut translations = AHashMap::new();
     // Generate 100 typical translations
     for i in 0..100 {
         let key = format!("module.submodule.action.error_code_{}", i);

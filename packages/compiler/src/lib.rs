@@ -13,17 +13,20 @@ use l10n4x_core::envelope;
 use l10n4x_core::pak::{build_unsigned, seal};
 use serde_json::Value;
 use rayon::prelude::*;
-use std::collections::HashMap;
+use ahash::AHashMap as HashMap;
+use std::collections::HashMap as StdHashMap;
 use std::fs;
 use std::io::BufReader;
 use std::path::Path;
 use std::sync::Mutex;
 
 /// Per-locale map of key hashes to parsed message nodes.
-pub type TranslationsMap = HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
+/// The outer `StdHashMap` enables rayon parallel iteration over locales.
+pub type TranslationsMap = StdHashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
 /// Per-locale namespace → hashed nodes (modular bundle mode).
+/// The outer `StdHashMap` enables rayon parallel iteration over locales and namespaces.
 pub type ModularTranslationsMap =
-    HashMap<String, HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>>;
+    StdHashMap<String, HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>>;
 
 /// Bundle output strategy for `compile_translations`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -534,7 +537,7 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
     }
 
     let lang_dirs = fs::read_dir(src_path)?;
-    let mut all_translations: TranslationsMap = HashMap::new();
+    let mut all_translations: TranslationsMap = StdHashMap::new();
 
     for lang_entry in lang_dirs {
         let lang_entry = lang_entry?;
@@ -696,7 +699,7 @@ fn compile_pipeline_modular(src_path: &Path) -> Result<ModularTranslationsMap, C
         return Err(CompileError::SourceNotADirectory);
     }
 
-    let mut all_translations: ModularTranslationsMap = HashMap::new();
+    let mut all_translations: ModularTranslationsMap = StdHashMap::new();
 
     for lang_entry in fs::read_dir(src_path)? {
         let lang_entry = lang_entry?;
