@@ -1489,6 +1489,7 @@ version = "0.1.0"
 dependencies = [
  "ed25519-dalek",
  "l10n4x-core",
+ "rayon",
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",

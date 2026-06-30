@@ -12,9 +12,11 @@ use icu_parser::MessageParser;
 use l10n4x_core::envelope;
 use l10n4x_core::pak::{build_unsigned, seal};
 use serde_json::Value;
+use rayon::prelude::*;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// Per-locale map of key hashes to parsed message nodes.
 pub type TranslationsMap = HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
@@ -270,45 +272,57 @@ fn compile_monolith(
     #[cfg(feature = "debug-keys")]
     let key_pairs = compile_key_pairs(src_path).ok();
 
-    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
-    sorted_locales.sort();
-    for locale in sorted_locales {
-        let nodes = &compiled[locale];
-        let parent = l10n4x_core::locale_parent(locale);
-        let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> =
-            match parent.and_then(|p| compiled.get(p)) {
-                Some(parent_map) => nodes
-                    .iter()
-                    .filter(|(hash, v)| parent_map.get(hash) != Some(v))
-                    .map(|(k, v)| (*k, v.clone()))
-                    .collect(),
-                None => nodes.clone(),
+    let compile_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+    let encryption = options.encrypt;
+    let compression = options.compression_level;
+    #[cfg(feature = "debug-keys")]
+    let embed_debug_keys = options.embed_debug_keys;
+
+    (&compiled).par_iter().for_each(|(locale, nodes)| {
+        if let Err(e) = (|| -> Result<(), CompileError> {
+            let parent = l10n4x_core::locale_parent(locale);
+            let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> =
+                match parent.and_then(|p| compiled.get(p)) {
+                    Some(parent_map) => nodes
+                        .iter()
+                        .filter(|(hash, v)| parent_map.get(hash) != Some(v))
+                        .map(|(k, v)| (*k, v.clone()))
+                        .collect(),
+                    None => nodes.clone(),
+                };
+            let effective_parent = parent.filter(|p| compiled.contains_key(*p));
+
+            #[cfg(feature = "debug-keys")]
+            let key_names = if embed_debug_keys {
+                key_pairs.as_ref().map(|pairs| {
+                    pairs
+                        .iter()
+                        .filter(|(hash, _)| to_write.contains_key(hash))
+                        .map(|(hash, name)| (*hash, name.clone()))
+                        .collect::<HashMap<u64, String>>()
+                })
+            } else {
+                None
             };
-        let effective_parent = parent.filter(|p| compiled.contains_key(*p));
+            #[cfg(not(feature = "debug-keys"))]
+            let key_names: Option<HashMap<u64, String>> = None;
 
-        #[cfg(feature = "debug-keys")]
-        let key_names = if options.embed_debug_keys {
-            key_pairs.as_ref().map(|pairs| {
-                pairs
-                    .iter()
-                    .filter(|(hash, _)| to_write.contains_key(hash))
-                    .map(|(hash, name)| (*hash, name.clone()))
-                    .collect::<HashMap<u64, String>>()
-            })
-        } else {
-            None
-        };
-        #[cfg(not(feature = "debug-keys"))]
-        let key_names: Option<HashMap<u64, String>> = None;
+            let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
+            let pak_bytes = write_signed_pak(
+                binary_bytes,
+                effective_parent,
+                encryption,
+                compression,
+            )?;
+            fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+            Ok(())
+        })() {
+            compile_errors.lock().unwrap().push(e);
+        }
+    });
 
-        let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
-        let pak_bytes = write_signed_pak(
-            binary_bytes,
-            effective_parent,
-            options.encrypt,
-            options.compression_level,
-        )?;
-        fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+    if let Some(first) = compile_errors.into_inner().unwrap().into_iter().next() {
+        return Err(first);
     }
     Ok(())
 }
@@ -319,49 +333,62 @@ fn compile_modular(
     options: &CompileOptions,
 ) -> Result<(), CompileError> {
     let compiled = compile_pipeline_modular(src_path)?;
-    let mut manifest_locales: HashMap<String, Vec<String>> = HashMap::new();
+    let manifest_locales: Mutex<HashMap<String, Vec<String>>> = Mutex::new(HashMap::new());
+    let compile_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+    let encryption = options.encrypt;
+    let compression = options.compression_level;
+    #[cfg(feature = "debug-keys")]
+    let embed_debug_keys = options.embed_debug_keys;
 
-    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
-    sorted_locales.sort();
-    for locale in sorted_locales {
-        let namespaces = &compiled[locale];
-        let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
-        sorted_ns.sort();
-        let mut ns_list = Vec::new();
-        let locale_dir = out_path.join(locale.as_str());
-        fs::create_dir_all(&locale_dir)?;
+    (&compiled).par_iter().for_each(|(locale, namespaces)| {
+        if let Err(e) = (|| -> Result<(), CompileError> {
+            let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
+            sorted_ns.sort();
+            let mut ns_list = Vec::new();
+            let locale_dir = out_path.join(locale.as_str());
+            fs::create_dir_all(&locale_dir)?;
 
-        for namespace in sorted_ns {
-            ns_list.push(namespace.clone());
-            let nodes = &namespaces[namespace];
-            #[cfg(feature = "debug-keys")]
-            let key_names = if options.embed_debug_keys {
-                let file_path = src_path.join(locale).join(format!("{namespace}.json"));
-                compile_namespace_key_names(&file_path, namespace)
-                    .ok()
-                    .map(|all| {
-                        all.into_iter()
-                            .filter(|(hash, _)| nodes.contains_key(hash))
-                            .collect::<HashMap<u64, String>>()
-                    })
-            } else {
-                None
-            };
-            #[cfg(not(feature = "debug-keys"))]
-            let key_names: Option<HashMap<u64, String>> = None;
+            for namespace in sorted_ns {
+                ns_list.push(namespace.clone());
+                let nodes = &namespaces[namespace];
+                #[cfg(feature = "debug-keys")]
+                let key_names = if embed_debug_keys {
+                    let file_path = src_path.join(locale).join(format!("{namespace}.json"));
+                    compile_namespace_key_names(&file_path, namespace)
+                        .ok()
+                        .map(|all| {
+                            all.into_iter()
+                                .filter(|(hash, _)| nodes.contains_key(hash))
+                                .collect::<HashMap<u64, String>>()
+                        })
+                } else {
+                    None
+                };
+                #[cfg(not(feature = "debug-keys"))]
+                let key_names: Option<HashMap<u64, String>> = None;
 
-            let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
-            let pak_bytes = write_signed_pak(
-                binary_bytes,
-                None,
-                options.encrypt,
-                options.compression_level,
-            )?;
-            fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+                let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
+                let pak_bytes = write_signed_pak(
+                    binary_bytes,
+                    None,
+                    encryption,
+                    compression,
+                )?;
+                fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+            }
+            ns_list.sort();
+            manifest_locales.lock().unwrap().insert(locale.clone(), ns_list);
+            Ok(())
+        })() {
+            compile_errors.lock().unwrap().push(e);
         }
-        ns_list.sort();
-        manifest_locales.insert(locale.clone(), ns_list);
+    });
+
+    if let Some(first) = compile_errors.into_inner().unwrap().into_iter().next() {
+        return Err(first);
     }
+
+    let manifest_locales = manifest_locales.into_inner().unwrap();
 
     let manifest = serde_json::json!({
         "version": 1,
