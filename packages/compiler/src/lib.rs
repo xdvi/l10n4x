@@ -67,55 +67,9 @@ impl Default for CompileOptions {
 /// (e.g. `menu.items` -> `["Home","Settings"]`). Arrays of objects require
 /// semantic keys inside each element; numeric index flattening is not supported.
 pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, String>) {
-    match value {
-        Value::Object(obj) => {
-            for (k, v) in obj {
-                let new_prefix = if prefix.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{}.{}", prefix, k)
-                };
-                flatten_value(new_prefix, v, map);
-            }
-        }
-        Value::Array(arr) => {
-            if arr.iter().all(|v| {
-                matches!(
-                    v,
-                    Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null
-                )
-            }) {
-                if let Ok(literal) = serde_json::to_string(arr) {
-                    map.insert(prefix, literal);
-                }
-            } else {
-                for v in arr {
-                    if let Value::Object(obj) = v {
-                        for (k, inner) in obj {
-                            let new_prefix = if prefix.is_empty() {
-                                k.clone()
-                            } else {
-                                format!("{}.{}", prefix, k)
-                            };
-                            flatten_value(new_prefix, inner, map);
-                        }
-                    }
-                }
-            }
-        }
-        Value::String(s) => {
-            map.insert(prefix, s.clone());
-        }
-        Value::Number(n) => {
-            map.insert(prefix, n.to_string());
-        }
-        Value::Bool(b) => {
-            map.insert(prefix, b.to_string());
-        }
-        Value::Null => {
-            map.insert(prefix, String::new());
-        }
-    }
+    flatten_value_cb(prefix, value, &mut |k, v| {
+        map.insert(k, v.to_string());
+    });
 }
 
 /// Like flatten_value, but invokes `on_pair` for each (key, value) leaf instead
@@ -143,19 +97,28 @@ pub fn flatten_value_cb<F: FnMut(String, &str)>(
                     Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null
                 )
             }) {
-                let json_str = serde_json::to_string(value).unwrap_or_default();
+                let json_str = serde_json::to_string(value)
+                    .expect("array of primitives is always JSON-serializable");
                 on_pair(prefix, &json_str);
             } else {
-                for (i, v) in arr.iter().enumerate() {
-                    let new_prefix = format!("{}.{}", prefix, i);
-                    flatten_value_cb(new_prefix, v, on_pair);
+                for v in arr {
+                    if let Value::Object(obj) = v {
+                        for (k, inner) in obj {
+                            let new_prefix = if prefix.is_empty() {
+                                k.clone()
+                            } else {
+                                format!("{}.{}", prefix, k)
+                            };
+                            flatten_value_cb(new_prefix, inner, on_pair);
+                        }
+                    }
                 }
             }
         }
         Value::String(s) => on_pair(prefix, s),
         Value::Number(n) => on_pair(prefix, &n.to_string()),
         Value::Bool(b) => on_pair(prefix, if *b { "true" } else { "false" }),
-        Value::Null => on_pair(prefix, "null"),
+        Value::Null => on_pair(prefix, ""),
     }
 }
 
@@ -381,7 +344,7 @@ fn compile_monolith(
         }
     });
 
-    if let Some(first) = compile_errors.into_inner().unwrap().into_iter().next() {
+    if let Some(first) = compile_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
         return Err(first);
     }
     Ok(())
@@ -444,11 +407,11 @@ fn compile_modular(
         }
     });
 
-    if let Some(first) = compile_errors.into_inner().unwrap().into_iter().next() {
+    if let Some(first) = compile_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
         return Err(first);
     }
 
-    let manifest_locales = manifest_locales.into_inner().unwrap();
+    let manifest_locales = manifest_locales.into_inner().unwrap_or_else(|p| p.into_inner());
 
     let manifest = serde_json::json!({
         "version": 1,
@@ -590,7 +553,7 @@ fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
             continue;
         }
 
-        if let Some(first) = parse_errors.into_inner().unwrap().into_iter().next() {
+        if let Some(first) = parse_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
             return Err(first);
         }
         resolve_key_refs(&mut parsed_translations);
@@ -667,7 +630,7 @@ fn compile_namespace_file(
         }
     });
 
-    if let Some(first) = parse_errors.into_inner().unwrap().into_iter().next() {
+    if let Some(first) = parse_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
         return Err(first);
     }
 

@@ -6,8 +6,9 @@ use crate::icu_parser::{
 
 /// Serialize parsed message nodes to ICU bytecode.
 pub fn serialize_message(nodes: &[MessageNode]) -> Vec<u8> {
-    let mut buf = Vec::new();
-    serialize_nodes(nodes, &mut buf).unwrap();
+    let mut buf = Vec::with_capacity(nodes.len() * 64);
+    serialize_nodes(nodes, &mut buf)
+        .expect("Vec<u8> Write impl is infallible");
     buf
 }
 
@@ -77,7 +78,7 @@ fn serialize_nodes<W: Write>(nodes: &[MessageNode], w: &mut W) -> io::Result<()>
                             w.write_all(&max.to_be_bytes())?;
                         }
                     }
-                    let mut sub = Vec::new();
+                    let mut sub = Vec::with_capacity(pattern.len() * 64);
                     serialize_nodes(pattern, &mut sub)?;
                     w.write_all(&(sub.len() as u32).to_be_bytes())?;
                     w.write_all(&sub)?;
