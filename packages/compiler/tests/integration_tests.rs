@@ -1,3 +1,4 @@
+use ahash::AHashMap;
 use l10n4x_compiler::binary_writer::write_binary_format;
 use l10n4x_compiler::fnv1a_64;
 use l10n4x_compiler::icu_parser::parse_interval_plural;
@@ -6,7 +7,6 @@ use l10n4x_compiler::icu_parser::{
 };
 use l10n4x_core::binary_format::BinaryFormatReader;
 use l10n4x_core::formatter::format_message;
-use ahash::AHashMap;
 use std::fs;
 use std::path::Path;
 
@@ -37,10 +37,7 @@ fn test_compiler_core_integration_zero_alloc() {
 #[test]
 fn test_binary_header_magic_and_version() {
     let mut translations = AHashMap::new();
-    translations.insert(
-        fnv1a_64(b"test.key"),
-        vec![MessageNode::Text("val".into())],
-    );
+    translations.insert(fnv1a_64(b"test.key"), vec![MessageNode::Text("val".into())]);
     let binary_bytes = write_binary_format(&translations);
 
     // Header must be at least 16 bytes
@@ -119,16 +116,10 @@ fn test_parser_plural_mf1() {
         assert_eq!(&var[..], "count");
         assert_eq!(cases.len(), 3);
         assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
-        assert_eq!(
-            cases[0].1,
-            vec![MessageNode::Text("no messages".into())]
-        );
+        assert_eq!(cases[0].1, vec![MessageNode::Text("no messages".into())]);
 
         assert_eq!(cases[1].0, PluralCaseKey::Exact(1.0));
-        assert_eq!(
-            cases[1].1,
-            vec![MessageNode::Text("one message".into())]
-        );
+        assert_eq!(cases[1].1, vec![MessageNode::Text("one message".into())]);
 
         assert_eq!(cases[2].0, PluralCaseKey::Other);
         // '#' in MF1 gets translated to Variable(count)
@@ -464,7 +455,9 @@ fn test_parser_mf2_match_select() {
 fn test_parser_icu1_date_style_time() {
     let parser = MessageParser::new("{now, time}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "now"));
+    assert!(
+        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "now")
+    );
 }
 
 #[test]
@@ -524,14 +517,18 @@ fn test_parser_mf2_raw_variable_with_pipe_default() {
 fn test_parser_mf2_inline_date_style() {
     let parser = MessageParser::new("{$d :date}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Date } if &var[..] == "d"));
+    assert!(
+        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Date } if &var[..] == "d")
+    );
 }
 
 #[test]
 fn test_parser_mf2_inline_time_style() {
     let parser = MessageParser::new("{$t :time}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "t"));
+    assert!(
+        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "t")
+    );
 }
 
 #[test]
@@ -812,16 +809,10 @@ fn test_parser_plural_mf2() {
         assert_eq!(cases.len(), 3);
 
         assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
-        assert_eq!(
-            cases[0].1,
-            vec![MessageNode::Text("no messages".into())]
-        );
+        assert_eq!(cases[0].1, vec![MessageNode::Text("no messages".into())]);
 
         assert_eq!(cases[1].0, PluralCaseKey::One);
-        assert_eq!(
-            cases[1].1,
-            vec![MessageNode::Text("one message".into())]
-        );
+        assert_eq!(cases[1].1, vec![MessageNode::Text("one message".into())]);
 
         assert_eq!(cases[2].0, PluralCaseKey::Other);
         assert_eq!(

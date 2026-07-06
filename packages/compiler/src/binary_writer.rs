@@ -1,14 +1,13 @@
-use ahash::AHashMap;
-use std::io::{self, Write};
 use crate::icu_parser::{
     DateStyle, ListStyle, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle,
 };
+use ahash::AHashMap;
+use std::io::{self, Write};
 
 /// Serialize parsed message nodes to ICU bytecode.
 pub fn serialize_message(nodes: &[MessageNode]) -> Vec<u8> {
     let mut buf = Vec::with_capacity(nodes.len() * 64);
-    serialize_nodes(nodes, &mut buf)
-        .expect("Vec<u8> Write impl is infallible");
+    serialize_nodes(nodes, &mut buf).expect("Vec<u8> Write impl is infallible");
     buf
 }
 
@@ -285,9 +284,7 @@ fn serialize_decl_expr<W: Write>(node: &MessageNode, w: &mut W) -> io::Result<()
     Ok(())
 }
 
-pub fn write_binary_format<V: AsRef<[MessageNode]>>(
-    translations: &AHashMap<u64, V>,
-) -> Vec<u8> {
+pub fn write_binary_format<V: AsRef<[MessageNode]>>(translations: &AHashMap<u64, V>) -> Vec<u8> {
     write_binary_format_with_keys(translations, None)
 }
 
@@ -377,10 +374,7 @@ mod tests {
             var: "count".into(),
             ordinal: false,
             cases: vec![
-                (
-                    PluralCaseKey::One,
-                    vec![MessageNode::Text("item".into())],
-                ),
+                (PluralCaseKey::One, vec![MessageNode::Text("item".into())]),
                 (
                     PluralCaseKey::Other,
                     vec![MessageNode::Text("items".into())],
@@ -437,14 +431,8 @@ mod tests {
             var: "n".into(),
             ordinal: true,
             cases: vec![
-                (
-                    PluralCaseKey::One,
-                    vec![MessageNode::Text("1st".into())],
-                ),
-                (
-                    PluralCaseKey::Other,
-                    vec![MessageNode::Text("th".into())],
-                ),
+                (PluralCaseKey::One, vec![MessageNode::Text("1st".into())]),
+                (PluralCaseKey::Other, vec![MessageNode::Text("th".into())]),
             ],
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -456,14 +444,8 @@ mod tests {
         let nodes = vec![MessageNode::Select {
             var: "gender".into(),
             cases: vec![
-                (
-                    "male".into(),
-                    vec![MessageNode::Text("Mr.".into())],
-                ),
-                (
-                    "other".into(),
-                    vec![MessageNode::Text("Mx.".into())],
-                ),
+                ("male".into(), vec![MessageNode::Text("Mr.".into())]),
+                ("other".into(), vec![MessageNode::Text("Mx.".into())]),
             ],
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -658,10 +640,7 @@ mod tests {
     #[test]
     fn test_write_binary_format_single() {
         let mut translations = AHashMap::new();
-        translations.insert(
-            fnv1a_64(b"key1"),
-            vec![MessageNode::Text("Hello".into())],
-        );
+        translations.insert(fnv1a_64(b"key1"), vec![MessageNode::Text("Hello".into())]);
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
         let index_count = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
@@ -676,10 +655,7 @@ mod tests {
     #[test]
     fn test_write_binary_format_multiple_sorted() {
         let mut translations = AHashMap::new();
-        translations.insert(
-            fnv1a_64(b"b"),
-            vec![MessageNode::Text("second".into())],
-        );
+        translations.insert(fnv1a_64(b"b"), vec![MessageNode::Text("second".into())]);
         translations.insert(fnv1a_64(b"a"), vec![MessageNode::Text("first".into())]);
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
