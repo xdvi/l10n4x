@@ -3,7 +3,6 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::string::ToString;
 
-use crate::bidi::format_segment;
 use crate::date_format::{format_date_tz, DateStyle};
 use crate::float_math;
 use crate::list_format::{format_list, ListStyle};
@@ -101,8 +100,14 @@ fn write_localized<W: core::fmt::Write>(
     writer: &mut W,
     text: &str,
 ) -> core::fmt::Result {
-    let segment = format_segment(locale, text);
-    writer.write_str(&segment)
+    // Hot path: for LTR locales (or RTL text without embedded LTR runs) the
+    // segment goes straight to the writer with zero allocation. Only mixed
+    // RTL/LTR output needs bidi isolate insertion.
+    if crate::bidi::needs_isolates(locale, text) {
+        crate::bidi::write_isolated(writer, text)
+    } else {
+        writer.write_str(text)
+    }
 }
 
 #[inline]
@@ -233,6 +238,7 @@ fn format_mf2_match<W: core::fmt::Write>(
     params: &[(&str, &str)],
     _param_index: Option<&BTreeMap<&str, &str>>,
     writer: &mut W,
+    depth: u32,
 ) -> core::fmt::Result {
     if *pos + 1 > bytecode.len() {
         return Err(core::fmt::Error);
@@ -322,13 +328,19 @@ fn format_mf2_match<W: core::fmt::Write>(
 
     let (pat_pos, pat_len) =
         select_mf2_variant(&selector_values, &variants).ok_or(core::fmt::Error)?;
-    format_message(
+    format_message_depth(
         &bytecode[pat_pos..pat_pos + pat_len],
         locale,
         params,
         writer,
+        depth + 1,
     )
 }
+
+/// Maximum nesting depth of plural/select/MF2-match patterns. The bytecode is
+/// untrusted input (unsigned load paths exist); without a cap, a crafted pak
+/// with deeply nested cases overflows the stack and aborts the process.
+const MAX_FORMAT_DEPTH: u32 = 64;
 
 /// Formats a bytecode compiled message into the provided writer, dynamically
 /// interpolating variables and evaluating plural/select rules.
@@ -338,6 +350,20 @@ pub fn format_message<W: core::fmt::Write>(
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> core::fmt::Result {
+    format_message_depth(bytecode, locale, params, writer, 0)
+}
+
+fn format_message_depth<W: core::fmt::Write>(
+    bytecode: &[u8],
+    locale: &str,
+    params: &[(&str, &str)],
+    writer: &mut W,
+    depth: u32,
+) -> core::fmt::Result {
+    if depth > MAX_FORMAT_DEPTH {
+        crate::metrics::inc_format_errors();
+        return Err(core::fmt::Error);
+    }
     // Fast path: single raw text node (bytes don't start with an opcode 0x01..0x0E)
     if !bytecode.is_empty() && (bytecode[0] == 0x00 || bytecode[0] > 0x0E) {
         let text = core::str::from_utf8(bytecode).map_err(|_| core::fmt::Error)?;
@@ -491,7 +517,7 @@ pub fn format_message<W: core::fmt::Write>(
                     .or_else(|| other_case_pos.map(|p| (p, other_case_len.unwrap())))
                     .ok_or(core::fmt::Error)?;
                 let sub_bytecode = &bytecode[selected_pos..selected_pos + selected_len];
-                format_message(sub_bytecode, locale, params, writer)?;
+                format_message_depth(sub_bytecode, locale, params, writer, depth + 1)?;
             }
             0x03 => {
                 // Plural Match
@@ -569,7 +595,7 @@ pub fn format_message<W: core::fmt::Write>(
                     .ok_or(core::fmt::Error)?;
 
                 let sub_bytecode = &bytecode[selected_pos..selected_pos + selected_len];
-                format_message(sub_bytecode, locale, params, writer)?;
+                format_message_depth(sub_bytecode, locale, params, writer, depth + 1)?;
             }
             0x04 => {
                 // Select Match
@@ -644,7 +670,7 @@ pub fn format_message<W: core::fmt::Write>(
                     .ok_or(core::fmt::Error)?;
 
                 let sub_bytecode = &bytecode[selected_pos..selected_pos + selected_len];
-                format_message(sub_bytecode, locale, params, writer)?;
+                format_message_depth(sub_bytecode, locale, params, writer, depth + 1)?;
             }
             0x05 => {
                 // Number formatting
@@ -1015,6 +1041,7 @@ pub fn format_message<W: core::fmt::Write>(
                     params,
                     param_index.as_ref(),
                     writer,
+                    depth,
                 )?;
             }
             _ => return Err(core::fmt::Error),
@@ -1103,6 +1130,25 @@ mod formatter_unit_tests {
         let mut out = String::new();
         format_message(&bc, "en", &[], &mut out).unwrap();
         assert_eq!(out, "Hello");
+    }
+
+    /// Untrusted bytecode with pathological nesting must fail with an error,
+    /// not overflow the stack (which aborts the process).
+    #[test]
+    fn deeply_nested_plural_errors_instead_of_overflowing() {
+        let mut bc: Vec<u8> = b"deep".to_vec();
+        for _ in 0..2000 {
+            let mut outer = vec![0x03];
+            outer.extend_from_slice(&1u32.to_be_bytes());
+            outer.push(b'n');
+            outer.extend_from_slice(&1u16.to_be_bytes());
+            outer.push(0x00); // PluralCaseKey::Other
+            outer.extend_from_slice(&(bc.len() as u32).to_be_bytes());
+            outer.extend_from_slice(&bc);
+            bc = outer;
+        }
+        let mut out = String::new();
+        assert!(format_message(&bc, "en", &[("n", "5")], &mut out).is_err());
     }
 
     #[test]

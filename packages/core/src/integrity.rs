@@ -12,7 +12,17 @@ use ed25519_dalek::Verifier;
 const KEY_LEN: usize = 32;
 const SIG_LEN: usize = 64;
 
-pub(crate) static VERIFY_KEY: AtomicPtr<[u8; 32]> = AtomicPtr::new(core::ptr::null_mut());
+/// Verify-key slot: raw bytes plus the parsed `VerifyingKey`, decoded ONCE at
+/// install time. `VerifyingKey::from_bytes` performs curve point decompression;
+/// re-running it on every signature verification is wasted work.
+pub(crate) struct VerifyKeySlot {
+    #[cfg_attr(feature = "alloc", allow(dead_code))]
+    bytes: [u8; KEY_LEN],
+    #[cfg(feature = "alloc")]
+    parsed: ed25519_dalek::VerifyingKey,
+}
+
+pub(crate) static VERIFY_KEY: AtomicPtr<VerifyKeySlot> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Installs the 32-byte Ed25519 **public** key used to verify `.pak` signatures at runtime.
 pub fn set_verify_key(key: &[u8]) -> bool {
@@ -22,12 +32,16 @@ pub fn set_verify_key(key: &[u8]) -> bool {
     let mut arr = [0u8; KEY_LEN];
     arr.copy_from_slice(key);
     #[cfg(feature = "alloc")]
-    {
-        if ed25519_dalek::VerifyingKey::from_bytes(&arr).is_err() {
-            return false;
-        }
-    }
-    let new_ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(arr));
+    let parsed = match ed25519_dalek::VerifyingKey::from_bytes(&arr) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+    let slot = VerifyKeySlot {
+        bytes: arr,
+        #[cfg(feature = "alloc")]
+        parsed,
+    };
+    let new_ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(slot));
     let old_ptr = VERIFY_KEY.swap(new_ptr, Ordering::SeqCst);
     if !old_ptr.is_null() {
         crate::reclaim::schedule_drop(old_ptr);
@@ -49,7 +63,7 @@ pub fn verify(message: &[u8], signature: &[u8]) -> CoreResult<()> {
     }
     #[cfg(feature = "alloc")]
     {
-        let key: [u8; 32] = {
+        let verifying_key: ed25519_dalek::VerifyingKey = {
             #[cfg(feature = "std")]
             {
                 let _guard = crossbeam_epoch::pin();
@@ -61,7 +75,7 @@ pub fn verify(message: &[u8], signature: &[u8]) -> CoreResult<()> {
                 }
                 // SAFETY: Under the active epoch guard, dereferencing the pointer is safe
                 // because memory reclamation is deferred until after the guard is dropped.
-                unsafe { *loaded_ptr }
+                unsafe { (*loaded_ptr).parsed }
             }
             #[cfg(not(feature = "std"))]
             {
@@ -73,12 +87,10 @@ pub fn verify(message: &[u8], signature: &[u8]) -> CoreResult<()> {
                 }
                 // SAFETY: In single-threaded environments, no concurrent mutations occur,
                 // making dereferencing safe.
-                unsafe { *loaded_ptr }
+                unsafe { (*loaded_ptr).parsed }
             }
         };
 
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key)
-            .map_err(|_| crate::CoreError::KeyNotConfigured("Invalid verify key"))?;
         let mut sig_bytes = [0u8; SIG_LEN];
         sig_bytes.copy_from_slice(signature);
         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
