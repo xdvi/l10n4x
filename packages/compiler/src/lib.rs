@@ -937,6 +937,11 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    /// Serializes tests that touch the process-global translation store
+    /// (`clear_translations` + `translate`). Without it, parallel test
+    /// execution races on the store and the e2e tests read each other's data.
+    static STORE_LOCK: Mutex<()> = Mutex::new(());
+
     #[test]
     fn flatten_primitive_array_as_literal() {
         let val = json!({ "items": ["A", "B"] });
@@ -1195,6 +1200,7 @@ mod tests {
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
+        let _store_guard = STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let tmp = std::env::temp_dir().join("l10n4x_test_int_e2e");
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");
@@ -1238,6 +1244,7 @@ mod tests {
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
+        let _store_guard = STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let tmp = std::env::temp_dir().join("l10n4x_test_int_large");
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");
