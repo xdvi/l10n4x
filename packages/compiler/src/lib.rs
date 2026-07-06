@@ -7,13 +7,13 @@ pub mod icu_parser;
 pub mod mf2_parser;
 pub mod signing;
 
+use ahash::AHashMap as HashMap;
 use binary_writer::{write_binary_format, write_binary_format_with_keys};
 use icu_parser::MessageParser;
 use l10n4x_core::envelope;
 use l10n4x_core::pak::{build_unsigned, seal};
-use serde_json::Value;
 use rayon::prelude::*;
-use ahash::AHashMap as HashMap;
+use serde_json::Value;
 use std::collections::HashMap as StdHashMap;
 use std::fs;
 use std::io::BufReader;
@@ -233,12 +233,8 @@ fn write_signed_pak(
     {
         let mut encoder = zstd::stream::write::Encoder::new(&mut compressed, compression_level)
             .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
-        encoder
-            .write_all(&binary_bytes)
-            .map_err(|e| CompileError::Io(e))?;
-        encoder
-            .finish()
-            .map_err(|e| CompileError::Io(e))?;
+        encoder.write_all(&binary_bytes).map_err(CompileError::Io)?;
+        encoder.finish().map_err(CompileError::Io)?;
     }
     let unsigned = build_unsigned(&compressed, parent);
     let signature = signing::sign(&unsigned)?;
@@ -301,7 +297,7 @@ fn compile_monolith(
     #[cfg(feature = "debug-keys")]
     let embed_debug_keys = options.embed_debug_keys;
 
-    (&compiled).par_iter().for_each(|(locale, nodes)| {
+    compiled.par_iter().for_each(|(locale, nodes)| {
         if let Err(e) = (|| -> Result<(), CompileError> {
             let parent = l10n4x_core::locale_parent(locale);
             // Borrow the AST nodes instead of deep-cloning them; the map only lives
@@ -333,20 +329,24 @@ fn compile_monolith(
             let key_names: Option<HashMap<u64, String>> = None;
 
             let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
-            let pak_bytes = write_signed_pak(
-                binary_bytes,
-                effective_parent,
-                encryption,
-                compression,
-            )?;
+            let pak_bytes =
+                write_signed_pak(binary_bytes, effective_parent, encryption, compression)?;
             fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
             Ok(())
         })() {
-            compile_errors.lock().unwrap_or_else(|p| p.into_inner()).push(e);
+            compile_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(e);
         }
     });
 
-    if let Some(first) = compile_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
+    if let Some(first) = compile_errors
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+        .into_iter()
+        .next()
+    {
         return Err(first);
     }
     Ok(())
@@ -369,7 +369,7 @@ fn compile_modular(
     #[cfg(feature = "debug-keys")]
     let embed_debug_keys = options.embed_debug_keys;
 
-    (&compiled).par_iter().for_each(|(locale, namespaces)| {
+    compiled.par_iter().for_each(|(locale, namespaces)| {
         if let Err(e) = (|| -> Result<(), CompileError> {
             let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
             sorted_ns.sort();
@@ -398,27 +398,35 @@ fn compile_modular(
                 let key_names: Option<HashMap<u64, String>> = None;
 
                 let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
-                let pak_bytes = write_signed_pak(
-                    binary_bytes,
-                    None,
-                    encryption,
-                    compression,
-                )?;
+                let pak_bytes = write_signed_pak(binary_bytes, None, encryption, compression)?;
                 fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
             }
             ns_list.sort();
-            manifest_locales.lock().unwrap_or_else(|p| p.into_inner()).insert(locale.clone(), ns_list);
+            manifest_locales
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(locale.clone(), ns_list);
             Ok(())
         })() {
-            compile_errors.lock().unwrap_or_else(|p| p.into_inner()).push(e);
+            compile_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(e);
         }
     });
 
-    if let Some(first) = compile_errors.into_inner().unwrap_or_else(|p| p.into_inner()).into_iter().next() {
+    if let Some(first) = compile_errors
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+        .into_iter()
+        .next()
+    {
         return Err(first);
     }
 
-    let manifest_locales = manifest_locales.into_inner().unwrap_or_else(|p| p.into_inner());
+    let manifest_locales = manifest_locales
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner());
 
     let manifest = serde_json::json!({
         "version": 1,
@@ -644,10 +652,12 @@ fn parse_flat_translations_inline(
     parsed_translations: &mut HashMap<String, Vec<icu_parser::MessageNode>>,
 ) -> Result<(), CompileError> {
     if let Some(interval_cases) =
-        icu_parser::parse_interval_plural(template).map_err(|message| CompileError::TemplateParseError {
-            locale: locale.to_string(),
-            key: key.to_string(),
-            message,
+        icu_parser::parse_interval_plural(template).map_err(|message| {
+            CompileError::TemplateParseError {
+                locale: locale.to_string(),
+                key: key.to_string(),
+                message,
+            }
         })?
     {
         let nodes = vec![icu_parser::MessageNode::Plural {
@@ -721,6 +731,7 @@ fn compile_namespace_file(
 /// Per-locale, per-namespace hash → original key name maps (debug-keys embedding).
 type ModularKeyNames = StdHashMap<String, HashMap<String, HashMap<u64, String>>>;
 
+#[cfg(not(feature = "debug-keys"))]
 fn compile_pipeline_modular(src_path: &Path) -> Result<ModularTranslationsMap, CompileError> {
     Ok(compile_pipeline_modular_inner(src_path, false)?.0)
 }

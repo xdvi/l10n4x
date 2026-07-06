@@ -1,8 +1,8 @@
 //! ICU MessageFormat 2.0 (MF2) complex-message parsing and expression lowering.
 
 use crate::icu_parser::{
-    is_plural_key, DateStyle, IStr, ListStyle, MarkupKind, MessageNode, NumberStyle,
-    PluralCaseKey, RelTimeStyle,
+    is_plural_key, DateStyle, IStr, ListStyle, MarkupKind, MessageNode, NumberStyle, PluralCaseKey,
+    RelTimeStyle,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -350,7 +350,10 @@ fn parse_variable_expression(rest: &str) -> Result<MessageNode, String> {
     Ok(MessageNode::Variable(name.into()))
 }
 
-fn parse_inline_function(var: crate::icu_parser::IStr, func_spec: &str) -> Result<MessageNode, String> {
+fn parse_inline_function(
+    var: crate::icu_parser::IStr,
+    func_spec: &str,
+) -> Result<MessageNode, String> {
     if func_spec.starts_with("number") || func_spec.starts_with("Number") {
         let style = if func_spec.contains("style=percent") {
             NumberStyle::Percent
@@ -1180,7 +1183,11 @@ fn build_two_selector_match(
                     .into_iter()
                     .map(|(k, nodes)| {
                         (
-                            if k == "*" { IStr::from("other") } else { IStr::from(k) },
+                            if k == "*" {
+                                IStr::from("other")
+                            } else {
+                                IStr::from(k)
+                            },
                             nodes,
                         )
                     })
