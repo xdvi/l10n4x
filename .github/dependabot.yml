@@ -14,8 +14,7 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"    # no native biweekly interval; monthly halves weekly's PR volume
       time: "06:00"          # early UTC — merges before EU/US business hours
       timezone: "UTC"
     open-pull-requests-limit: 20   # generous ceiling; groups collapse many into few PRs
@@ -79,7 +78,7 @@ updates:
 
     # ────────────────────────────────────────────────────────────────
   # GitHub Actions
-  # All minor + patch updates grouped into one PR per week.
+  # All minor + patch updates grouped into one PR per month.
   # Major bumps (e.g. actions/checkout v3 → v4) stay individual.
   # SHA-pinning for supply-chain safety should be enforced by a
   # separate policy tool (e.g. Harden-Runner, StepSecurity).
@@ -87,8 +86,7 @@ updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "weekly"
-      day: "monday"
+      interval: "monthly"
       time: "06:00"
       timezone: "UTC"
     open-pull-requests-limit: 10
