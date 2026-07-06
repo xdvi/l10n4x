@@ -357,21 +357,6 @@ pub(crate) fn upsert_locale(
     *locales = Arc::new(new_vec);
 }
 
-/// Fine-grained COW removal of a locale entry from the sorted vector.
-#[allow(dead_code)]
-pub(crate) fn remove_locale(locales: &mut Arc<Vec<(String, Arc<StoreData>)>>, locale: &str) {
-    let old = Arc::clone(locales);
-    if let Ok(idx) = old.binary_search_by(|(loc, _)| loc.as_str().cmp(locale)) {
-        let mut new_vec = Vec::with_capacity(old.len().saturating_sub(1));
-        for (i, (loc, sd)) in old.iter().enumerate() {
-            if i != idx {
-                new_vec.push((loc.clone(), Arc::clone(sd)));
-            }
-        }
-        *locales = Arc::new(new_vec);
-    }
-}
-
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 /// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
 /// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
@@ -994,6 +979,19 @@ pub fn locale_parent(locale: &str) -> Option<&str> {
 type LocaleChangeFn = fn(locale: &str);
 static LOCALE_CHANGE_CALLBACKS: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Boxed dynamic callback (std): `Mutex<Option<Arc<...>>>` instead of a raw
+/// `AtomicPtr` — the previous scheme leaked the old callback on
+/// re-registration and could drop the box while another thread was calling
+/// through it (use-after-free). This is a cold path; a lock is fine.
+#[cfg(feature = "std")]
+type BoxedLocaleCallback = Arc<std::sync::Mutex<Box<dyn Fn(&str) + Send>>>;
+#[cfg(feature = "std")]
+static LOCALE_CHANGE_BOXED: std::sync::Mutex<Option<BoxedLocaleCallback>> =
+    std::sync::Mutex::new(None);
+
+/// Boxed dynamic callback (no_std, single-threaded): plain pointer slot.
+#[cfg(not(feature = "std"))]
 static LOCALE_CHANGE_BOXED: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -1003,21 +1001,51 @@ pub fn on_locale_changed(callback: LocaleChangeFn) {
 }
 
 /// Registers a boxed dynamic callback for WASM bindings.
+/// Re-registration replaces (and drops) the previous callback.
 pub fn on_locale_changed_boxed(callback: alloc::boxed::Box<dyn Fn(&str) + Send>) {
-    let ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(callback));
-    LOCALE_CHANGE_BOXED.store(ptr as *mut (), core::sync::atomic::Ordering::Release);
+    #[cfg(feature = "std")]
+    {
+        *LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) =
+            Some(Arc::new(std::sync::Mutex::new(callback)));
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(callback));
+        let old =
+            LOCALE_CHANGE_BOXED.swap(ptr as *mut (), core::sync::atomic::Ordering::AcqRel);
+        if !old.is_null() {
+            // SAFETY: single-threaded no_std — no concurrent caller can hold
+            // the old pointer.
+            unsafe {
+                drop(alloc::boxed::Box::from_raw(
+                    old as *mut Box<dyn Fn(&str) + Send>,
+                ));
+            }
+        }
+    }
 }
 
 /// Removes all locale change callbacks.
 pub fn clear_locale_changed_callbacks() {
     LOCALE_CHANGE_CALLBACKS.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
-    let old =
-        LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
-    if !old.is_null() {
-        unsafe {
-            drop(alloc::boxed::Box::from_raw(
-                old as *mut Box<dyn Fn(&str) + Send>,
-            ));
+    #[cfg(feature = "std")]
+    {
+        *LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let old =
+            LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::AcqRel);
+        if !old.is_null() {
+            unsafe {
+                drop(alloc::boxed::Box::from_raw(
+                    old as *mut Box<dyn Fn(&str) + Send>,
+                ));
+            }
         }
     }
 }
@@ -1037,10 +1065,30 @@ fn invoke_locale_changed_callbacks(locale: &str) {
         let f: LocaleChangeFn = unsafe { core::mem::transmute(ptr) };
         f(locale);
     }
-    let boxed_ptr = LOCALE_CHANGE_BOXED.load(core::sync::atomic::Ordering::Acquire);
-    if !boxed_ptr.is_null() {
-        unsafe {
-            (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale);
+    #[cfg(feature = "std")]
+    {
+        // Clone the Arc under the registry lock, call outside it: a concurrent
+        // clear/re-register only drops the callback after this call returns.
+        let callback = LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(callback) = callback {
+            // try_lock: a callback that itself triggers a locale change must
+            // not deadlock — the nested notification is skipped instead.
+            if let Ok(guard) = callback.try_lock() {
+                (guard)(locale);
+            }
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let boxed_ptr = LOCALE_CHANGE_BOXED.load(core::sync::atomic::Ordering::Acquire);
+        if !boxed_ptr.is_null() {
+            // SAFETY: single-threaded no_std — no concurrent clear can drop it.
+            unsafe {
+                (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale);
+            }
         }
     }
 }
@@ -1106,6 +1154,28 @@ fn format_message_checked<W: core::fmt::Write>(
 
 /// Attempts to translate `key_hash` from `locale` in `store`, writing to `writer`.
 /// Returns `true` if translation succeeded.
+/// Slices `buf[off..off+len]` with overflow-safe bounds (u32 offsets can wrap
+/// `usize` on 32-bit targets) and formats the entry, committing on success.
+#[cfg(feature = "std")]
+#[inline]
+fn try_offset_entry<W: core::fmt::Write>(
+    buf: &[u8],
+    off: u32,
+    len: u32,
+    locale: &str,
+    params: &[(&str, &str)],
+    writer: &mut W,
+) -> bool {
+    let start = off as usize;
+    let Some(end) = start.checked_add(len as usize) else {
+        return false;
+    };
+    if end > buf.len() {
+        return false;
+    }
+    format_message_checked(&buf[start..end], locale, params, writer)
+}
+
 #[inline]
 fn try_locale<W: core::fmt::Write>(
     store: &TranslationStore,
@@ -1123,11 +1193,7 @@ fn try_locale<W: core::fmt::Write>(
             if let Some(ctx_hash) = context_hash {
                 if let Some(&(off, len)) = map.get(&ctx_hash) {
                     used_offset_map = true;
-                    let start = off as usize;
-                    let end = start + (len as usize);
-                    if end <= buf.len()
-                        && format_message_checked(&buf[start..end], locale, params, writer)
-                    {
+                    if try_offset_entry(buf, off, len, locale, params, writer) {
                         return true;
                     }
                     crate::metrics::inc_format_errors();
@@ -1135,11 +1201,7 @@ fn try_locale<W: core::fmt::Write>(
             }
             if let Some(&(off, len)) = map.get(&key_hash) {
                 used_offset_map = true;
-                let start = off as usize;
-                let end = start + (len as usize);
-                if end <= buf.len()
-                    && format_message_checked(&buf[start..end], locale, params, writer)
-                {
+                if try_offset_entry(buf, off, len, locale, params, writer) {
                     return true;
                 }
                 crate::metrics::inc_format_errors();

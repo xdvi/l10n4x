@@ -122,7 +122,8 @@ enum Commands {
     /// Scan source files for translation key usages and add missing keys to locale JSON files.
     Extract {
         /// Glob pattern(s) for source files to scan (e.g. "src/**/*.ts").
-        /// If omitted, reads `extractPatterns` from l10n4x.config.json.
+        /// If omitted, scans the default patterns (src/**/*.{ts,tsx,js},
+        /// lib/**/*.{go,py}).
         #[arg(long, value_name = "GLOB")]
         src: Vec<String>,
         /// Print what would change without writing any files.
@@ -150,6 +151,15 @@ enum Commands {
         from: Option<String>,
     },
 }
+
+/// Default source globs scanned by `check` and `extract` when `--src` is omitted.
+const DEFAULT_EXTRACT_GLOBS: &[&str] = &[
+    "src/**/*.ts",
+    "src/**/*.tsx",
+    "src/**/*.js",
+    "lib/**/*.go",
+    "lib/**/*.py",
+];
 
 #[derive(Clone)]
 struct ServerState {
@@ -555,9 +565,19 @@ impl RateLimiter {
         }
     }
 
+    /// Entries older than this are evicted; the key strings (IP or
+    /// X-Forwarded-For, attacker-controlled) must not accumulate forever.
+    const EVICT_AFTER_SECS: u64 = 60;
+    const EVICT_THRESHOLD: usize = 1024;
+
     fn check(&self, ip: &str) -> bool {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap_or_else(|p| p.into_inner());
         let now = Instant::now();
+        if state.len() >= Self::EVICT_THRESHOLD {
+            state.retain(|_, (_, seen)| {
+                now.duration_since(*seen).as_secs() < Self::EVICT_AFTER_SECS
+            });
+        }
         let entry = state.entry(ip.to_string()).or_insert((0, now));
         if now.duration_since(entry.1).as_secs() >= 1 {
             *entry = (1, now);
@@ -814,25 +834,38 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
     };
 
     let globs = if src_globs.is_empty() {
-        vec![
-            "src/**/*.ts".to_string(),
-            "src/**/*.tsx".to_string(),
-            "src/**/*.js".to_string(),
-            "lib/**/*.go".to_string(),
-            "lib/**/*.py".to_string(),
-        ]
+        DEFAULT_EXTRACT_GLOBS.iter().map(|g| g.to_string()).collect()
     } else {
         src_globs
     };
 
+    // A CI gate must not silently scan nothing: an invalid glob is a hard
+    // error, and unreadable files are reported.
     let mut code_keys_set: std::collections::HashSet<String> = std::collections::HashSet::new();
     for pattern in &globs {
-        if let Ok(entries) = glob::glob(pattern) {
-            for entry in entries.flatten() {
-                if let Ok(content) = std::fs::read_to_string(&entry) {
+        let entries = match glob::glob(pattern) {
+            Ok(entries) => entries,
+            Err(e) => {
+                eprintln!("Error: invalid glob pattern '{}': {}", pattern, e);
+                return 1;
+            }
+        };
+        for entry in entries {
+            let path = match entry {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Warning: skipping unreadable path: {}", e);
+                    continue;
+                }
+            };
+            match std::fs::read_to_string(&path) {
+                Ok(content) => {
                     for k in extract_keys_from_source(&content) {
                         code_keys_set.insert(k);
                     }
+                }
+                Err(e) => {
+                    eprintln!("Warning: could not read '{}': {}", path.display(), e);
                 }
             }
         }
@@ -871,10 +904,14 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
     let has_issues = !report.missing_in_locale.is_empty() || !report.unused_in_code.is_empty();
 
     if json_output {
-        println!("{{");
-        println!("  \"missing\": {:?},", report.missing_in_locale);
-        println!("  \"unused\": {:?}", report.unused_in_code);
-        println!("}}");
+        let payload = serde_json::json!({
+            "missing": report.missing_in_locale,
+            "unused": report.unused_in_code,
+        });
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "{}".to_string())
+        );
     } else {
         if report.missing_in_locale.is_empty() && report.unused_in_code.is_empty() {
             println!(
@@ -1138,15 +1175,22 @@ fn stats_command(json_output: bool, verbose: bool) -> Result<(), anyhow::Error> 
     coverages.sort_by_key(|c| c.percent);
 
     if json_output {
-        println!("[");
-        for (i, cov) in coverages.iter().enumerate() {
-            let comma = if i < coverages.len() - 1 { "," } else { "" };
-            println!(
-                "  {{\"locale\":\"{}\",\"percent\":{},\"total\":{},\"missing\":{},\"extra\":{}}}{}",
-                cov.locale, cov.percent, cov.total_keys, cov.missing_count, cov.extra_count, comma
-            );
-        }
-        println!("]");
+        let payload: Vec<serde_json::Value> = coverages
+            .iter()
+            .map(|cov| {
+                serde_json::json!({
+                    "locale": cov.locale,
+                    "percent": cov.percent,
+                    "total": cov.total_keys,
+                    "missing": cov.missing_count,
+                    "extra": cov.extra_count,
+                })
+            })
+            .collect();
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&payload).unwrap_or_else(|_| "[]".to_string())
+        );
     } else {
         println!(
             "\n{:<12} {:>8} {:>8} {:>8}  Bar",
@@ -1210,13 +1254,7 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
     let config = load_config()?;
 
     let globs = if src_globs.is_empty() {
-        vec![
-            "src/**/*.ts".to_string(),
-            "src/**/*.tsx".to_string(),
-            "src/**/*.js".to_string(),
-            "lib/**/*.go".to_string(),
-            "lib/**/*.py".to_string(),
-        ]
+        DEFAULT_EXTRACT_GLOBS.iter().map(|g| g.to_string()).collect()
     } else {
         src_globs
     };
@@ -1332,7 +1370,6 @@ fn detect_project_type() -> Vec<String> {
     let mut targets = Vec::new();
     if Path::new("package.json").exists() {
         targets.push("typescript".to_string());
-        let _ = std::fs::read_to_string("package.json");
     }
     if Path::new("go.mod").exists() {
         targets.push("go".to_string());

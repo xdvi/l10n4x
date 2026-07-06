@@ -683,7 +683,9 @@ fn test_load_static_bytes_ffi() {
     ];
 
     let locale = CString::new("static_test").unwrap();
-    let code = l10n4c_load_static_bytes(locale.as_ptr(), L10N_DATA.as_ptr(), L10N_DATA.len(), 1);
+    // SAFETY: L10N_DATA is a true `static` — valid for the program's lifetime.
+    let code =
+        unsafe { l10n4c_load_static_bytes(locale.as_ptr(), L10N_DATA.as_ptr(), L10N_DATA.len(), 1) };
     assert_eq!(code, l10n4c::L10N4C_OK);
 
     let mut buf = [0u8; 64];

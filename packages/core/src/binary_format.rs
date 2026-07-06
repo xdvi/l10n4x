@@ -192,10 +192,13 @@ impl<'a> BinaryFormatReader<'a> {
                             .try_into()
                             .unwrap(),
                     ) as usize;
-                    if val_offset + val_len > self.data.len() {
+                    // checked_add: on 32-bit targets two attacker-controlled
+                    // u32s can wrap usize and bypass a plain `a + b > len` check.
+                    let end = val_offset.checked_add(val_len)?;
+                    if end > self.data.len() {
                         return None;
                     }
-                    return Some(&self.data[val_offset..val_offset + val_len]);
+                    return Some(&self.data[val_offset..end]);
                 }
                 core::cmp::Ordering::Less => low = mid + 1,
                 core::cmp::Ordering::Greater => high = mid,
