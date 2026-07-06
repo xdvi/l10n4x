@@ -224,24 +224,26 @@ pub fn format_test_function(rv: &TestFunctionValue) -> Option<String> {
     Some(out)
 }
 
-/// Serialized MF2 declaration expression (from opcode `0x0E`).
-#[derive(Debug, Clone, PartialEq)]
-pub struct DeclExpr {
+/// Serialized MF2 declaration expression (from opcode `0x0E`), borrowing its
+/// strings directly from the message bytecode — decoded on every render, so
+/// owned `String`s here would mean four allocations per declaration per call.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeclExpr<'a> {
     /// Variable operand (`$x`), empty for literals or standalone functions.
-    pub var: String,
+    pub var: &'a str,
     /// Number literal operand, empty when using `var`.
-    pub literal: String,
+    pub literal: &'a str,
     /// Function name (e.g. `test:select`), empty for bare variable refs.
-    pub formatter: String,
+    pub formatter: &'a str,
     /// Comma-separated `k=v` options string.
-    pub options: String,
+    pub options: &'a str,
 }
 
-impl DeclExpr {
+impl DeclExpr<'_> {
     /// True when this expression applies a `:test:*` function.
     pub fn has_test_function(&self) -> bool {
         matches!(
-            self.formatter.as_str(),
+            self.formatter,
             "test:function" | "test:select" | "test:format"
         )
     }
@@ -281,33 +283,33 @@ impl SelectorState {
 }
 
 /// Resolve MF2 declaration expressions for selector matching.
-pub fn resolve_selector_states(
-    inputs: &[(&str, &DeclExpr)],
-    locals: &[(&str, &DeclExpr)],
+pub fn resolve_selector_states<'a>(
+    inputs: &[(&'a str, &DeclExpr<'a>)],
+    locals: &[(&'a str, &DeclExpr<'a>)],
     params: &[(&str, &str)],
-) -> BTreeMap<String, SelectorState> {
-    let mut resolved: BTreeMap<String, SelectorState> = BTreeMap::new();
+) -> BTreeMap<&'a str, SelectorState> {
+    let mut resolved: BTreeMap<&str, SelectorState> = BTreeMap::new();
 
     for (name, expr) in inputs {
         let value = resolve_decl_to_state(expr, params, &resolved);
-        resolved.insert((*name).to_string(), value);
+        resolved.insert(name, value);
     }
 
     for (name, expr) in locals {
         let value = resolve_decl_to_state(expr, params, &resolved);
-        resolved.insert((*name).to_string(), value);
+        resolved.insert(name, value);
     }
 
     resolved
 }
 
 fn resolve_decl_to_state(
-    expr: &DeclExpr,
+    expr: &DeclExpr<'_>,
     params: &[(&str, &str)],
-    resolved: &BTreeMap<String, SelectorState>,
+    resolved: &BTreeMap<&str, SelectorState>,
 ) -> SelectorState {
     if expr.is_var_ref() {
-        return resolved.get(&expr.var).cloned().unwrap_or_else(|| {
+        return resolved.get(expr.var).cloned().unwrap_or_else(|| {
             SelectorState::from_test(TestFunctionValue::bad_operand_fallback())
         });
     }
@@ -317,24 +319,24 @@ fn resolve_decl_to_state(
             return SelectorState::from_string(param_val.to_string());
         }
         if !expr.var.is_empty() {
-            return SelectorState::from_string(expr.var.clone());
+            return SelectorState::from_string(expr.var.to_string());
         }
         if !expr.literal.is_empty() {
-            return SelectorState::from_string(expr.literal.clone());
+            return SelectorState::from_string(expr.literal.to_string());
         }
     }
 
     if expr.has_test_function() {
         let test_map: BTreeMap<String, TestFunctionValue> = resolved
             .iter()
-            .filter_map(|(k, s)| s.test.clone().map(|t| (k.clone(), t)))
+            .filter_map(|(k, s)| s.test.clone().map(|t| (k.to_string(), t)))
             .collect();
-        let opts = parse_options(&expr.options);
+        let opts = parse_options(expr.options);
         if !expr.var.is_empty() {
-            if let Some(src) = test_map.get(&expr.var) {
+            if let Some(src) = test_map.get(expr.var) {
                 return SelectorState::from_test(resolve_test_function_from_value(
                     src,
-                    &expr.formatter,
+                    expr.formatter,
                     &opts,
                     &test_map,
                 ));
@@ -342,7 +344,7 @@ fn resolve_decl_to_state(
             if let Some((_, param_val)) = params.iter().find(|(k, _)| *k == expr.var) {
                 return SelectorState::from_test(resolve_test_function_from_operand(
                     param_val,
-                    &expr.formatter,
+                    expr.formatter,
                     &opts,
                     &test_map,
                 ));
@@ -351,8 +353,8 @@ fn resolve_decl_to_state(
         }
         if !expr.literal.is_empty() {
             return SelectorState::from_test(resolve_test_function_from_operand(
-                &expr.literal,
-                &expr.formatter,
+                expr.literal,
+                expr.formatter,
                 &opts,
                 &test_map,
             ));
@@ -387,7 +389,7 @@ fn key_matches_state(state: &SelectorState, key: &str) -> bool {
     false
 }
 
-fn variant_matches(selector_values: &[SelectorState], keys: &[String]) -> bool {
+fn variant_matches(selector_values: &[SelectorState], keys: &[&str]) -> bool {
     for (i, key) in keys.iter().enumerate() {
         if i >= selector_values.len() {
             return false;
@@ -400,7 +402,7 @@ fn variant_matches(selector_values: &[SelectorState], keys: &[String]) -> bool {
 }
 
 /// Priority score for tie-breaking among multiple matching variants (BetterThan).
-fn variant_priority(selector_values: &[SelectorState], keys: &[String]) -> i32 {
+fn variant_priority(selector_values: &[SelectorState], keys: &[&str]) -> i32 {
     let mut score = 0i32;
     for (i, key) in keys.iter().enumerate() {
         if i >= selector_values.len() {
@@ -432,7 +434,7 @@ fn better_than_key(rv: &TestFunctionValue, key: &str) -> bool {
 /// Select the best matching variant for MF2 pattern selection.
 pub fn select_mf2_variant(
     selector_values: &[SelectorState],
-    variants: &[(alloc::vec::Vec<String>, usize, usize)],
+    variants: &[(alloc::vec::Vec<&str>, usize, usize)],
 ) -> Option<(usize, usize)> {
     let mut best: Option<(usize, usize, i32)> = None;
     for (keys, pat_pos, pat_len) in variants {
@@ -481,9 +483,9 @@ mod tests {
             fails_format: false,
         });
         let variants = [
-            (alloc::vec!["1.0".to_string()], 0usize, 3usize),
-            (alloc::vec!["1".to_string()], 10, 1),
-            (alloc::vec!["*".to_string()], 20, 5),
+            (alloc::vec!["1.0"], 0usize, 3usize),
+            (alloc::vec!["1"], 10, 1),
+            (alloc::vec!["*"], 20, 5),
         ];
         let sel = select_mf2_variant(&[rv], &variants);
         assert_eq!(sel, Some((10, 1)));

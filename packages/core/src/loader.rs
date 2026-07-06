@@ -238,7 +238,12 @@ pub fn try_load_namespace_locale_for_store(
     namespace: &str,
     path_str: &str,
 ) -> CoreResult<()> {
-    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    let bytes = std::fs::read(path_str).map_err(|e| {
+        // CoreError carries only static strings (no_std-compatible); log the
+        // real cause instead of discarding it.
+        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        crate::CoreError::IoError("read failed")
+    })?;
     try_load_namespace_pak_for_store(handle, locale_str, namespace, &bytes)
 }
 
@@ -378,7 +383,12 @@ pub fn try_load_pak_locale_for_store(
     locale_str: &str,
     path_str: &str,
 ) -> CoreResult<()> {
-    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    let bytes = std::fs::read(path_str).map_err(|e| {
+        // CoreError carries only static strings (no_std-compatible); log the
+        // real cause instead of discarding it.
+        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        crate::CoreError::IoError("read failed")
+    })?;
     try_load_pak_bytes_for_store(handle, locale_str, &bytes)
 }
 

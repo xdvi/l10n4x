@@ -79,9 +79,12 @@ fn capture_locale_snapshot(snap: &StoreSnapshot, locale: &str) -> Option<LocaleR
 
 #[cfg(feature = "std")]
 fn save_retired_snapshot(store_id: u32, locale: &str, retired: LocaleRetiredSnapshot) {
-    if let Ok(mut map) = retired_snapshots().lock() {
-        map.insert((store_id, locale.to_string()), retired);
-    }
+    // into_inner on poison (repo convention): silently dropping the snapshot
+    // here would make a later rollback restore nothing.
+    retired_snapshots()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert((store_id, locale.to_string()), retired);
 }
 
 #[cfg(feature = "std")]
@@ -149,8 +152,8 @@ pub fn ota_can_rollback_for_store(handle: Option<StoreHandle>, locale: &str) -> 
     let store_id = store_id_from_handle(handle);
     retired_snapshots()
         .lock()
-        .map(|m| m.contains_key(&(store_id, locale.to_string())))
-        .unwrap_or(false)
+        .unwrap_or_else(|p| p.into_inner())
+        .contains_key(&(store_id, locale.to_string()))
 }
 
 /// Returns `true` when a retired snapshot exists for `locale` and rollback is possible.
@@ -212,8 +215,8 @@ pub fn try_ota_rollback_for_store(handle: Option<StoreHandle>, locale: &str) -> 
     let store_id = store_id_from_handle(handle);
     let retired = retired_snapshots()
         .lock()
-        .ok()
-        .and_then(|mut m| m.remove(&(store_id, locale.to_string())));
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&(store_id, locale.to_string()));
     let Some(retired) = retired else {
         return Err(crate::CoreError::InvalidFormat("no OTA rollback snapshot"));
     };
