@@ -2,11 +2,13 @@ extern crate alloc;
 use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 #[cfg(not(feature = "std"))]
+use crate::store::read_store;
+#[cfg(not(feature = "std"))]
 use crate::store::TranslationStore;
 #[cfg(feature = "std")]
 use crate::store::{
-    build_store, lazy_cache_mut, notify_locale_changed_for_handle, offset_maps_mut,
-    store_snapshot, update_store_for, StoreSnapshot,
+    build_store, lazy_cache_mut, notify_locale_changed_for_handle, offset_maps_mut, store_snapshot,
+    update_store_for, StoreSnapshot,
 };
 use crate::store::{emit_locale_changed, upsert_locale, StoreData};
 #[cfg(feature = "std")]

@@ -26,9 +26,7 @@ pub fn set_signing_key(seed: &[u8]) -> bool {
     arr.copy_from_slice(seed);
     let signing = SigningKey::from_bytes(&arr);
     let verifying = signing.verifying_key();
-    SIGNING_KEY
-        .set(CachedKey { signing, verifying })
-        .is_ok()
+    SIGNING_KEY.set(CachedKey { signing, verifying }).is_ok()
 }
 
 /// Derives the public key from the configured signing seed.

@@ -59,7 +59,7 @@ pub enum MessageNode {
     Plural {
         var: IStr,
         ordinal: bool,
-        cases: Vec<(PluralCaseKey, Vec<MessageNode>)>,
+        cases: PluralCases,
     },
     Select {
         var: IStr,
@@ -129,6 +129,9 @@ pub enum PluralCaseKey {
     Other,
 }
 
+/// A parsed plural block's cases: each key paired with its message pattern.
+pub type PluralCases = Vec<(PluralCaseKey, Vec<MessageNode>)>;
+
 pub struct MessageParser<'a> {
     input: &'a str,
     chars: core::iter::Peekable<core::str::Chars<'a>>,
@@ -197,7 +200,8 @@ impl<'a> MessageParser<'a> {
                     if self.chars.peek() == Some(&'(') {
                         self.chars.next();
                         if !current_text.is_empty() {
-                            nodes.push(MessageNode::Text(core::mem::take(&mut current_text).into()));
+                            nodes
+                                .push(MessageNode::Text(core::mem::take(&mut current_text).into()));
                         }
                         let mut key_ref = String::new();
                         for ch in self.chars.by_ref() {
@@ -508,9 +512,7 @@ impl<'a> MessageParser<'a> {
 /// - `Ok(Some(cases))` on a successful parse.
 /// - `Err(message)` when the input *is* an interval pattern but is malformed
 ///   (unbalanced brackets, unparseable range, or exceeds `MAX_PLURAL_RULES_PER_MESSAGE`).
-pub fn parse_interval_plural(
-    input: &str,
-) -> Result<Option<Vec<(PluralCaseKey, Vec<MessageNode>)>>, String> {
+pub fn parse_interval_plural(input: &str) -> Result<Option<PluralCases>, String> {
     let input = input.trim();
     if !input.starts_with('(') {
         return Ok(None);
@@ -617,10 +619,7 @@ fn expand_hash_for_var<'a>(pattern: &'a str, var_name: &str) -> std::borrow::Cow
     std::borrow::Cow::Owned(result)
 }
 
-fn parse_cases(
-    mut input: &str,
-    var_name: &str,
-) -> Result<Vec<(PluralCaseKey, Vec<MessageNode>)>, String> {
+fn parse_cases(mut input: &str, var_name: &str) -> Result<PluralCases, String> {
     let mut cases = Vec::new();
     while !input.is_empty() {
         input = input.trim_start();
@@ -956,7 +955,11 @@ when *   * {Unknown}"#;
         let nodes = MessageParser::new(input).parse().unwrap();
         match &nodes[0] {
             MessageNode::Select { var, cases: _ } => {
-                assert_eq!(&var[..], "level", "innermost var should be the 2nd selector");
+                assert_eq!(
+                    &var[..],
+                    "level",
+                    "innermost var should be the 2nd selector"
+                );
             }
             other => panic!("Expected Select, got {:?}", other),
         }
@@ -1032,10 +1035,7 @@ mod custom_formatter_parse_tests {
             assert_eq!(&var[..], "count");
             assert_eq!(cases.len(), 2);
             assert_eq!(cases[0].0, PluralCaseKey::One);
-            assert_eq!(
-                cases[0].1,
-                vec![MessageNode::Text("escaped # here".into())]
-            );
+            assert_eq!(cases[0].1, vec![MessageNode::Text("escaped # here".into())]);
             assert_eq!(cases[1].0, PluralCaseKey::Other);
             assert_eq!(
                 cases[1].1,
@@ -1260,7 +1260,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                 .all(|(k, _)| k == "*" || is_plural_key(k));
 
             let inner_pattern = if sub_is_plural {
-                let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = sub_entries
+                let plural_cases: PluralCases = sub_entries
                     .iter()
                     .map(|(k, nodes)| {
                         let plural_key = if k == "*" {
@@ -1324,7 +1324,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         });
 
         if outer_is_plural {
-            let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = outer_cases
+            let plural_cases: PluralCases = outer_cases
                 .into_iter()
                 .map(|(k, nodes)| {
                     let plural_key = match &*k {
