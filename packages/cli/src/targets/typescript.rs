@@ -1,5 +1,5 @@
-use ahash::AHashMap;
 use crate::targets::GenerateContext;
+use ahash::AHashMap;
 use serde_json::Value;
 use std::fs;
 use std::path::Path;

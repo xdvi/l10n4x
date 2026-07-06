@@ -819,7 +819,15 @@ fn resolve_translate_in_store<W: core::fmt::Write>(
             is_primary = false;
         }
         match buf {
-            Some(buf) => try_locale(store, candidate, buf, key_hash, context_hash, params, writer),
+            Some(buf) => try_locale(
+                store,
+                candidate,
+                buf,
+                key_hash,
+                context_hash,
+                params,
+                writer,
+            ),
             None => false,
         }
     });
@@ -881,12 +889,12 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
             let mut snap = store_snapshot(store);
             let offset_map = offset_maps_mut(&mut snap.offset_maps);
             let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-            let offset_arc =
-                if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
-                    Arc::new(reader.to_offsets())
-                } else {
-                    Arc::new(HashMap::new())
-                };
+            let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data)
+            {
+                Arc::new(reader.to_offsets())
+            } else {
+                Arc::new(HashMap::new())
+            };
             offset_map.insert(locale_hash, offset_arc);
             #[cfg(feature = "debug-keys")]
             if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
@@ -1007,14 +1015,12 @@ pub fn on_locale_changed_boxed(callback: alloc::boxed::Box<dyn Fn(&str) + Send>)
     {
         *LOCALE_CHANGE_BOXED
             .lock()
-            .unwrap_or_else(|p| p.into_inner()) =
-            Some(Arc::new(std::sync::Mutex::new(callback)));
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(std::sync::Mutex::new(callback)));
     }
     #[cfg(not(feature = "std"))]
     {
         let ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(callback));
-        let old =
-            LOCALE_CHANGE_BOXED.swap(ptr as *mut (), core::sync::atomic::Ordering::AcqRel);
+        let old = LOCALE_CHANGE_BOXED.swap(ptr as *mut (), core::sync::atomic::Ordering::AcqRel);
         if !old.is_null() {
             // SAFETY: single-threaded no_std — no concurrent caller can hold
             // the old pointer.
@@ -1177,6 +1183,9 @@ fn try_offset_entry<W: core::fmt::Write>(
 }
 
 #[inline]
+// `store` is only read inside the `#[cfg(feature = "std")]` offset-map fast
+// path below; the no_std fallback path doesn't need it.
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
 fn try_locale<W: core::fmt::Write>(
     store: &TranslationStore,
     locale: &str,

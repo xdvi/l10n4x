@@ -1,6 +1,7 @@
 extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::string::String;
+#[cfg(feature = "std")]
 use alloc::string::ToString;
 
 use crate::date_format::{format_date_tz, DateStyle};
@@ -838,8 +839,7 @@ fn format_message_depth<W: core::fmt::Write>(
                     _ => RelTimeStyle::Auto,
                 };
 
-                let raw_val =
-                    param_value(params, param_index.as_ref(), var_name).unwrap_or("0");
+                let raw_val = param_value(params, param_index.as_ref(), var_name).unwrap_or("0");
                 let delta: i64 = raw_val.parse().unwrap_or(0);
 
                 let formatted = format_relative_time(delta, locale, style);
@@ -871,8 +871,7 @@ fn format_message_depth<W: core::fmt::Write>(
                     _ => ListStyle::Conjunction,
                 };
 
-                let raw_val =
-                    param_value(params, param_index.as_ref(), var_name).unwrap_or("[]");
+                let raw_val = param_value(params, param_index.as_ref(), var_name).unwrap_or("[]");
 
                 let formatted = format_list(raw_val, locale, style);
                 write_localized(locale, writer, &formatted)?;

@@ -568,8 +568,7 @@ mod tests {
     #[test]
     fn debug_key_table_roundtrip() {
         let entries: Vec<(u64, Vec<u8>)> = vec![(hash("common.welcome"), b"hi".to_vec())];
-        let keys: Vec<(u64, String)> =
-            vec![(hash("common.welcome"), "common.welcome".to_string())];
+        let keys: Vec<(u64, String)> = vec![(hash("common.welcome"), "common.welcome".to_string())];
         let buf = pack_l10n(
             &entries,
             RUNTIME_VERSION,
