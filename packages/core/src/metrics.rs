@@ -59,13 +59,24 @@ pub fn inc_cache_hits() {
 pub fn inc_cache_misses() {
     CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
 }
+/// Upper bound on distinct locales tracked per-locale; misses beyond it still
+/// count in the global counter. Prevents unbounded growth when locale strings
+/// are caller-controlled.
+#[cfg(feature = "std")]
+const MISS_BY_LOCALE_CAP: usize = 256;
+
 /// Increment the cache miss counter and per-locale miss tracking.
 #[cfg(feature = "std")]
 pub fn inc_cache_misses_for_locale(locale: &str) {
     CACHE_MISSES.fetch_add(1, Ordering::Relaxed);
     let mut guard = miss_map_mut();
     let map = guard.get_or_insert_with(HashMap::new);
-    *map.entry(locale.to_string()).or_insert(0) += 1;
+    // get_mut first: allocate the key String only on the first miss per locale.
+    if let Some(count) = map.get_mut(locale) {
+        *count += 1;
+    } else if map.len() < MISS_BY_LOCALE_CAP {
+        map.insert(locale.to_string(), 1);
+    }
 }
 
 /// Increment cache misses for a locale (no_std stub).

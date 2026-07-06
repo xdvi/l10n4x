@@ -167,11 +167,9 @@ fn get_flat_keys_for_lang_dir(lang_dir: &Path) -> Result<HashSet<String>, anyhow
             let file_stem = file_path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
             let content = fs::read_to_string(&file_path)?;
             let parsed: serde_json::Value = serde_json::from_str(&content)?;
-            let mut flat_map = AHashMap::new();
-            l10n4x_compiler::flatten_value(file_stem.to_string(), &parsed, &mut flat_map);
-            for k in flat_map.keys() {
-                merged_keys.insert(k.clone());
-            }
+            l10n4x_compiler::flatten_value_cb(file_stem.to_string(), &parsed, &mut |k, _v| {
+                merged_keys.insert(k.to_string());
+            });
         }
     }
     Ok(merged_keys)
@@ -249,7 +247,7 @@ fn validate_keys(source_dir: &str, report_misses: bool) -> Result<HashSet<String
     Ok(all_keys)
 }
 
-fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
+fn build_project(dry_run: bool, push_webhook: bool) -> Result<(), anyhow::Error> {
     let config = load_config()?;
 
     // 1. Validate consistency
@@ -322,8 +320,10 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
     let public_key_hex = format_verify_public_key(&public_key);
 
     let mut config = config;
-    config.verify_public_key = Some(public_key_hex.clone());
-    save_config(&config)?;
+    if config.verify_public_key.as_deref() != Some(public_key_hex.as_str()) {
+        config.verify_public_key = Some(public_key_hex.clone());
+        save_config(&config)?;
+    }
 
     if !l10n4x_core::integrity::set_verify_key(&public_key) {
         anyhow::bail!("Failed to configure verify key.");
@@ -334,9 +334,17 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
         config.output_dir
     );
 
+    // The key set was already collected by validate_keys; hashing it here
+    // avoids generate_bindings re-reading and re-flattening every JSON file.
+    let mut key_pairs: Vec<(u64, String)> = keys
+        .iter()
+        .map(|k| (l10n4x_compiler::fnv1a_64(k.as_bytes()), k.clone()))
+        .collect();
+    key_pairs.sort_by_key(|(hash, _)| *hash);
+
     generate_bindings(
         &config.targets,
-        &keys,
+        &key_pairs,
         &config.fallback,
         &config.source_dir,
         &config.output_dir,
@@ -345,7 +353,9 @@ fn build_project(dry_run: bool) -> Result<(), anyhow::Error> {
         &config.encrypt_key_env,
     )?;
 
-    tms::maybe_push_webhook_after_build(&config)?;
+    if push_webhook {
+        tms::maybe_push_webhook_after_build(&config)?;
+    }
 
     println!("Build completed successfully.");
     Ok(())
@@ -598,7 +608,7 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
         }
     }
 
-    if let Err(e) = build_project(false) {
+    if let Err(e) = build_project(false, false) {
         eprintln!("Initial build failed: {}. Dev server will start anyway.", e);
     }
 
@@ -642,7 +652,7 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
                         while let Ok(Ok(_)) = event_rx.try_recv() {}
 
                         println!("Translation file changed. Rebuilding...");
-                        match build_project(false) {
+                        match build_project(false, false) {
                             Ok(_) => {
                                 let lang = event
                                     .paths
@@ -1447,20 +1457,27 @@ fn init_wizard() -> Result<(), anyhow::Error> {
 /// Extracts string-literal translation keys from source text.
 fn extract_keys_from_source(src: &str) -> Vec<String> {
     use std::collections::HashSet;
+    // Compiled once: this function runs once per scanned source file.
+    static CALL_PATTERNS: LazyLock<Vec<regex_lite::Regex>> = LazyLock::new(|| {
+        [r#"t\(["']([^"']+)["']\)"#, r#"\.T\(["']([^"']+)["']\)"#]
+            .iter()
+            .filter_map(|p| regex_lite::Regex::new(p).ok())
+            .collect()
+    });
+    static LOCALE_KEY_PATTERN: LazyLock<Option<regex_lite::Regex>> =
+        LazyLock::new(|| regex_lite::Regex::new(r"LocaleKey\.([A-Z0-9_]+)").ok());
+
     let mut found: HashSet<String> = HashSet::new();
 
-    let patterns: &[&str] = &[r#"t\(["']([^"']+)["']\)"#, r#"\.T\(["']([^"']+)["']\)"#];
-    for pattern in patterns {
-        if let Ok(re) = regex_lite::Regex::new(pattern) {
-            for cap in re.captures_iter(src) {
-                if let Some(m) = cap.get(1) {
-                    found.insert(m.as_str().to_string());
-                }
+    for re in CALL_PATTERNS.iter() {
+        for cap in re.captures_iter(src) {
+            if let Some(m) = cap.get(1) {
+                found.insert(m.as_str().to_string());
             }
         }
     }
 
-    if let Ok(re) = regex_lite::Regex::new(r"LocaleKey\.([A-Z0-9_]+)") {
+    if let Some(re) = LOCALE_KEY_PATTERN.as_ref() {
         for cap in re.captures_iter(src) {
             if let Some(m) = cap.get(1) {
                 let key = m.as_str().to_lowercase().replace('_', ".");
@@ -1700,7 +1717,7 @@ async fn main() -> Result<(), anyhow::Error> {
             init_wizard()?;
         }
         Commands::Build { dry_run } => {
-            build_project(dry_run)?;
+            build_project(dry_run, true)?;
         }
         Commands::Validate { report_misses } => {
             let config = load_config()?;
@@ -1776,6 +1793,11 @@ async fn main() -> Result<(), anyhow::Error> {
             }
             let config = load_config()?;
             let keys = validate_keys(&config.source_dir, false)?;
+            let mut key_pairs: Vec<(u64, String)> = keys
+                .iter()
+                .map(|k| (l10n4x_compiler::fnv1a_64(k.as_bytes()), k.clone()))
+                .collect();
+            key_pairs.sort_by_key(|(hash, _)| *hash);
             let filtered: Vec<Target> = config
                 .targets
                 .into_iter()
@@ -1798,7 +1820,7 @@ async fn main() -> Result<(), anyhow::Error> {
             l10n4x_core::integrity::set_verify_key(&pubkey);
             generate_bindings(
                 &filtered,
-                &keys,
+                &key_pairs,
                 &config.fallback,
                 &config.source_dir,
                 &config.output_dir,

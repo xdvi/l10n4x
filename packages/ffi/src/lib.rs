@@ -83,6 +83,9 @@ struct TranslateOutcome {
 }
 
 struct CachedTranslate {
+    /// Store generation the entry was cached at; stale when it no longer
+    /// matches `store_generation()` (another thread loaded/cleared a locale).
+    generation: u64,
     store_id: u32,
     locale_hash: u64,
     key_hash: u64,
@@ -120,7 +123,8 @@ fn cache_lookup(
     LAST_TRANSLATE.with(|cell| {
         let cached = cell.borrow();
         let entry = cached.as_ref()?;
-        if entry.store_id == store_id
+        if entry.generation == l10n4x_core::store::store_generation()
+            && entry.store_id == store_id
             && entry.locale_hash == locale_hash
             && entry.key_hash == key_hash
             && entry.context_hash == context_hash
@@ -163,6 +167,7 @@ fn cache_store(
 ) {
     LAST_TRANSLATE.with(|cell| {
         *cell.borrow_mut() = Some(CachedTranslate {
+            generation: l10n4x_core::store::store_generation(),
             store_id,
             locale_hash,
             key_hash,
@@ -173,6 +178,19 @@ fn cache_store(
             locale_loaded: outcome.locale_loaded,
         });
     });
+}
+
+/// Catches any panic escaping toward the `extern "C"` boundary. A Rust panic
+/// unwinding across an `extern "C"` frame aborts the entire host process;
+/// bindings must degrade to `L10N4C_INTERNAL_ERROR` instead.
+fn ffi_guard(f: impl FnOnce() -> i32) -> i32 {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(L10N4C_INTERNAL_ERROR)
+}
+
+/// Like [`ffi_guard`] for exports that do not return a status code: on panic,
+/// returns `fallback` (null pointer, `0`, or `()`).
+fn ffi_guard_with<T>(fallback: T, f: impl FnOnce() -> T) -> T {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or(fallback)
 }
 
 fn parse_store_handle(raw: u32) -> Result<StoreHandle, i32> {
@@ -287,11 +305,15 @@ fn fill_typed_params(
     param_count: usize,
     storage: &mut Vec<(String, String)>,
 ) -> Result<(), i32> {
-    storage.clear();
+    // Do NOT clear() here: the loop below reuses the existing (String, String)
+    // pairs in place, so their heap buffers survive across calls. clear() would
+    // drop them and force two fresh allocations per parameter every call.
     if param_count == 0 {
+        storage.clear();
         return Ok(());
     }
     if params.is_null() {
+        storage.clear();
         return Err(L10N4C_INVALID_PARAMS);
     }
     let size_of_param = std::mem::size_of::<L10n4cParam>();
@@ -392,41 +414,45 @@ fn string_to_c(s: &str) -> *mut c_char {
 /// Installs the 32-byte Ed25519 public key used to verify `.pak` signatures at runtime.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_set_verify_key(key: *const u8, key_len: usize) -> i32 {
-    if key.is_null() || key_len != 32 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(key, key_len) };
-    if integrity::set_verify_key(slice) {
-        L10N4C_OK
-    } else {
-        L10N4C_INVALID_PARAMS
-    }
+    ffi_guard(move || {
+        if key.is_null() || key_len != 32 {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(key, key_len) };
+        if integrity::set_verify_key(slice) {
+            L10N4C_OK
+        } else {
+            L10N4C_INVALID_PARAMS
+        }
+    })
 }
 
 /// Installs the 32-byte AES key for optional `L10E` envelope decryption (and compile-time encryption).
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_set_decrypt_key(key: *const u8, key_len: usize) -> i32 {
-    if key.is_null() || key_len != 32 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(key, key_len) };
-    if encryption::set_decrypt_key(slice) {
-        L10N4C_OK
-    } else {
-        L10N4C_INVALID_PARAMS
-    }
+    ffi_guard(move || {
+        if key.is_null() || key_len != 32 {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let slice = unsafe { std::slice::from_raw_parts(key, key_len) };
+        if encryption::set_decrypt_key(slice) {
+            L10N4C_OK
+        } else {
+            L10N4C_INVALID_PARAMS
+        }
+    })
 }
 
 /// Sets the global fallback locale (defaults to `"en"`).
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_set_fallback_locale(locale: *const c_char) -> i32 {
-    match cstr_to_str(locale) {
+    ffi_guard(move || match cstr_to_str(locale) {
         Ok(s) => {
             set_fallback_locale(s);
             L10N4C_OK
         }
         Err(e) => e,
-    }
+    })
 }
 
 /// Sets the ordered fallback locale chain (first match wins).
@@ -440,37 +466,41 @@ pub unsafe extern "C" fn l10n4c_set_fallback_chain(
     locales: *const *const c_char,
     count: usize,
 ) -> i32 {
-    if locales.is_null() || count == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let mut chain: Vec<&str> = Vec::with_capacity(count.min(16));
-    for i in 0..count.min(16) {
-        // SAFETY: caller guarantees each pointer is a valid null-terminated UTF-8 string.
-        let ptr = unsafe { *locales.add(i) };
-        match cstr_to_str(ptr) {
-            Ok(s) => chain.push(s),
-            Err(e) => return e,
+    ffi_guard(move || {
+        if locales.is_null() || count == 0 {
+            return L10N4C_INVALID_PARAMS;
         }
-    }
-    l10n4x_core::store::set_fallback_chain(&chain);
-    L10N4C_OK
+        let mut chain: Vec<&str> = Vec::with_capacity(count.min(16));
+        for i in 0..count.min(16) {
+            // SAFETY: caller guarantees each pointer is a valid null-terminated UTF-8 string.
+            let ptr = unsafe { *locales.add(i) };
+            match cstr_to_str(ptr) {
+                Ok(s) => chain.push(s),
+                Err(e) => return e,
+            }
+        }
+        l10n4x_core::store::set_fallback_chain(&chain);
+        L10N4C_OK
+    })
 }
 
 /// Loads a single `.pak` file for a given locale.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *const c_char) -> i32 {
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let path_str = match cstr_to_str(file_path) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match try_load_pak_locale(locale_str, path_str) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let path_str = match cstr_to_str(file_path) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match try_load_pak_locale(locale_str, path_str) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Loads a static (compile-time embedded) L10N buffer into the store.
@@ -489,22 +519,24 @@ pub extern "C" fn l10n4c_load_static_bytes(
     data_len: usize,
     already_verified: i32,
 ) -> i32 {
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if data.is_null() || data_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let slice = unsafe { core::slice::from_raw_parts(data, data_len) };
-    // SAFETY: The caller promises the buffer lives for the program's lifetime
-    // (e.g., a C static variable or mmap'd read-only section).
-    let static_slice: &'static [u8] = unsafe { core::mem::transmute(slice) };
-    let verified = already_verified != 0;
-    match try_load_static_bytes(locale_str, static_slice, verified) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        if data.is_null() || data_len == 0 {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let slice = unsafe { core::slice::from_raw_parts(data, data_len) };
+        // SAFETY: The caller promises the buffer lives for the program's lifetime
+        // (e.g., a C static variable or mmap'd read-only section).
+        let static_slice: &'static [u8] = unsafe { core::mem::transmute(slice) };
+        let verified = already_verified != 0;
+        match try_load_static_bytes(locale_str, static_slice, verified) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Merges a namespace `.pak` into an existing locale (modular bundle mode).
@@ -514,53 +546,59 @@ pub extern "C" fn l10n4c_load_namespace(
     namespace: *const c_char,
     file_path: *const c_char,
 ) -> i32 {
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let namespace_str = match cstr_to_str(namespace) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let path_str = match cstr_to_str(file_path) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match try_load_namespace_locale(locale_str, namespace_str, path_str) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let namespace_str = match cstr_to_str(namespace) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let path_str = match cstr_to_str(file_path) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match try_load_namespace_locale(locale_str, namespace_str, path_str) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Loads preload namespaces from `namespaces.json` under `base_dir` for `locale`.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_init_modular(base_dir: *const c_char, locale: *const c_char) -> i32 {
-    let base = match cstr_to_str(base_dir) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match init_modular(base, locale_str) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let base = match cstr_to_str(base_dir) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match init_modular(base, locale_str) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Scans a directory for all `.pak` files and loads them (filename stem = locale).
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_load_pak_directory(dir_path: *const c_char) -> i32 {
-    let dir = match cstr_to_str(dir_path) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if load_pak_directory(dir) {
-        L10N4C_OK
-    } else {
-        L10N4C_IO_ERROR
-    }
+    ffi_guard(move || {
+        let dir = match cstr_to_str(dir_path) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        if load_pak_directory(dir) {
+            L10N4C_OK
+        } else {
+            L10N4C_IO_ERROR
+        }
+    })
 }
 
 /// Returns the buffer size (including null terminator) needed for a translation.
@@ -570,21 +608,23 @@ pub extern "C" fn l10n4c_translate_required_size(
     key_hash: u64,
     out_size: *mut usize,
 ) -> i32 {
-    if out_size.is_null() {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let outcome = match translate_core(0, None, locale, key_hash, None, None) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    let needed = match required_size(&outcome.text) {
-        Some(sz) => sz,
-        None => return L10N4C_BUFFER_OVERFLOW,
-    };
-    unsafe {
-        *out_size = needed;
-    }
-    outcome_status(&outcome)
+    ffi_guard(move || {
+        if out_size.is_null() {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let outcome = match translate_core(0, None, locale, key_hash, None, None) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        let needed = match required_size(&outcome.text) {
+            Some(sz) => sz,
+            None => return L10N4C_BUFFER_OVERFLOW,
+        };
+        unsafe {
+            *out_size = needed;
+        }
+        outcome_status(&outcome)
+    })
 }
 
 /// Translates a key into a caller-provided buffer.
@@ -595,15 +635,17 @@ pub extern "C" fn l10n4c_translate(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(0, None, locale, key_hash, None, None) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let outcome = match translate_core(0, None, locale, key_hash, None, None) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
+            Err(e) => e,
+        }
+    })
 }
 
 /// Returns the buffer size needed for a typed-parameter translation.
@@ -615,22 +657,24 @@ pub extern "C" fn l10n4c_translate_with_params_required_size(
     param_count: usize,
     out_size: *mut usize,
 ) -> i32 {
-    if out_size.is_null() {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let outcome = match translate_core(0, None, locale, key_hash, None, Some((params, param_count)))
-    {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    let needed = match required_size(&outcome.text) {
-        Some(sz) => sz,
-        None => return L10N4C_BUFFER_OVERFLOW,
-    };
-    unsafe {
-        *out_size = needed;
-    }
-    outcome_status(&outcome)
+    ffi_guard(move || {
+        if out_size.is_null() {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let outcome =
+            match translate_core(0, None, locale, key_hash, None, Some((params, param_count))) {
+                Ok(o) => o,
+                Err(e) => return e,
+            };
+        let needed = match required_size(&outcome.text) {
+            Some(sz) => sz,
+            None => return L10N4C_BUFFER_OVERFLOW,
+        };
+        unsafe {
+            *out_size = needed;
+        }
+        outcome_status(&outcome)
+    })
 }
 
 /// Translates a key with typed parameters into a caller-provided buffer.
@@ -643,24 +687,28 @@ pub extern "C" fn l10n4c_translate_with_params(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(0, None, locale, key_hash, None, Some((params, param_count)))
-    {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let outcome =
+            match translate_core(0, None, locale, key_hash, None, Some((params, param_count))) {
+                Ok(o) => o,
+                Err(e) => return e,
+            };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(e) => e,
+        }
+    })
 }
 
 /// Allocates and returns a translated string. Caller must free with [`l10n4c_free_string`].
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_translate_alloc(locale: *const c_char, key_hash: u64) -> *mut c_char {
-    match translate_core(0, None, locale, key_hash, None, None) {
-        Ok(o) => string_to_c(&o.text),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard_with(std::ptr::null_mut(), move || {
+        match translate_core(0, None, locale, key_hash, None, None) {
+            Ok(o) => string_to_c(&o.text),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 #[unsafe(no_mangle)]
@@ -670,10 +718,12 @@ pub extern "C" fn l10n4c_translate_with_params_alloc(
     params: *const L10n4cParam,
     param_count: usize,
 ) -> *mut c_char {
-    match translate_core(0, None, locale, key_hash, None, Some((params, param_count))) {
-        Ok(o) => string_to_c(&o.text),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard_with(std::ptr::null_mut(), move || {
+        match translate_core(0, None, locale, key_hash, None, Some((params, param_count))) {
+            Ok(o) => string_to_c(&o.text),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Returns the buffer size needed for a context-suffix translation.
@@ -684,21 +734,23 @@ pub extern "C" fn l10n4c_translate_with_context_required_size(
     context_hash: u64,
     out_size: *mut usize,
 ) -> i32 {
-    if out_size.is_null() {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let outcome = match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    let needed = match required_size(&outcome.text) {
-        Some(sz) => sz,
-        None => return L10N4C_BUFFER_OVERFLOW,
-    };
-    unsafe {
-        *out_size = needed;
-    }
-    outcome_status(&outcome)
+    ffi_guard(move || {
+        if out_size.is_null() {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let outcome = match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        let needed = match required_size(&outcome.text) {
+            Some(sz) => sz,
+            None => return L10N4C_BUFFER_OVERFLOW,
+        };
+        unsafe {
+            *out_size = needed;
+        }
+        outcome_status(&outcome)
+    })
 }
 
 /// Translates a key with context suffix into a caller-provided buffer.
@@ -710,14 +762,16 @@ pub extern "C" fn l10n4c_translate_with_context(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let outcome = match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(e) => e,
+        }
+    })
 }
 
 /// Allocates and returns a context-suffix translation.
@@ -727,10 +781,12 @@ pub extern "C" fn l10n4c_translate_with_context_alloc(
     key_hash: u64,
     context_hash: u64,
 ) -> *mut c_char {
-    match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
-        Ok(o) => string_to_c(&o.text),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard_with(std::ptr::null_mut(), move || {
+        match translate_core(0, None, locale, key_hash, Some(context_hash), None) {
+            Ok(o) => string_to_c(&o.text),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Returns the buffer size needed for a context-suffix translation with parameters.
@@ -743,28 +799,30 @@ pub extern "C" fn l10n4c_translate_with_context_and_params_required_size(
     param_count: usize,
     out_size: *mut usize,
 ) -> i32 {
-    if out_size.is_null() {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let outcome = match translate_core(
-        0,
-        None,
-        locale,
-        key_hash,
-        Some(context_hash),
-        Some((params, param_count)),
-    ) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    let needed = match required_size(&outcome.text) {
-        Some(sz) => sz,
-        None => return L10N4C_BUFFER_OVERFLOW,
-    };
-    unsafe {
-        *out_size = needed;
-    }
-    outcome_status(&outcome)
+    ffi_guard(move || {
+        if out_size.is_null() {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let outcome = match translate_core(
+            0,
+            None,
+            locale,
+            key_hash,
+            Some(context_hash),
+            Some((params, param_count)),
+        ) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        let needed = match required_size(&outcome.text) {
+            Some(sz) => sz,
+            None => return L10N4C_BUFFER_OVERFLOW,
+        };
+        unsafe {
+            *out_size = needed;
+        }
+        outcome_status(&outcome)
+    })
 }
 
 /// Translates a key with context suffix and parameters into a caller-provided buffer.
@@ -778,21 +836,23 @@ pub extern "C" fn l10n4c_translate_with_context_and_params(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let outcome = match translate_core(
-        0,
-        None,
-        locale,
-        key_hash,
-        Some(context_hash),
-        Some((params, param_count)),
-    ) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let outcome = match translate_core(
+            0,
+            None,
+            locale,
+            key_hash,
+            Some(context_hash),
+            Some((params, param_count)),
+        ) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(e) => e,
+        }
+    })
 }
 
 /// Allocates and returns a context-suffix translation with parameters.
@@ -804,27 +864,31 @@ pub extern "C" fn l10n4c_translate_with_context_and_params_alloc(
     params: *const L10n4cParam,
     param_count: usize,
 ) -> *mut c_char {
-    match translate_core(
-        0,
-        None,
-        locale,
-        key_hash,
-        Some(context_hash),
-        Some((params, param_count)),
-    ) {
-        Ok(o) => string_to_c(&o.text),
-        Err(_) => std::ptr::null_mut(),
-    }
+    ffi_guard_with(std::ptr::null_mut(), move || {
+        match translate_core(
+            0,
+            None,
+            locale,
+            key_hash,
+            Some(context_hash),
+            Some((params, param_count)),
+        ) {
+            Ok(o) => string_to_c(&o.text),
+            Err(_) => std::ptr::null_mut(),
+        }
+    })
 }
 
 /// Frees a string previously returned by an `*_alloc` function.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_free_string(ptr: *mut c_char) {
-    if !ptr.is_null() {
-        unsafe {
-            let _ = CString::from_raw(ptr);
+    ffi_guard_with((), move || {
+        if !ptr.is_null() {
+            unsafe {
+                let _ = CString::from_raw(ptr);
+            }
         }
-    }
+    })
 }
 
 /// Registers a C callback invoked when a translation key is not found.
@@ -834,7 +898,7 @@ pub extern "C" fn l10n4c_free_string(ptr: *mut c_char) {
 /// `handler` must remain valid for the lifetime of the program (or until replaced).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn l10n4c_set_missing_key_handler(handler: Option<L10n4cMissingKeyFn>) {
-    match handler {
+    ffi_guard_with((), move || match handler {
         Some(f) => {
             C_MISSING_KEY_HANDLER.store(f as *mut (), core::sync::atomic::Ordering::Release);
             l10n4x_core::store::set_missing_key_handler(c_missing_key_bridge);
@@ -844,14 +908,16 @@ pub unsafe extern "C" fn l10n4c_set_missing_key_handler(handler: Option<L10n4cMi
                 .store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
             l10n4x_core::store::clear_missing_key_handler();
         }
-    }
+    })
 }
 
 /// Returns the library version string (e.g. "0.1.0").
 /// The returned string is owned by the caller and must be freed with l10n4c_free_string.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_get_version() -> *mut c_char {
-    string_to_c(env!("CARGO_PKG_VERSION"))
+    ffi_guard_with(std::ptr::null_mut(), move || {
+        string_to_c(env!("CARGO_PKG_VERSION"))
+    })
 }
 
 /// Custom formatter function type for C callers.
@@ -869,60 +935,66 @@ pub extern "C" fn l10n4c_register_formatter(
     name: *const c_char,
     formatter: Option<L10n4cCustomFormatter>,
 ) -> i32 {
-    let name_str = match cstr_to_str(name) {
-        Ok(s) => s.to_string(),
-        Err(e) => return e,
-    };
-    let Some(f) = formatter else {
-        return L10N4C_INVALID_PARAMS;
-    };
-    l10n4x_core::formatter::register_formatter(
-        &name_str,
-        Box::new(move |value, locale, _options| {
-            let c_value = CString::new(value).unwrap_or_default();
-            let c_locale = CString::new(locale).unwrap_or_default();
-            let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), core::ptr::null()) };
-            if result.is_null() {
-                return value.to_string();
-            }
-            let s = unsafe { CStr::from_ptr(result) }
-                .to_string_lossy()
-                .into_owned();
-            unsafe {
-                let _ = CString::from_raw(result);
-            }
-            s
-        }),
-    );
-    L10N4C_OK
+    ffi_guard(move || {
+        let name_str = match cstr_to_str(name) {
+            Ok(s) => s.to_string(),
+            Err(e) => return e,
+        };
+        let Some(f) = formatter else {
+            return L10N4C_INVALID_PARAMS;
+        };
+        l10n4x_core::formatter::register_formatter(
+            &name_str,
+            Box::new(move |value, locale, _options| {
+                let c_value = CString::new(value).unwrap_or_default();
+                let c_locale = CString::new(locale).unwrap_or_default();
+                let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), core::ptr::null()) };
+                if result.is_null() {
+                    return value.to_string();
+                }
+                let s = unsafe { CStr::from_ptr(result) }
+                    .to_string_lossy()
+                    .into_owned();
+                unsafe {
+                    let _ = CString::from_raw(result);
+                }
+                s
+            }),
+        );
+        L10N4C_OK
+    })
 }
 
 /// Clears all loaded translations from the global store.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_clear() {
-    clear_translations();
-    clear_translate_cache();
+    ffi_guard_with((), move || {
+        clear_translations();
+        clear_translate_cache();
+    })
 }
 
 /// Creates an isolated translation store for multi-tenant use.
 /// Returns a non-zero handle, or `0` on failure. Handle `0` is reserved and invalid.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_store_create() -> u32 {
-    create_store().map(|h| h.raw()).unwrap_or(0)
+    ffi_guard_with(0, move || create_store().map(|h| h.raw()).unwrap_or(0))
 }
 
 /// Destroys a scoped store created with [`l10n4c_store_create`].
 /// `store_handle` must be non-zero.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_store_destroy(store_handle: u32) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    match destroy_store(handle) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        match destroy_store(handle) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Loads a single `.pak` file into a scoped store.
@@ -932,22 +1004,24 @@ pub extern "C" fn l10n4c_store_load_pak_locale(
     locale: *const c_char,
     file_path: *const c_char,
 ) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    let path_str = match cstr_to_str(file_path) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match try_load_pak_locale_for_store(Some(handle), locale_str, path_str) {
-        Ok(()) => L10N4C_OK,
-        Err(e) => core_error_to_ffi(e),
-    }
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        let path_str = match cstr_to_str(file_path) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match try_load_pak_locale_for_store(Some(handle), locale_str, path_str) {
+            Ok(()) => L10N4C_OK,
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Translates a key from a scoped store into a caller-provided buffer.
@@ -959,19 +1033,22 @@ pub extern "C" fn l10n4c_store_translate(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    let outcome = match translate_core(store_handle, Some(handle), locale, key_hash, None, None) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        let outcome = match translate_core(store_handle, Some(handle), locale, key_hash, None, None)
+        {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
+            Err(e) => e,
+        }
+    })
 }
 
 /// Translates a key with typed parameters from a scoped store into a caller-provided buffer.
@@ -985,41 +1062,45 @@ pub extern "C" fn l10n4c_store_translate_with_params(
     buf: *mut u8,
     max_len: usize,
 ) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    let outcome = match translate_core(
-        store_handle,
-        Some(handle),
-        locale,
-        key_hash,
-        None,
-        Some((params, param_count)),
-    ) {
-        Ok(o) => o,
-        Err(e) => return e,
-    };
-    match write_to_c_buffer(&outcome.text, buf, max_len) {
-        Ok(_) => outcome_status(&outcome),
-        Err(e) => e,
-    }
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        let outcome = match translate_core(
+            store_handle,
+            Some(handle),
+            locale,
+            key_hash,
+            None,
+            Some((params, param_count)),
+        ) {
+            Ok(o) => o,
+            Err(e) => return e,
+        };
+        match write_to_c_buffer(&outcome.text, buf, max_len) {
+            Ok(_) => outcome_status(&outcome),
+            Err(e) => e,
+        }
+    })
 }
 
 /// Clears all loaded translations from a scoped store without affecting the global store.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_store_clear(store_handle: u32) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    match clear_translations_for_store(Some(handle)) {
-        Ok(()) => {
-            clear_translate_cache_for_store(store_handle);
-            L10N4C_OK
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        match clear_translations_for_store(Some(handle)) {
+            Ok(()) => {
+                clear_translate_cache_for_store(store_handle);
+                L10N4C_OK
+            }
+            Err(e) => core_error_to_ffi(e),
         }
-        Err(e) => core_error_to_ffi(e),
-    }
+    })
 }
 
 /// Atomically reloads a signed `.pak` for `locale` in a scoped store.
@@ -1030,25 +1111,27 @@ pub extern "C" fn l10n4c_store_ota_reload_pak(
     pak_bytes: *const u8,
     pak_len: usize,
 ) -> i32 {
-    let handle = match parse_store_handle(store_handle) {
-        Ok(h) => h,
-        Err(e) => return e,
-    };
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if pak_bytes.is_null() || pak_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
-    match try_ota_reload_pak_for_store(Some(handle), locale_str, slice) {
-        Ok(()) => {
-            clear_translate_cache_for_store(store_handle);
-            L10N4C_OK
+    ffi_guard(move || {
+        let handle = match parse_store_handle(store_handle) {
+            Ok(h) => h,
+            Err(e) => return e,
+        };
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        if pak_bytes.is_null() || pak_len == 0 {
+            return L10N4C_INVALID_PARAMS;
         }
-        Err(e) => core_error_to_ffi(e),
-    }
+        let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
+        match try_ota_reload_pak_for_store(Some(handle), locale_str, slice) {
+            Ok(()) => {
+                clear_translate_cache_for_store(store_handle);
+                L10N4C_OK
+            }
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Atomically reloads a signed `.pak` for `locale`, retaining one retired snapshot for rollback.
@@ -1058,46 +1141,50 @@ pub extern "C" fn l10n4c_ota_reload_pak(
     pak_bytes: *const u8,
     pak_len: usize,
 ) -> i32 {
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    if pak_bytes.is_null() || pak_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
-    match try_ota_reload_pak(locale_str, slice) {
-        Ok(()) => {
-            clear_translate_cache();
-            L10N4C_OK
+    ffi_guard(move || {
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        if pak_bytes.is_null() || pak_len == 0 {
+            return L10N4C_INVALID_PARAMS;
         }
-        Err(e) => core_error_to_ffi(e),
-    }
+        let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
+        match try_ota_reload_pak(locale_str, slice) {
+            Ok(()) => {
+                clear_translate_cache();
+                L10N4C_OK
+            }
+            Err(e) => core_error_to_ffi(e),
+        }
+    })
 }
 
 /// Restores the retired OTA snapshot for `locale` when available.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_ota_rollback(locale: *const c_char) -> i32 {
-    let locale_str = match cstr_to_str(locale) {
-        Ok(s) => s,
-        Err(e) => return e,
-    };
-    match try_ota_rollback(locale_str) {
-        Ok(()) => {
-            clear_translate_cache();
-            L10N4C_OK
+    ffi_guard(move || {
+        let locale_str = match cstr_to_str(locale) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
+        match try_ota_rollback(locale_str) {
+            Ok(()) => {
+                clear_translate_cache();
+                L10N4C_OK
+            }
+            Err(e) => core_error_to_ffi(e),
         }
-        Err(e) => core_error_to_ffi(e),
-    }
+    })
 }
 
 /// Returns non-zero when an OTA rollback snapshot exists for `locale`.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_ota_can_rollback(locale: *const c_char) -> i32 {
-    match cstr_to_str(locale) {
+    ffi_guard(move || match cstr_to_str(locale) {
         Ok(s) => i32::from(ota_can_rollback(s)),
         Err(e) => e,
-    }
+    })
 }
 
 /// Writes comma-separated loaded locale codes into `out_buf` (up to `out_len` bytes).
@@ -1106,23 +1193,25 @@ pub extern "C" fn l10n4c_ota_can_rollback(locale: *const c_char) -> i32 {
 /// On success, the buffer is null-terminated.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_get_loaded_locales(out_buf: *mut u8, out_len: usize) -> i32 {
-    if out_buf.is_null() || out_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let locales = l10n4x_core::store::read_store(|store| {
-        let codes: Vec<&str> = store.locales.iter().map(|(loc, _)| loc.as_str()).collect();
-        codes.join(",")
-    });
-    let bytes = locales.as_bytes();
-    let len = bytes.len();
-    if len + 1 > out_len {
-        return L10N4C_BUFFER_TOO_SMALL;
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
-        *out_buf.add(len) = 0;
-    }
-    len as i32
+    ffi_guard(move || {
+        if out_buf.is_null() || out_len == 0 {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let locales = l10n4x_core::store::read_store(|store| {
+            let codes: Vec<&str> = store.locales.iter().map(|(loc, _)| loc.as_str()).collect();
+            codes.join(",")
+        });
+        let bytes = locales.as_bytes();
+        let len = bytes.len();
+        if len + 1 > out_len {
+            return L10N4C_BUFFER_TOO_SMALL;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
+            *out_buf.add(len) = 0;
+        }
+        len as i32
+    })
 }
 
 /// Returns extended v2 metrics string (see `l10n4x_core::metrics` module docs).
@@ -1130,20 +1219,22 @@ pub extern "C" fn l10n4c_get_loaded_locales(out_buf: *mut u8, out_len: usize) ->
 /// Returns the number of bytes written, or L10N4C_BUFFER_TOO_SMALL.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_get_metrics(out_buf: *mut u8, out_len: usize) -> i32 {
-    if out_buf.is_null() || out_len == 0 {
-        return L10N4C_INVALID_PARAMS;
-    }
-    let s = metrics::metrics_string();
-    let bytes = s.as_bytes();
-    let len = bytes.len();
-    if len + 1 > out_len {
-        return L10N4C_BUFFER_TOO_SMALL;
-    }
-    unsafe {
-        core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
-        *out_buf.add(len) = 0;
-    }
-    len as i32
+    ffi_guard(move || {
+        if out_buf.is_null() || out_len == 0 {
+            return L10N4C_INVALID_PARAMS;
+        }
+        let s = metrics::metrics_string();
+        let bytes = s.as_bytes();
+        let len = bytes.len();
+        if len + 1 > out_len {
+            return L10N4C_BUFFER_TOO_SMALL;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(bytes.as_ptr(), out_buf, len);
+            *out_buf.add(len) = 0;
+        }
+        len as i32
+    })
 }
 
 #[cfg(test)]
