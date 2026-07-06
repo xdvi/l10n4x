@@ -160,10 +160,10 @@ pub fn decompress_pak(data: &[u8]) -> CoreResult<Vec<u8>> {
 
 /// Decompresses a raw zstd payload into inner `L10N` binary bytes.
 pub(crate) fn decompress_zstd_payload(compressed: &[u8]) -> CoreResult<Vec<u8>> {
-    use ruzstd::frame_decoder::BlockDecodingStrategy;
+    use ruzstd::decoding::{BlockDecodingStrategy, FrameDecoder};
     use ruzstd::io::Read;
 
-    let mut decoder = ruzstd::FrameDecoder::new();
+    let mut decoder = FrameDecoder::new();
     let mut reader = compressed;
     decoder
         .reset(&mut reader)
