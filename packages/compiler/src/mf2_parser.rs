@@ -1,7 +1,8 @@
 //! ICU MessageFormat 2.0 (MF2) complex-message parsing and expression lowering.
 
 use crate::icu_parser::{
-    DateStyle, ListStyle, MarkupKind, MessageNode, NumberStyle, PluralCaseKey, RelTimeStyle,
+    is_plural_key, DateStyle, IStr, ListStyle, MarkupKind, MessageNode, NumberStyle, PluralCaseKey,
+    RelTimeStyle,
 };
 use std::collections::{HashMap, HashSet};
 
@@ -106,7 +107,7 @@ pub fn parse_complex(input: &str) -> Result<Vec<MessageNode>, String> {
         }
         let pattern = substitute_locals_in_nodes(&pattern, &locals);
         if inputs.is_empty() && locals.is_empty() {
-            return Ok(inline_locals(pattern));
+            return Ok(pattern);
         }
         return Ok(vec![MessageNode::Mf2Match {
             selectors: vec![],
@@ -219,19 +220,19 @@ pub fn parse_mf2_expression(raw: &str, mf2_mode: bool) -> Result<MessageNode, St
     if let Some(rest) = s.strip_prefix('-') {
         let bare = rest.trim();
         if let Some(pipe) = bare.find('|') {
-            let name = bare[..pipe].trim().to_string();
-            let default = bare[pipe + 1..].trim().to_string();
+            let name = bare[..pipe].trim().into();
+            let default = bare[pipe + 1..].trim().into();
             return Ok(MessageNode::VariableWithDefault { name, default });
         }
-        return Ok(MessageNode::RawVariable(bare.to_string()));
+        return Ok(MessageNode::RawVariable(bare.into()));
     }
     if s.starts_with('|') {
         return parse_quoted_literal_expression(s);
     }
 
     if let Some(pipe) = s.find('|') {
-        let name = s[..pipe].trim().to_string();
-        let default = s[pipe + 1..].trim().to_string();
+        let name = s[..pipe].trim().into();
+        let default = s[pipe + 1..].trim().into();
         return Ok(MessageNode::VariableWithDefault { name, default });
     }
 
@@ -239,8 +240,8 @@ pub fn parse_mf2_expression(raw: &str, mf2_mode: bool) -> Result<MessageNode, St
         validate_function_spec(func_spec)?;
         let (formatter, options) = parse_function_spec(func_spec);
         return Ok(MessageNode::Custom {
-            var: String::new(),
-            literal_operand: Some(literal),
+            var: "".into(),
+            literal_operand: Some(literal.into()),
             format: crate::icu_parser::CustomFormat { formatter, options },
         });
     }
@@ -249,21 +250,24 @@ pub fn parse_mf2_expression(raw: &str, mf2_mode: bool) -> Result<MessageNode, St
         validate_function_spec(func_spec)?;
         if func_spec.starts_with("string") || func_spec.starts_with(":string") {
             let default = extract_default_option(func_spec);
-            return Ok(MessageNode::VariableWithDefault { name, default });
+            return Ok(MessageNode::VariableWithDefault {
+                name: name.into(),
+                default: default.into(),
+            });
         }
         let (formatter, options) = parse_function_spec(func_spec);
         return Ok(MessageNode::Custom {
-            var: String::new(),
-            literal_operand: Some(name),
+            var: "".into(),
+            literal_operand: Some(name.into()),
             format: crate::icu_parser::CustomFormat { formatter, options },
         });
     }
 
     if mf2_mode {
-        return Ok(MessageNode::Text(s.to_string()));
+        return Ok(MessageNode::Text(s.into()));
     }
 
-    Ok(MessageNode::Variable(s.to_string()))
+    Ok(MessageNode::Variable(s.into()))
 }
 
 /// Splits `{1 :test:select}`-style literal + function annotation.
@@ -329,25 +333,27 @@ fn parse_variable_expression(rest: &str) -> Result<MessageNode, String> {
         return Err("Invalid variable expression".to_string());
     }
     if let Some(colon) = rest.find(':') {
-        let var = rest[..colon].trim().to_string();
+        let var = rest[..colon].trim().into();
         let func = rest[colon + 1..].trim();
         validate_function_spec(func)?;
         return parse_inline_function(var, func);
     }
     if let Some(pipe) = rest.find('|') {
-        let name = rest[..pipe].trim().to_string();
-        let default = rest[pipe + 1..].trim().to_string();
+        let name = rest[..pipe].trim().into();
+        let default = rest[pipe + 1..].trim().into();
         return Ok(MessageNode::VariableWithDefault { name, default });
     }
     let name = rest
         .split_whitespace()
         .next()
-        .ok_or("Empty variable name")?
-        .to_string();
-    Ok(MessageNode::Variable(name))
+        .ok_or("Empty variable name")?;
+    Ok(MessageNode::Variable(name.into()))
 }
 
-fn parse_inline_function(var: String, func_spec: &str) -> Result<MessageNode, String> {
+fn parse_inline_function(
+    var: crate::icu_parser::IStr,
+    func_spec: &str,
+) -> Result<MessageNode, String> {
     if func_spec.starts_with("number") || func_spec.starts_with("Number") {
         let style = if func_spec.contains("style=percent") {
             NumberStyle::Percent
@@ -368,7 +374,10 @@ fn parse_inline_function(var: String, func_spec: &str) -> Result<MessageNode, St
     }
     if func_spec.starts_with("string") || func_spec.starts_with(":string") {
         let default = extract_default_option(func_spec);
-        return Ok(MessageNode::VariableWithDefault { name: var, default });
+        return Ok(MessageNode::VariableWithDefault {
+            name: var,
+            default: default.into(),
+        });
     }
     if matches!(func_spec, "date" | ":date" | "Date") {
         return Ok(MessageNode::Date {
@@ -431,7 +440,7 @@ fn parse_function_expression(rest: &str) -> Result<MessageNode, String> {
     validate_function_spec(rest.trim())?;
     let (formatter, options) = parse_function_spec(rest.trim());
     Ok(MessageNode::Custom {
-        var: String::new(),
+        var: "".into(),
         literal_operand: None,
         format: crate::icu_parser::CustomFormat { formatter, options },
     })
@@ -520,7 +529,7 @@ fn extract_default_option(func_spec: &str) -> String {
 fn parse_markup_open(rest: &str) -> Result<MessageNode, String> {
     let rest = rest.trim();
     if let Some(name_end) = rest.find('/') {
-        let name = rest[..name_end].trim().to_string();
+        let name = rest[..name_end].trim().into();
         return Ok(MessageNode::Markup {
             kind: MarkupKind::Standalone,
             name,
@@ -532,26 +541,26 @@ fn parse_markup_open(rest: &str) -> Result<MessageNode, String> {
     })
 }
 
-fn parse_markup_name(s: &str) -> Result<String, String> {
-    let name = s.split_whitespace().next().unwrap_or("").trim().to_string();
+fn parse_markup_name(s: &str) -> Result<crate::icu_parser::IStr, String> {
+    let name = s.split_whitespace().next().unwrap_or("").trim();
     if name.is_empty() {
         return Err("Empty markup name".to_string());
     }
-    Ok(name)
+    Ok(name.into())
 }
 
 fn parse_quoted_literal_expression(s: &str) -> Result<MessageNode, String> {
     let (content, remainder) = split_quoted_literal(s)?;
     let rem = remainder.trim();
     if rem.is_empty() {
-        return Ok(MessageNode::Text(content));
+        return Ok(MessageNode::Text(content.into()));
     }
     if let Some(func) = rem.strip_prefix(':') {
         validate_function_spec(func.trim())?;
         let (formatter, options) = parse_function_spec(func.trim());
         return Ok(MessageNode::Custom {
-            var: String::new(),
-            literal_operand: Some(content),
+            var: "".into(),
+            literal_operand: Some(content.into()),
             format: crate::icu_parser::CustomFormat { formatter, options },
         });
     }
@@ -655,7 +664,7 @@ pub fn parse_mf2_pattern(pattern: &str) -> Result<Vec<MessageNode>, String> {
             }
         } else if c == '{' {
             if !text.is_empty() {
-                nodes.push(MessageNode::Text(std::mem::take(&mut text)));
+                nodes.push(MessageNode::Text(std::mem::take(&mut text).into()));
             }
             let mut depth = 1;
             let mut expr = String::new();
@@ -679,7 +688,7 @@ pub fn parse_mf2_pattern(pattern: &str) -> Result<Vec<MessageNode>, String> {
         }
     }
     if !text.is_empty() {
-        nodes.push(MessageNode::Text(text));
+        nodes.push(MessageNode::Text(text.into()));
     }
     Ok(nodes)
 }
@@ -828,7 +837,7 @@ fn validate_data_model_node(node: &MessageNode) -> Result<(), String> {
             &HashMap::new(),
         ),
         MessageNode::Plural { var, cases, .. } => {
-            let entries: Vec<(Vec<String>, Vec<MessageNode>)> = cases
+            let entries: Vec<(Vec<IStr>, Vec<MessageNode>)> = cases
                 .iter()
                 .map(|(k, p)| (vec![plural_key_label(k)], p.clone()))
                 .collect();
@@ -843,16 +852,16 @@ fn validate_data_model_node(node: &MessageNode) -> Result<(), String> {
     }
 }
 
-fn plural_key_label(key: &PluralCaseKey) -> String {
+fn plural_key_label(key: &PluralCaseKey) -> IStr {
     match key {
-        PluralCaseKey::Other => "*".to_string(),
-        PluralCaseKey::Exact(v) => v.to_string(),
-        PluralCaseKey::Range(min, max) => format!("{min}-{max}"),
-        PluralCaseKey::Zero => "zero".to_string(),
-        PluralCaseKey::One => "one".to_string(),
-        PluralCaseKey::Two => "two".to_string(),
-        PluralCaseKey::Few => "few".to_string(),
-        PluralCaseKey::Many => "many".to_string(),
+        PluralCaseKey::Other => "*".into(),
+        PluralCaseKey::Exact(v) => v.to_string().into(),
+        PluralCaseKey::Range(min, max) => format!("{min}-{max}").into(),
+        PluralCaseKey::Zero => "zero".into(),
+        PluralCaseKey::One => "one".into(),
+        PluralCaseKey::Two => "two".into(),
+        PluralCaseKey::Few => "few".into(),
+        PluralCaseKey::Many => "many".into(),
     }
 }
 
@@ -891,12 +900,12 @@ fn validate_local_declaration_references(
 ) -> Result<(), String> {
     match expr {
         MessageNode::Variable(name) => {
-            if all_names.contains(name) && !declared.contains(name) {
+            if all_names.contains(&**name) && !declared.contains(&**name) {
                 return Err("Duplicate declaration".to_string());
             }
         }
         MessageNode::Custom { var, format, .. } => {
-            if !var.is_empty() && all_names.contains(var) && !declared.contains(var) {
+            if !var.is_empty() && all_names.contains(&**var) && !declared.contains(&**var) {
                 return Err("Duplicate declaration".to_string());
             }
             for value in format.options.values() {
@@ -912,8 +921,8 @@ fn validate_local_declaration_references(
 }
 
 fn validate_match_variants(
-    selectors: &[String],
-    entries: &[(Vec<String>, Vec<MessageNode>)],
+    selectors: &[IStr],
+    entries: &[(Vec<IStr>, Vec<MessageNode>)],
     locals: &HashMap<String, MessageNode>,
     inputs: &HashMap<String, MessageNode>,
 ) -> Result<(), String> {
@@ -929,7 +938,7 @@ fn validate_match_variants(
     }
     let has_fallback = entries
         .iter()
-        .any(|(keys, _)| keys.len() == selectors.len() && keys.iter().all(|k| k == "*"));
+        .any(|(keys, _)| keys.len() == selectors.len() && keys.iter().all(|k| &**k == "*"));
     if !has_fallback {
         return Err("Missing fallback variant".to_string());
     }
@@ -1015,10 +1024,13 @@ fn build_match_tree(
         || !locals.is_empty()
     {
         return Ok(MessageNode::Mf2Match {
-            selectors: selectors.to_vec(),
+            selectors: selectors.iter().map(|s| IStr::from(s.as_str())).collect(),
             inputs: inputs.clone(),
             locals: locals.clone(),
-            variants: entries,
+            variants: entries
+                .into_iter()
+                .map(|(keys, nodes)| (keys.into_iter().map(IStr::from).collect(), nodes))
+                .collect(),
         });
     }
     if selectors.len() == 1 {
@@ -1104,17 +1116,17 @@ fn build_single_selector_match(
             .map(|(keys, nodes)| (to_plural_key(&keys[0]), nodes))
             .collect();
         return Ok(MessageNode::Plural {
-            var: var.to_string(),
+            var: var.into(),
             ordinal: false,
             cases,
         });
     }
     let cases = entries
         .into_iter()
-        .map(|(keys, nodes)| (keys[0].clone(), nodes))
+        .map(|(keys, nodes)| (IStr::from(keys[0].as_str()), nodes))
         .collect();
     Ok(MessageNode::Select {
-        var: var.to_string(),
+        var: var.into(),
         cases,
     })
 }
@@ -1148,7 +1160,7 @@ fn build_two_selector_match(
         let sub_is_plural = sub.iter().all(|(k, _)| k == "*" || is_plural_key(k));
         let inner = if sub_is_plural {
             vec![MessageNode::Plural {
-                var: inner_var.to_string(),
+                var: inner_var.into(),
                 ordinal: false,
                 cases: sub
                     .into_iter()
@@ -1166,31 +1178,45 @@ fn build_two_selector_match(
             }]
         } else {
             vec![MessageNode::Select {
-                var: inner_var.to_string(),
+                var: inner_var.into(),
                 cases: sub
                     .into_iter()
-                    .map(|(k, nodes)| (if k == "*" { "other".to_string() } else { k }, nodes))
+                    .map(|(k, nodes)| {
+                        (
+                            if k == "*" {
+                                IStr::from("other")
+                            } else {
+                                IStr::from(k)
+                            },
+                            nodes,
+                        )
+                    })
                     .collect(),
             }]
         };
         outer_cases.push((outer_key, inner));
     }
 
-    let outer_is_plural = outer_cases.iter().all(|(k, _)| is_plural_key(k));
+    let outer_is_plural = outer_cases
+        .iter()
+        .all(|(k, _)| k == "*" || is_plural_key(k));
     if outer_is_plural {
         let cases = outer_cases
             .into_iter()
             .map(|(k, nodes)| (to_plural_key(&k), nodes))
             .collect();
         return Ok(MessageNode::Plural {
-            var: outer_var.to_string(),
+            var: outer_var.into(),
             ordinal: false,
             cases,
         });
     }
     Ok(MessageNode::Select {
-        var: outer_var.to_string(),
-        cases: outer_cases,
+        var: outer_var.into(),
+        cases: outer_cases
+            .into_iter()
+            .map(|(k, nodes)| (IStr::from(k), nodes))
+            .collect(),
     })
 }
 
@@ -1212,12 +1238,6 @@ fn to_plural_key(k: &str) -> PluralCaseKey {
             }
         }
     }
-}
-
-fn is_plural_key(key: &str) -> bool {
-    matches!(key, "zero" | "one" | "two" | "few" | "many" | "other" | "*")
-        || key.starts_with('=')
-        || key.parse::<f64>().is_ok()
 }
 
 fn validate_mf2_expression_syntax(raw: &str) -> Result<(), String> {
@@ -1309,12 +1329,12 @@ fn substitute_locals_in_node(
 ) -> Vec<MessageNode> {
     match node {
         MessageNode::Variable(name) => {
-            if let Some(local) = locals.get(name) {
-                if !visiting.insert(name.clone()) {
+            if let Some(local) = locals.get(&**name) {
+                if !visiting.insert(name.to_string()) {
                     return vec![node.clone()];
                 }
                 let expanded = substitute_locals_in_node(local, locals, visiting);
-                visiting.remove(name);
+                visiting.remove(&**name);
                 expanded
             } else {
                 vec![node.clone()]
@@ -1347,10 +1367,6 @@ fn substitute_locals_in_node(
         }
         _ => vec![node.clone()],
     }
-}
-
-fn inline_locals(nodes: Vec<MessageNode>) -> Vec<MessageNode> {
-    nodes
 }
 
 #[cfg(test)]

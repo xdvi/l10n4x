@@ -5,8 +5,8 @@ extern crate alloc;
 use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 use crate::store::{
-    build_store, read_store_for, store_snapshot, swap_store_for, upsert_locale,
-    LazyDecompressCache, OffsetMap, StoreData, StoreSnapshot,
+    build_store, store_snapshot, upsert_locale, LazyDecompressCache, OffsetMap, StoreData,
+    StoreSnapshot,
 };
 #[cfg(feature = "std")]
 use crate::store_registry::StoreHandle;
@@ -79,9 +79,12 @@ fn capture_locale_snapshot(snap: &StoreSnapshot, locale: &str) -> Option<LocaleR
 
 #[cfg(feature = "std")]
 fn save_retired_snapshot(store_id: u32, locale: &str, retired: LocaleRetiredSnapshot) {
-    if let Ok(mut map) = retired_snapshots().lock() {
-        map.insert((store_id, locale.to_string()), retired);
-    }
+    // into_inner on poison (repo convention): silently dropping the snapshot
+    // here would make a later rollback restore nothing.
+    retired_snapshots()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert((store_id, locale.to_string()), retired);
 }
 
 #[cfg(feature = "std")]
@@ -149,8 +152,8 @@ pub fn ota_can_rollback_for_store(handle: Option<StoreHandle>, locale: &str) -> 
     let store_id = store_id_from_handle(handle);
     retired_snapshots()
         .lock()
-        .map(|m| m.contains_key(&(store_id, locale.to_string())))
-        .unwrap_or(false)
+        .unwrap_or_else(|p| p.into_inner())
+        .contains_key(&(store_id, locale.to_string()))
 }
 
 /// Returns `true` when a retired snapshot exists for `locale` and rollback is possible.
@@ -174,12 +177,23 @@ pub fn try_ota_reload_pak_for_store(
     let decompressed =
         decompress_pak(pak_bytes).inspect_err(|_| crate::metrics::inc_pak_verify_failures())?;
 
-    let snap = read_store_for(handle, store_snapshot)?;
-    if let Some(retired) = capture_locale_snapshot(&snap, locale) {
-        save_retired_snapshot(store_id_from_handle(handle), locale, retired);
-    }
-
-    crate::loader::try_load_raw_bytes_for_store(handle, locale, decompressed)?;
+    // Capture-for-rollback and load must happen in ONE writer critical
+    // section: a concurrent load landing between them would make the rollback
+    // snapshot restore the wrong state.
+    crate::store::update_store_for(handle, |store| {
+        let mut snap = store_snapshot(store);
+        if let Some(retired) = capture_locale_snapshot(&snap, locale) {
+            save_retired_snapshot(store_id_from_handle(handle), locale, retired);
+        }
+        crate::loader::apply_l10n_to_snapshot(
+            &mut snap,
+            locale,
+            decompressed,
+            crate::loader::LoadMode::Replace,
+        )?;
+        Ok(build_store(snap))
+    })?;
+    crate::store::notify_locale_changed_for_handle(handle, locale);
     crate::metrics::inc_pak_reload_total();
     Ok(())
 }
@@ -201,15 +215,17 @@ pub fn try_ota_rollback_for_store(handle: Option<StoreHandle>, locale: &str) -> 
     let store_id = store_id_from_handle(handle);
     let retired = retired_snapshots()
         .lock()
-        .ok()
-        .and_then(|mut m| m.remove(&(store_id, locale.to_string())));
+        .unwrap_or_else(|p| p.into_inner())
+        .remove(&(store_id, locale.to_string()));
     let Some(retired) = retired else {
         return Err(crate::CoreError::InvalidFormat("no OTA rollback snapshot"));
     };
 
-    let mut snap = read_store_for(handle, store_snapshot)?;
-    restore_locale_snapshot(&mut snap, locale, retired);
-    swap_store_for(handle, build_store(snap))?;
+    crate::store::update_store_for(handle, |store| {
+        let mut snap = store_snapshot(store);
+        restore_locale_snapshot(&mut snap, locale, retired);
+        Ok(build_store(snap))
+    })?;
     crate::metrics::inc_pak_rollback_total();
     crate::store::notify_locale_changed_for_handle(handle, locale);
     Ok(())

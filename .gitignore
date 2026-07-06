@@ -38,3 +38,6 @@ examples/csharp/obj/
 
 # Worktrees
 /.worktrees/
+
+# Local tooling caches (skill registry)
+/.atl/

@@ -46,59 +46,63 @@ pub struct CustomFormat {
     pub options: std::collections::HashMap<String, String>,
 }
 
+/// Interned string used for `MessageNode` payloads. `Arc<str>` makes AST clones
+/// (key-ref inlining, MF2 local substitution) share text instead of deep-copying it.
+pub type IStr = std::sync::Arc<str>;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum MessageNode {
-    Text(String),
-    Variable(String),
+    Text(IStr),
+    Variable(IStr),
     /// Unescaped variable ({- name} in ICU 1.0 syntax). Same as Variable but without HTML escaping.
-    RawVariable(String),
+    RawVariable(IStr),
     Plural {
-        var: String,
+        var: IStr,
         ordinal: bool,
-        cases: Vec<(PluralCaseKey, Vec<MessageNode>)>,
+        cases: PluralCases,
     },
     Select {
-        var: String,
-        cases: Vec<(String, Vec<MessageNode>)>,
+        var: IStr,
+        cases: Vec<(IStr, Vec<MessageNode>)>,
     },
     Number {
-        var: String,
+        var: IStr,
         style: NumberStyle,
     },
     Date {
-        var: String,
+        var: IStr,
         style: DateStyle,
     },
     RelTime {
-        var: String,
+        var: IStr,
         style: RelTimeStyle,
     },
     List {
-        var: String,
+        var: IStr,
         style: ListStyle,
     },
-    KeyRef(String),
+    KeyRef(IStr),
     VariableWithDefault {
-        name: String,
-        default: String,
+        name: IStr,
+        default: IStr,
     },
     Custom {
-        var: String,
+        var: IStr,
         /// Number literal operand for MF2 expressions like `{1 :test:select}`.
-        literal_operand: Option<String>,
+        literal_operand: Option<IStr>,
         format: CustomFormat,
     },
     /// MF2 `.match` with runtime selector resolution (`:test:*` functions).
     Mf2Match {
-        selectors: Vec<String>,
+        selectors: Vec<IStr>,
         inputs: std::collections::HashMap<String, MessageNode>,
         locals: std::collections::HashMap<String, MessageNode>,
-        variants: Vec<(Vec<String>, Vec<MessageNode>)>,
+        variants: Vec<(Vec<IStr>, Vec<MessageNode>)>,
     },
     /// MF2 markup placeholder (`{#tag}`, `{/tag}`, `{#tag/}`) — no text output.
     Markup {
         kind: MarkupKind,
-        name: String,
+        name: IStr,
     },
 }
 
@@ -124,6 +128,9 @@ pub enum PluralCaseKey {
     Many,
     Other,
 }
+
+/// A parsed plural block's cases: each key paired with its message pattern.
+pub type PluralCases = Vec<(PluralCaseKey, Vec<MessageNode>)>;
 
 pub struct MessageParser<'a> {
     input: &'a str,
@@ -178,7 +185,7 @@ impl<'a> MessageParser<'a> {
             } else if c == '{' {
                 self.chars.next(); // consume '{'
                 if !current_text.is_empty() {
-                    nodes.push(MessageNode::Text(core::mem::take(&mut current_text)));
+                    nodes.push(MessageNode::Text(core::mem::take(&mut current_text).into()));
                 }
                 let node = self.parse_expression()?;
                 nodes.push(node);
@@ -193,7 +200,8 @@ impl<'a> MessageParser<'a> {
                     if self.chars.peek() == Some(&'(') {
                         self.chars.next();
                         if !current_text.is_empty() {
-                            nodes.push(MessageNode::Text(core::mem::take(&mut current_text)));
+                            nodes
+                                .push(MessageNode::Text(core::mem::take(&mut current_text).into()));
                         }
                         let mut key_ref = String::new();
                         for ch in self.chars.by_ref() {
@@ -202,7 +210,7 @@ impl<'a> MessageParser<'a> {
                             }
                             key_ref.push(ch);
                         }
-                        nodes.push(MessageNode::KeyRef(key_ref.trim().to_string()));
+                        nodes.push(MessageNode::KeyRef(key_ref.trim().into()));
                         continue;
                     }
                 }
@@ -217,7 +225,7 @@ impl<'a> MessageParser<'a> {
         }
 
         if !current_text.is_empty() {
-            nodes.push(MessageNode::Text(current_text));
+            nodes.push(MessageNode::Text(current_text.into()));
         }
 
         Ok(nodes)
@@ -251,7 +259,7 @@ impl<'a> MessageParser<'a> {
 
         let parts: Vec<&str> = expr_str.splitn(3, ',').collect();
         if parts.len() >= 2 {
-            let var_name = parts[0].trim().trim_start_matches('$').to_string();
+            let var_name: IStr = parts[0].trim().trim_start_matches('$').into();
             let expr_type = parts[1].trim();
 
             if expr_type == "plural" && parts.len() == 3 {
@@ -374,22 +382,19 @@ impl<'a> MessageParser<'a> {
             let bare_name = rest.trim_start_matches('$').trim().to_string();
             // Check for pipe default value syntax: {- name|Guest}
             if let Some(pipe_pos) = bare_name.find('|') {
-                let name = bare_name[..pipe_pos].trim().to_string();
-                let default = bare_name[pipe_pos + 1..].trim().to_string();
+                let name = bare_name[..pipe_pos].trim().into();
+                let default = bare_name[pipe_pos + 1..].trim().into();
                 // For raw variables with defaults, use RawVariableWithDefault (handled via 0x0C flags & 0x01)
                 // We still mark as VariableWithDefault for now — the binary writer handles flags
                 return Ok(MessageNode::VariableWithDefault { name, default });
             }
-            return Ok(MessageNode::RawVariable(bare_name));
+            return Ok(MessageNode::RawVariable(bare_name.into()));
         }
 
         // Check for pipe default value syntax: {name|Guest}
         if let Some(pipe_pos) = trimmed.find('|') {
-            let name = trimmed[..pipe_pos]
-                .trim_start_matches('$')
-                .trim()
-                .to_string();
-            let default = trimmed[pipe_pos + 1..].trim().to_string();
+            let name = trimmed[..pipe_pos].trim_start_matches('$').trim().into();
+            let default = trimmed[pipe_pos + 1..].trim().into();
             return Ok(MessageNode::VariableWithDefault { name, default });
         }
 
@@ -397,7 +402,7 @@ impl<'a> MessageParser<'a> {
 
         // Check for MF2 inline function syntax: {$var :number} or {$var :number style=percent}
         if let Some(func_part) = var_name.split_once(':') {
-            let base_var = func_part.0.trim().to_string();
+            let base_var: IStr = func_part.0.trim().into();
             let func_spec = func_part.1.trim();
             if func_spec.starts_with("number") || func_spec.starts_with("Number") {
                 let style = if func_spec.contains("style=percent") {
@@ -432,7 +437,7 @@ impl<'a> MessageParser<'a> {
                 };
                 return Ok(MessageNode::VariableWithDefault {
                     name: base_var,
-                    default,
+                    default: default.into(),
                 });
             }
             if func_spec == ":date" || func_spec == "date" || func_spec == "Date" {
@@ -495,16 +500,22 @@ impl<'a> MessageParser<'a> {
             }
         }
 
-        Ok(MessageNode::Variable(var_name))
+        Ok(MessageNode::Variable(var_name.into()))
     }
 }
 
 /// Parses an interval plural string like `(0)[no messages];(1)[one message];(2-7)[a few messages]`
-/// into standard plural cases. Returns `None` if the string is not an interval pattern.
-pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<MessageNode>)>> {
+/// into standard plural cases.
+///
+/// Returns:
+/// - `Ok(None)` if the string is not an interval pattern (does not start with `(`).
+/// - `Ok(Some(cases))` on a successful parse.
+/// - `Err(message)` when the input *is* an interval pattern but is malformed
+///   (unbalanced brackets, unparseable range, or exceeds `MAX_PLURAL_RULES_PER_MESSAGE`).
+pub fn parse_interval_plural(input: &str) -> Result<Option<PluralCases>, String> {
     let input = input.trim();
     if !input.starts_with('(') {
-        return None;
+        return Ok(None);
     }
 
     let mut cases = Vec::new();
@@ -517,13 +528,19 @@ pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<Mess
         }
 
         // Find the matching ) for the range specifier
-        let close_paren = remaining.find(')')?;
+        let close_paren = remaining
+            .find(')')
+            .ok_or_else(|| "Unmatched '(' in interval plural".to_string())?;
         let range_part = &remaining[0..close_paren + 1]; // e.g., "(0)" or "(2-7)" or "(7-inf)"
 
         // Find the matching [ for body
-        let open_body = remaining[close_paren..].find('[')?;
+        let open_body = remaining[close_paren..]
+            .find('[')
+            .ok_or_else(|| "Missing '[' in interval plural".to_string())?;
         let body_start = close_paren + open_body + 1;
-        let body_end = remaining[body_start..].find(']')?;
+        let body_end = remaining[body_start..]
+            .find(']')
+            .ok_or_else(|| "Unmatched '[' in interval plural".to_string())?;
         let body_str = &remaining[body_start..body_start + body_end];
         remaining = &remaining[body_start + body_end + 1..];
         if remaining.starts_with(';') {
@@ -531,43 +548,60 @@ pub fn parse_interval_plural(input: &str) -> Option<Vec<(PluralCaseKey, Vec<Mess
         }
 
         if cases.len() >= MAX_PLURAL_RULES_PER_MESSAGE {
-            return None;
+            return Err(format!(
+                "Interval plural exceeds {MAX_PLURAL_RULES_PER_MESSAGE} cases"
+            ));
         }
 
         // Parse range: (exact), (min-max), or (min-inf)
         let inner = range_part.trim_start_matches('(').trim_end_matches(')');
         let mut parser = MessageParser::new(body_str);
-        let nodes = parser.parse_pattern(false).ok()?;
+        let nodes = parser
+            .parse_pattern(false)
+            .map_err(|e| format!("Invalid interval plural body: {e}"))?;
 
         if let Some(hyphen) = inner.find('-') {
             let min_str = inner[..hyphen].trim();
             let max_str = inner[hyphen + 1..].trim();
-            let min: i32 = min_str.parse().ok()?;
+            let min: i32 = min_str
+                .parse()
+                .map_err(|_| format!("Invalid interval minimum: {min_str}"))?;
             let max: i32 = if max_str == "inf" || max_str == "∞" {
                 i32::MAX
             } else {
-                max_str.parse().ok()?
+                max_str
+                    .parse()
+                    .map_err(|_| format!("Invalid interval maximum: {max_str}"))?
             };
             if min > max {
-                return None;
+                return Err(format!("Interval range min > max: {min} > {max}"));
             }
             cases.push((PluralCaseKey::Range(min, max), nodes));
         } else {
-            let val: f64 = inner.parse().ok()?;
+            let val: f64 = inner
+                .parse()
+                .map_err(|_| format!("Invalid interval value: {inner}"))?;
             cases.push((PluralCaseKey::Exact(val), nodes));
         }
     }
 
     if cases.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(cases)
+        Ok(Some(cases))
     }
 }
 
 /// Expands `#` to `{var_name}` (but not `\#`) in a plural case pattern string.
 /// This must be called per-body with the immediately enclosing plural's variable name.
-fn expand_hash_for_var(pattern: &str, var_name: &str) -> String {
+///
+/// Returns a borrowed slice when the pattern contains no `#` (the common case), avoiding
+/// an allocation per plural case body.
+fn expand_hash_for_var<'a>(pattern: &'a str, var_name: &str) -> std::borrow::Cow<'a, str> {
+    // Fast path: no '#' at all → nothing to expand, reuse the input slice verbatim.
+    if !pattern.contains('#') {
+        return std::borrow::Cow::Borrowed(pattern);
+    }
     let mut result = String::with_capacity(pattern.len());
     let mut chars = pattern.chars().peekable();
     while let Some(c) = chars.next() {
@@ -582,13 +616,10 @@ fn expand_hash_for_var(pattern: &str, var_name: &str) -> String {
             result.push(c);
         }
     }
-    result
+    std::borrow::Cow::Owned(result)
 }
 
-fn parse_cases(
-    mut input: &str,
-    var_name: &str,
-) -> Result<Vec<(PluralCaseKey, Vec<MessageNode>)>, String> {
+fn parse_cases(mut input: &str, var_name: &str) -> Result<PluralCases, String> {
     let mut cases = Vec::new();
     while !input.is_empty() {
         input = input.trim_start();
@@ -618,25 +649,10 @@ fn parse_cases(
             }
         };
 
-        let mut brace_count = 0;
-        let mut end_idx = None;
-        for (idx, c) in input[brace_idx..].char_indices() {
-            if c == '{' {
-                brace_count += 1;
-            } else if c == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    end_idx = Some(brace_idx + idx);
-                    break;
-                }
-            }
-        }
-
-        let end_idx = end_idx.ok_or("Unmatched brace in case pattern")?;
-        let pattern_str = &input[brace_idx + 1..end_idx];
+        let (end_idx, pattern_str) = extract_case_body(input, brace_idx)?;
 
         let expanded = expand_hash_for_var(pattern_str, var_name);
-        let mut parser = MessageParser::new(&expanded);
+        let mut parser = MessageParser::new(expanded.as_ref());
         let pattern_nodes = parser.parse_pattern(false)?;
 
         cases.push((key, pattern_nodes));
@@ -645,7 +661,7 @@ fn parse_cases(
     Ok(cases)
 }
 
-fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>, String> {
+fn parse_select_cases(mut input: &str) -> Result<Vec<(IStr, Vec<MessageNode>)>, String> {
     let mut cases = Vec::new();
     while !input.is_empty() {
         input = input.trim_start();
@@ -656,24 +672,9 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
         let brace_idx = input
             .find('{')
             .ok_or_else(|| format!("Expected case body in: {}", input))?;
-        let key_str = input[..brace_idx].trim().to_string();
+        let key_str: IStr = input[..brace_idx].trim().into();
 
-        let mut brace_count = 0;
-        let mut end_idx = None;
-        for (idx, c) in input[brace_idx..].char_indices() {
-            if c == '{' {
-                brace_count += 1;
-            } else if c == '}' {
-                brace_count -= 1;
-                if brace_count == 0 {
-                    end_idx = Some(brace_idx + idx);
-                    break;
-                }
-            }
-        }
-
-        let end_idx = end_idx.ok_or("Unmatched brace in case pattern")?;
-        let pattern_str = &input[brace_idx + 1..end_idx];
+        let (end_idx, pattern_str) = extract_case_body(input, brace_idx)?;
 
         let mut parser = MessageParser::new(pattern_str);
         let pattern_nodes = parser.parse_pattern(false)?;
@@ -687,15 +688,15 @@ fn parse_select_cases(mut input: &str) -> Result<Vec<(String, Vec<MessageNode>)>
 /// Extracts all unique interpolation variable names from a parsed message AST.
 /// Returns a deduplicated, unsorted Vec of parameter names.
 pub fn extract_params(nodes: &[MessageNode]) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
     let mut out = Vec::new();
     collect_params(nodes, &mut seen, &mut out);
     out
 }
 
-fn collect_params(
-    nodes: &[MessageNode],
-    seen: &mut std::collections::HashSet<String>,
+fn collect_params<'a>(
+    nodes: &'a [MessageNode],
+    seen: &mut std::collections::HashSet<&'a str>,
     out: &mut Vec<String>,
 ) {
     for node in nodes {
@@ -706,13 +707,13 @@ fn collect_params(
             | MessageNode::Date { var: v, .. }
             | MessageNode::RelTime { var: v, .. }
             | MessageNode::List { var: v, .. } => {
-                if seen.insert(v.clone()) {
-                    out.push(v.clone());
+                if seen.insert(v) {
+                    out.push(v.to_string());
                 }
             }
             MessageNode::VariableWithDefault { name, .. } => {
-                if seen.insert(name.clone()) {
-                    out.push(name.clone());
+                if seen.insert(name) {
+                    out.push(name.to_string());
                 }
             }
             MessageNode::Plural {
@@ -720,24 +721,24 @@ fn collect_params(
                 ordinal: _,
                 cases,
             } => {
-                if seen.insert(var.clone()) {
-                    out.push(var.clone());
+                if seen.insert(var) {
+                    out.push(var.to_string());
                 }
                 for (_, body) in cases {
                     collect_params(body, seen, out);
                 }
             }
             MessageNode::Select { var, cases } => {
-                if seen.insert(var.clone()) {
-                    out.push(var.clone());
+                if seen.insert(var) {
+                    out.push(var.to_string());
                 }
                 for (_, body) in cases {
                     collect_params(body, seen, out);
                 }
             }
             MessageNode::Custom { var, .. } => {
-                if !var.is_empty() && seen.insert(var.clone()) {
-                    out.push(var.clone());
+                if !var.is_empty() && seen.insert(var) {
+                    out.push(var.to_string());
                 }
             }
             MessageNode::Mf2Match {
@@ -747,13 +748,13 @@ fn collect_params(
                 variants,
             } => {
                 for name in inputs.keys() {
-                    if seen.insert(name.clone()) {
+                    if seen.insert(name.as_str()) {
                         out.push(name.clone());
                     }
                 }
                 for name in selectors {
-                    if !locals.contains_key(name) && seen.insert(name.clone()) {
-                        out.push(name.clone());
+                    if !locals.contains_key(&**name) && seen.insert(name) {
+                        out.push(name.to_string());
                     }
                 }
                 for (_, pat) in variants {
@@ -771,27 +772,35 @@ mod interval_plural_tests {
 
     #[test]
     fn parse_exact_interval() {
-        let cases = parse_interval_plural("(0)[none];(1)[one];(2)[two]").unwrap();
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2)[two]")
+            .unwrap()
+            .unwrap();
         assert_eq!(cases.len(), 3);
     }
 
     #[test]
     fn parse_range_interval() {
-        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few]").unwrap();
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few]")
+            .unwrap()
+            .unwrap();
         assert_eq!(cases.len(), 3);
         assert_eq!(cases[2].0, PluralCaseKey::Range(2, 7));
     }
 
     #[test]
     fn parse_large_range_not_expanded() {
-        let cases = parse_interval_plural("(0)[none];(4-500)[many]").unwrap();
+        let cases = parse_interval_plural("(0)[none];(4-500)[many]")
+            .unwrap()
+            .unwrap();
         assert_eq!(cases.len(), 2);
         assert_eq!(cases[1].0, PluralCaseKey::Range(4, 500));
     }
 
     #[test]
     fn parse_inf_interval() {
-        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few];(7-inf)[many]").unwrap();
+        let cases = parse_interval_plural("(0)[none];(1)[one];(2-7)[few];(7-inf)[many]")
+            .unwrap()
+            .unwrap();
         assert_eq!(cases.len(), 4);
         assert_eq!(cases[3].0, PluralCaseKey::Range(7, i32::MAX));
     }
@@ -805,12 +814,14 @@ mod interval_plural_tests {
             }
             input.push_str(&format!("({i})[x]"));
         }
-        assert!(parse_interval_plural(&input).is_none());
+        // Too-many-rules is a hard error, not a silent fallthrough.
+        assert!(parse_interval_plural(&input).is_err());
     }
 
     #[test]
     fn non_interval_returns_none() {
-        assert!(parse_interval_plural("Hello {name}").is_none());
+        // Non-interval input is Ok(None), not an error.
+        assert!(parse_interval_plural("Hello {name}").unwrap().is_none());
     }
 }
 
@@ -874,7 +885,7 @@ mod number_tests {
         let nodes = parser.parse().unwrap();
         assert_eq!(nodes.len(), 2);
         assert!(matches!(&nodes[1], MessageNode::Number { var, style }
-            if var == "price" && *style == NumberStyle::Decimal));
+            if &var[..] == "price" && *style == NumberStyle::Decimal));
     }
 
     #[test]
@@ -882,7 +893,7 @@ mod number_tests {
         let parser = MessageParser::new("{$amount :number style=percent}");
         let nodes = parser.parse().unwrap();
         assert!(matches!(&nodes[0], MessageNode::Number { var, style }
-            if var == "amount" && *style == NumberStyle::Percent));
+            if &var[..] == "amount" && *style == NumberStyle::Percent));
     }
 }
 
@@ -900,7 +911,7 @@ when *   *         {{count}}"#;
         assert_eq!(nodes.len(), 1);
         match &nodes[0] {
             MessageNode::Select { var, cases } => {
-                assert_eq!(var, "gender");
+                assert_eq!(&var[..], "gender");
                 assert_eq!(cases.len(), 3); // masculine, feminine, other
                 for (_, pattern) in cases {
                     assert_eq!(pattern.len(), 1);
@@ -918,9 +929,9 @@ when * * {fallback}"#;
         let nodes = MessageParser::new(input).parse().unwrap();
         match &nodes[0] {
             MessageNode::Select { var, cases } => {
-                assert_eq!(var, "b");
+                assert_eq!(&var[..], "b");
                 assert_eq!(cases.len(), 1);
-                assert_eq!(cases[0].0, "other");
+                assert_eq!(cases[0].0, "other".into());
             }
             other => panic!("Expected Select, got {:?}", other),
         }
@@ -944,7 +955,11 @@ when *   * {Unknown}"#;
         let nodes = MessageParser::new(input).parse().unwrap();
         match &nodes[0] {
             MessageNode::Select { var, cases: _ } => {
-                assert_eq!(var, "level", "innermost var should be the 2nd selector");
+                assert_eq!(
+                    &var[..],
+                    "level",
+                    "innermost var should be the 2nd selector"
+                );
             }
             other => panic!("Expected Select, got {:?}", other),
         }
@@ -958,7 +973,7 @@ when other {{count} items}"#;
         let nodes = MessageParser::new(input).parse().unwrap();
         match &nodes[0] {
             MessageNode::Plural { var, .. } => {
-                assert_eq!(var, "count");
+                assert_eq!(&var[..], "count");
             }
             other => panic!("Expected Plural, got {:?}", other),
         }
@@ -975,7 +990,7 @@ mod custom_formatter_parse_tests {
         assert_eq!(nodes.len(), 1);
         match &nodes[0] {
             MessageNode::Custom { var, format, .. } => {
-                assert_eq!(var, "name");
+                assert_eq!(&var[..], "name");
                 assert_eq!(format.formatter, "uppercase");
                 assert!(format.options.is_empty());
             }
@@ -990,7 +1005,7 @@ mod custom_formatter_parse_tests {
             .unwrap();
         match &nodes[0] {
             MessageNode::Custom { var, format, .. } => {
-                assert_eq!(var, "val");
+                assert_eq!(&var[..], "val");
                 assert_eq!(format.formatter, "prefix");
                 assert_eq!(
                     format.options.get("prefix").map(|s| s.as_str()),
@@ -1017,20 +1032,17 @@ mod custom_formatter_parse_tests {
                 .parse()
                 .unwrap();
         if let MessageNode::Plural { var, cases, .. } = &nodes[0] {
-            assert_eq!(var, "count");
+            assert_eq!(&var[..], "count");
             assert_eq!(cases.len(), 2);
             assert_eq!(cases[0].0, PluralCaseKey::One);
-            assert_eq!(
-                cases[0].1,
-                vec![MessageNode::Text("escaped # here".to_string())]
-            );
+            assert_eq!(cases[0].1, vec![MessageNode::Text("escaped # here".into())]);
             assert_eq!(cases[1].0, PluralCaseKey::Other);
             assert_eq!(
                 cases[1].1,
                 vec![
-                    MessageNode::Text("normal ".to_string()),
-                    MessageNode::Variable("count".to_string()),
-                    MessageNode::Text(" here".to_string())
+                    MessageNode::Text("normal ".into()),
+                    MessageNode::Variable("count".into()),
+                    MessageNode::Text(" here".into())
                 ]
             );
         } else {
@@ -1058,7 +1070,9 @@ fn extract_case_body(remaining: &str, brace_idx: usize) -> Result<(usize, &str),
     Ok((end_idx, pattern_str))
 }
 
-fn is_plural_key(key: &str) -> bool {
+/// True when `key` is a CLDR plural category, an `=N` exact match, or a bare number.
+/// Does NOT match the MF2 catch-all `"*"` — callers that accept it must check separately.
+pub(crate) fn is_plural_key(key: &str) -> bool {
     matches!(key, "zero" | "one" | "two" | "few" | "many" | "other")
         || key.starts_with('=')
         || key.parse::<f64>().is_ok()
@@ -1085,7 +1099,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
 
     if !two_vars {
         // --- SINGLE VARIABLE LOGIC (unchanged from original) ---
-        let var_name = vars[0].trim_start_matches('$').to_string();
+        let var_name: IStr = vars[0].trim_start_matches('$').into();
         let ordinal = vars.get(1).is_some_and(|v| v.trim() == "selectordinal");
 
         let mut cases = Vec::new();
@@ -1147,7 +1161,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                 is_select = true;
             }
 
-            cases.push((key_str.to_string(), plural_key, pattern_nodes));
+            cases.push((IStr::from(key_str), plural_key, pattern_nodes));
             remaining = &remaining[end_idx + 1..];
         }
 
@@ -1173,8 +1187,8 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         }
     } else {
         // --- TWO-VARIABLE LOGIC ---
-        let var1 = vars[0].trim_start_matches('$').to_string();
-        let var2 = vars[1].trim_start_matches('$').to_string();
+        let var1: IStr = vars[0].trim_start_matches('$').into();
+        let var2: IStr = vars[1].trim_start_matches('$').into();
 
         // Parse all case entries with compound keys
         let mut entries: Vec<(String, String, Vec<MessageNode>)> = Vec::new();
@@ -1237,7 +1251,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         }
 
         // For each group, determine if inner is plural or select and build the inner node
-        let mut outer_cases: Vec<(String, Vec<MessageNode>)> = Vec::new();
+        let mut outer_cases: Vec<(IStr, Vec<MessageNode>)> = Vec::new();
 
         for (outer_key, sub_entries) in &groups {
             // Determine if sub-keys are plural or select
@@ -1246,7 +1260,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                 .all(|(k, _)| k == "*" || is_plural_key(k));
 
             let inner_pattern = if sub_is_plural {
-                let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = sub_entries
+                let plural_cases: PluralCases = sub_entries
                     .iter()
                     .map(|(k, nodes)| {
                         let plural_key = if k == "*" {
@@ -1281,11 +1295,11 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                     cases: plural_cases,
                 }]
             } else {
-                let select_cases: Vec<(String, Vec<MessageNode>)> = sub_entries
+                let select_cases: Vec<(IStr, Vec<MessageNode>)> = sub_entries
                     .iter()
                     .map(|(k, nodes)| {
                         let select_key = if k == "*" { "other" } else { k.as_str() };
-                        (select_key.to_string(), nodes.clone())
+                        (IStr::from(select_key), nodes.clone())
                     })
                     .collect();
                 vec![MessageNode::Select {
@@ -1294,7 +1308,7 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
                 }]
             };
 
-            outer_cases.push((outer_key.clone(), inner_pattern));
+            outer_cases.push((IStr::from(outer_key.as_str()), inner_pattern));
         }
 
         // Determine if the outer is select or plural (based on outer keys)
@@ -1310,10 +1324,10 @@ fn parse_mf2_match(input: &str) -> Result<MessageNode, String> {
         });
 
         if outer_is_plural {
-            let plural_cases: Vec<(PluralCaseKey, Vec<MessageNode>)> = outer_cases
+            let plural_cases: PluralCases = outer_cases
                 .into_iter()
                 .map(|(k, nodes)| {
-                    let plural_key = match k.as_str() {
+                    let plural_key = match &*k {
                         "zero" => PluralCaseKey::Zero,
                         "one" => PluralCaseKey::One,
                         "two" => PluralCaseKey::Two,

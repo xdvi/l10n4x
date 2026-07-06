@@ -2,13 +2,15 @@ extern crate alloc;
 use crate::error::CoreResult;
 use crate::pak::decompress_pak;
 #[cfg(not(feature = "std"))]
+use crate::store::read_store;
+#[cfg(not(feature = "std"))]
 use crate::store::TranslationStore;
 #[cfg(feature = "std")]
 use crate::store::{
-    build_store, lazy_cache_mut, notify_locale_changed_for_handle, offset_maps_mut, read_store_for,
-    store_snapshot, swap_store_for, StoreSnapshot,
+    build_store, lazy_cache_mut, notify_locale_changed_for_handle, offset_maps_mut, store_snapshot,
+    update_store_for, StoreSnapshot,
 };
-use crate::store::{emit_locale_changed, read_store, upsert_locale, StoreData};
+use crate::store::{emit_locale_changed, upsert_locale, StoreData};
 #[cfg(feature = "std")]
 use crate::store_registry::StoreHandle;
 use alloc::string::ToString;
@@ -21,7 +23,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 #[cfg(feature = "std")]
-enum LoadMode<'a> {
+pub(crate) enum LoadMode<'a> {
     Replace,
     Namespace(&'a str),
 }
@@ -67,7 +69,7 @@ fn record_namespace(snap: &mut StoreSnapshot, locale_hash: u64, namespace: &str)
 }
 
 #[cfg(feature = "std")]
-fn apply_l10n_to_snapshot(
+pub(crate) fn apply_l10n_to_snapshot(
     snap: &mut StoreSnapshot,
     locale_str: &str,
     bytes: Vec<u8>,
@@ -136,9 +138,11 @@ pub fn try_load_raw_bytes_for_store(
     let _span = tracing::trace_span!("l10n4x.load_raw_bytes", locale = locale_str).entered();
 
     crate::metrics::inc_locale_loads();
-    let mut snap = read_store_for(handle, store_snapshot)?;
-    apply_l10n_to_snapshot(&mut snap, locale_str, bytes, LoadMode::Replace)?;
-    swap_store_for(handle, build_store(snap))?;
+    update_store_for(handle, |store| {
+        let mut snap = store_snapshot(store);
+        apply_l10n_to_snapshot(&mut snap, locale_str, bytes, LoadMode::Replace)?;
+        Ok(build_store(snap))
+    })?;
     notify_locale_changed_for_handle(handle, locale_str);
     Ok(())
 }
@@ -181,9 +185,11 @@ pub fn try_load_namespace_bytes_for_store(
     bytes: Vec<u8>,
 ) -> CoreResult<()> {
     crate::metrics::inc_locale_loads();
-    let mut snap = read_store_for(handle, store_snapshot)?;
-    apply_l10n_to_snapshot(&mut snap, locale_str, bytes, LoadMode::Namespace(namespace))?;
-    swap_store_for(handle, build_store(snap))?;
+    update_store_for(handle, |store| {
+        let mut snap = store_snapshot(store);
+        apply_l10n_to_snapshot(&mut snap, locale_str, bytes, LoadMode::Namespace(namespace))?;
+        Ok(build_store(snap))
+    })?;
     notify_locale_changed_for_handle(handle, locale_str);
     Ok(())
 }
@@ -234,7 +240,12 @@ pub fn try_load_namespace_locale_for_store(
     namespace: &str,
     path_str: &str,
 ) -> CoreResult<()> {
-    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    let bytes = std::fs::read(path_str).map_err(|e| {
+        // CoreError carries only static strings (no_std-compatible); log the
+        // real cause instead of discarding it.
+        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        crate::CoreError::IoError("read failed")
+    })?;
     try_load_namespace_pak_for_store(handle, locale_str, namespace, &bytes)
 }
 
@@ -332,29 +343,31 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     let signed = crate::envelope::open_outer(pak_bytes)?;
     let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
     crate::integrity::verify(message, signature)?;
-    let mut snap = read_store(store_snapshot);
-    let lazy = lazy_cache_mut(&mut snap.lazy_cache);
-    let offset_map = offset_maps_mut(&mut snap.offset_maps);
-    let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-    let had_locale = snap
-        .locales
-        .binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str))
-        .is_ok();
-    if had_locale {
-        lazy.remove(&locale_hash);
-        offset_map.remove(&locale_hash);
-    }
-    lazy.entry(locale_hash)
-        .or_insert_with(|| Arc::new(OnceLock::new()));
-    offset_map
-        .entry(locale_hash)
-        .or_insert_with(|| Arc::new(HashMap::new()));
-    upsert_locale(
-        &mut snap.locales,
-        locale_str.to_string(),
-        StoreData::Lazy(Arc::new(Vec::from(compressed))),
-    );
-    crate::store::swap_store(build_store(snap));
+    crate::store::update_store::<_, crate::CoreError>(|store| {
+        let mut snap = store_snapshot(store);
+        let lazy = lazy_cache_mut(&mut snap.lazy_cache);
+        let offset_map = offset_maps_mut(&mut snap.offset_maps);
+        let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+        let had_locale = snap
+            .locales
+            .binary_search_by(|(loc, _)| loc.as_str().cmp(locale_str))
+            .is_ok();
+        if had_locale {
+            lazy.remove(&locale_hash);
+            offset_map.remove(&locale_hash);
+        }
+        lazy.entry(locale_hash)
+            .or_insert_with(|| Arc::new(OnceLock::new()));
+        offset_map
+            .entry(locale_hash)
+            .or_insert_with(|| Arc::new(HashMap::new()));
+        upsert_locale(
+            &mut snap.locales,
+            locale_str.to_string(),
+            StoreData::Lazy(Arc::new(Vec::from(compressed))),
+        );
+        Ok(build_store(snap))
+    })?;
     emit_locale_changed(locale_str);
     Ok(())
 }
@@ -372,7 +385,12 @@ pub fn try_load_pak_locale_for_store(
     locale_str: &str,
     path_str: &str,
 ) -> CoreResult<()> {
-    let bytes = std::fs::read(path_str).map_err(|_| crate::CoreError::IoError("read failed"))?;
+    let bytes = std::fs::read(path_str).map_err(|e| {
+        // CoreError carries only static strings (no_std-compatible); log the
+        // real cause instead of discarding it.
+        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        crate::CoreError::IoError("read failed")
+    })?;
     try_load_pak_bytes_for_store(handle, locale_str, &bytes)
 }
 
@@ -446,7 +464,6 @@ mod tests {
     use super::*;
     use crate::binary_format::{fnv1a_64, merge_l10n_buffers, pack_l10n, RUNTIME_VERSION};
     use crate::store::{clear_translations, locale_loaded, namespace_loaded};
-    use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
     #[cfg(feature = "std")]
@@ -458,8 +475,7 @@ mod tests {
     }
 
     fn make_l10n_with_key(key: &str, val: &[u8]) -> Vec<u8> {
-        let mut entries = BTreeMap::new();
-        entries.insert(fnv1a_64(key.as_bytes()), val.to_vec());
+        let entries: Vec<(u64, Vec<u8>)> = vec![(fnv1a_64(key.as_bytes()), val.to_vec())];
         pack_l10n(
             &entries,
             RUNTIME_VERSION,
@@ -475,8 +491,8 @@ mod tests {
         clear_translations();
         assert!(load_raw_bytes(
             "test",
-            pack_l10n(
-                &BTreeMap::new(),
+            pack_l10n::<Vec<u8>>(
+                &[],
                 RUNTIME_VERSION,
                 crate::locale_data::LOCALE_DATA_VERSION,
                 None,
