@@ -47,6 +47,49 @@ thread_local! {
         const { RefCell::new(VecDeque::new()) };
 }
 
+/// Global store-mutation generation. Bumped on every locale load, clear, or OTA
+/// swap so that per-thread translate caches on OTHER threads can detect the
+/// change and drop stale entries (thread-locals can only be cleared by their
+/// own thread).
+#[cfg(feature = "std")]
+static STORE_GENERATION: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+// Generation this thread's translate caches were last valid at.
+#[cfg(feature = "std")]
+thread_local! {
+    static CACHE_GENERATION: core::cell::Cell<u64> = const { core::cell::Cell::new(0) };
+}
+
+/// Marks all per-thread translate caches stale, on every thread.
+#[cfg(feature = "std")]
+pub(crate) fn bump_store_generation() {
+    STORE_GENERATION.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
+/// Current store-mutation generation. Bindings that keep their own translate
+/// caches (FFI, WASM) must record this at fill time and treat the entry as
+/// stale when it no longer matches.
+#[cfg(feature = "std")]
+pub fn store_generation() -> u64 {
+    STORE_GENERATION.load(core::sync::atomic::Ordering::Acquire)
+}
+
+/// Clears this thread's translate caches if the store changed since they were
+/// last used. Must run before any cache lookup.
+#[cfg(feature = "std")]
+fn sync_translate_cache_generation() {
+    let current = STORE_GENERATION.load(core::sync::atomic::Ordering::Acquire);
+    CACHE_GENERATION.with(|generation| {
+        if generation.get() != current {
+            generation.set(current);
+            TRANSLATE_CACHE_FAST.with(|cell| cell.borrow_mut().clear());
+            TRANSLATE_CACHE_FAST_ORDER.with(|cell| cell.borrow_mut().clear());
+            TRANSLATE_CACHE.with(|cell| cell.borrow_mut().clear());
+            TRANSLATE_CACHE_ORDER.with(|cell| cell.borrow_mut().clear());
+        }
+    });
+}
+
 /// FNV-1a composite hash of interpolation parameters (shared by core, FFI, and WASM).
 #[cfg(feature = "std")]
 pub fn hash_params(params: &[(&str, &str)]) -> u64 {
@@ -314,21 +357,6 @@ pub(crate) fn upsert_locale(
     *locales = Arc::new(new_vec);
 }
 
-/// Fine-grained COW removal of a locale entry from the sorted vector.
-#[allow(dead_code)]
-pub(crate) fn remove_locale(locales: &mut Arc<Vec<(String, Arc<StoreData>)>>, locale: &str) {
-    let old = Arc::clone(locales);
-    if let Ok(idx) = old.binary_search_by(|(loc, _)| loc.as_str().cmp(locale)) {
-        let mut new_vec = Vec::with_capacity(old.len().saturating_sub(1));
-        for (i, (loc, sd)) in old.iter().enumerate() {
-            if i != idx {
-                new_vec.push((loc.clone(), Arc::clone(sd)));
-            }
-        }
-        *locales = Arc::new(new_vec);
-    }
-}
-
 /// Manages loaded localization packages: maps locale codes to their decompressed binary buffers.
 /// Uses a sorted `Vec` for O(log n) binary-search lookup and cache-friendly O(n) clone.
 /// `locales` is `Arc`-wrapped so `clone()` on the whole store is O(1) when locales don't change.
@@ -420,36 +448,55 @@ impl TranslationStore {
             #[cfg(feature = "std")]
             StoreData::Lazy(compressed) => {
                 let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
-                let entry = self
-                    .lazy_cache
-                    .as_ref()
-                    .and_then(|c| c.get(&locale_hash))
-                    .expect("lazy_cache entry must exist for StoreData::Lazy locale");
+                // A missing cache entry or a corrupt payload must NOT panic at
+                // translate time: return None so the fallback chain takes over.
+                let entry = self.lazy_cache.as_ref().and_then(|c| c.get(&locale_hash))?;
                 let (decompressed, _) = entry.get_or_init(|| {
-                    let output = crate::pak::decompress_zstd_payload(compressed.as_slice())
-                        .expect("zstd decompression failed");
-                    let offsets = if let Ok(reader) =
-                        crate::binary_format::BinaryFormatReader::new(&output)
-                    {
-                        Arc::new(reader.to_offsets())
-                    } else {
-                        Arc::new(HashMap::new())
-                    };
-                    (output, offsets)
+                    match crate::pak::decompress_zstd_payload(compressed.as_slice()) {
+                        Ok(output) => {
+                            let offsets = if let Ok(reader) =
+                                crate::binary_format::BinaryFormatReader::new(&output)
+                            {
+                                Arc::new(reader.to_offsets())
+                            } else {
+                                Arc::new(HashMap::new())
+                            };
+                            (output, offsets)
+                        }
+                        Err(_) => {
+                            crate::metrics::inc_format_errors();
+                            // Empty sentinel: a valid L10N buffer is never
+                            // empty (16-byte header minimum).
+                            (Vec::new(), Arc::new(HashMap::new()))
+                        }
+                    }
                 });
+                if decompressed.is_empty() {
+                    return None;
+                }
                 Some(decompressed.as_slice())
             }
         }
     }
 }
 
-/// Runs a store mutation under the writer lock. Safe to call concurrently with readers.
-#[cfg(feature = "std")]
-pub fn with_store_write<F, R>(f: F) -> R
+/// Atomically transforms the global store: snapshot → `f` → install, all under
+/// the writer lock. Concurrent writers are serialized, so no writer can lose
+/// another's changes. If `f` returns `Err`, the store is left unchanged.
+pub fn update_store<F, E>(f: F) -> Result<(), E>
 where
-    F: FnOnce() -> R,
+    F: FnOnce(&TranslationStore) -> Result<TranslationStore, E>,
 {
-    crate::store_cell::StoreCell::global().with_write(f)
+    crate::store_cell::StoreCell::global().update(f)
+}
+
+/// Like [`update_store`], but for the store selected by `handle` (`None` = global).
+#[cfg(feature = "std")]
+pub fn update_store_for<F>(handle: Option<StoreHandle>, f: F) -> CoreResult<()>
+where
+    F: FnOnce(&TranslationStore) -> CoreResult<TranslationStore>,
+{
+    with_cell(handle, |cell| cell.update(f))?
 }
 
 // Function pointer type for missing key notifications.
@@ -543,9 +590,11 @@ pub fn set_fallback_chain(chain: &[&str]) {
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
     #[cfg(feature = "std")]
     {
-        let mut snap = read_store(store_snapshot);
-        snap.fallback_chain = new_chain;
-        swap_store(build_store(snap));
+        let _ = update_store::<_, core::convert::Infallible>(|store| {
+            let mut snap = store_snapshot(store);
+            snap.fallback_chain = new_chain;
+            Ok(build_store(snap))
+        });
     }
     #[cfg(not(feature = "std"))]
     {
@@ -592,9 +641,11 @@ pub fn swap_store_for(handle: Option<StoreHandle>, new_store: TranslationStore) 
 pub fn set_fallback_chain_for_store(handle: StoreHandle, chain: &[&str]) -> CoreResult<()> {
     let arcs: Vec<Arc<str>> = chain.iter().map(|s| Arc::from(*s)).collect();
     let new_chain: Arc<[Arc<str>]> = Arc::from(arcs.into_boxed_slice());
-    let mut snap = read_store_for(Some(handle), store_snapshot)?;
-    snap.fallback_chain = new_chain;
-    swap_store_for(Some(handle), build_store(snap))
+    update_store_for(Some(handle), |store| {
+        let mut snap = store_snapshot(store);
+        snap.fallback_chain = new_chain;
+        Ok(build_store(snap))
+    })
 }
 
 /// Returns the fallback chain for a scoped store.
@@ -698,6 +749,38 @@ fn hash_present_in_locale(store: &TranslationStore, locale: &str, key_hash: u64)
     false
 }
 
+/// Runs `f` over the fallback candidates for `locale` in resolution order —
+/// the locale itself, its BCP-47 parent, then the configured chain (skipping
+/// duplicates of the first two) — stopping at the first `true`.
+///
+/// Single source of truth for the resolution order: `key_exists` and translate
+/// walk the exact same chain.
+fn for_each_fallback_candidate(
+    locale: &str,
+    chain: &[Arc<str>],
+    mut f: impl FnMut(&str) -> bool,
+) -> bool {
+    if f(locale) {
+        return true;
+    }
+    let parent = locale_parent(locale).filter(|p| *p != locale);
+    if let Some(parent) = parent {
+        if f(parent) {
+            return true;
+        }
+    }
+    for fb in chain.iter() {
+        let fb_str: &str = fb.as_ref();
+        if fb_str == locale || Some(fb_str) == parent {
+            continue;
+        }
+        if f(fb_str) {
+            return true;
+        }
+    }
+    false
+}
+
 fn key_exists_in_store(
     store: &TranslationStore,
     chain: &[Arc<str>],
@@ -705,48 +788,19 @@ fn key_exists_in_store(
     key_hash: u64,
     context_hash: Option<u64>,
 ) -> bool {
-    if let Some(ctx_hash) = context_hash {
-        if hash_present_in_locale(store, locale, ctx_hash) {
-            return true;
-        }
-    }
-    if hash_present_in_locale(store, locale, key_hash) {
-        return true;
-    }
-    if let Some(parent) = locale_parent(locale) {
-        if parent != locale {
-            if let Some(ctx_hash) = context_hash {
-                if hash_present_in_locale(store, parent, ctx_hash) {
-                    return true;
-                }
-            }
-            if hash_present_in_locale(store, parent, key_hash) {
-                return true;
-            }
-        }
-    }
-    for fb in chain.iter() {
-        let fb_str: &str = fb.as_ref();
-        if fb_str == locale {
-            continue;
-        }
-        if let Some(parent) = locale_parent(locale) {
-            if fb_str == parent {
-                continue;
-            }
-        }
+    for_each_fallback_candidate(locale, chain, |candidate| {
         if let Some(ctx_hash) = context_hash {
-            if hash_present_in_locale(store, fb_str, ctx_hash) {
+            if hash_present_in_locale(store, candidate, ctx_hash) {
                 return true;
             }
         }
-        if hash_present_in_locale(store, fb_str, key_hash) {
-            return true;
-        }
-    }
-    false
+        hash_present_in_locale(store, candidate, key_hash)
+    })
 }
 
+/// Resolves and formats a translation, walking the fallback chain. Returns
+/// `(key_found, primary_locale_loaded)` from a single store read — callers
+/// previously did a separate `store.lookup(locale)` just for the loaded flag.
 fn resolve_translate_in_store<W: core::fmt::Write>(
     store: &TranslationStore,
     chain: &[Arc<str>],
@@ -755,30 +809,29 @@ fn resolve_translate_in_store<W: core::fmt::Write>(
     context_hash: Option<u64>,
     params: &[(&str, &str)],
     writer: &mut W,
-) -> bool {
-    if try_locale(store, locale, key_hash, context_hash, params, writer) {
-        return true;
-    }
-    if let Some(parent) = locale_parent(locale) {
-        if parent != locale && try_locale(store, parent, key_hash, context_hash, params, writer) {
-            return true;
+) -> (bool, bool) {
+    let mut primary_loaded = false;
+    let mut is_primary = true;
+    let found = for_each_fallback_candidate(locale, chain, |candidate| {
+        let buf = store.lookup(candidate);
+        if is_primary {
+            primary_loaded = buf.is_some();
+            is_primary = false;
         }
-    }
-    for fb in chain.iter() {
-        let fb_str: &str = fb.as_ref();
-        if fb_str == locale {
-            continue;
+        match buf {
+            Some(buf) => try_locale(
+                store,
+                candidate,
+                buf,
+                key_hash,
+                context_hash,
+                params,
+                writer,
+            ),
+            None => false,
         }
-        if let Some(parent) = locale_parent(locale) {
-            if fb_str == parent {
-                continue;
-            }
-        }
-        if try_locale(store, fb_str, key_hash, context_hash, params, writer) {
-            return true;
-        }
-    }
-    false
+    });
+    (found, primary_loaded)
 }
 
 /// Returns `true` if `key_hash` exists in `locale` or the configured fallback locale.
@@ -832,38 +885,41 @@ pub fn load_static_bytes(locale_str: &str, data: &'static [u8], already_verified
     crate::metrics::inc_locale_loads();
     #[cfg(feature = "std")]
     {
-        let mut snap = read_store(store_snapshot);
-        let offset_map = offset_maps_mut(&mut snap.offset_maps);
-        let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
-        let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
-            Arc::new(reader.to_offsets())
-        } else {
-            Arc::new(HashMap::new())
-        };
-        offset_map.insert(locale_hash, offset_arc);
-        #[cfg(feature = "debug-keys")]
-        if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
-            let table = reader.debug_key_table();
-            if !table.is_empty() {
-                let dk = snap
-                    .debug_keys
-                    .get_or_insert_with(|| Arc::new(HashMap::new()));
-                let map = Arc::make_mut(dk);
-                for (hash, name) in table {
-                    map.insert(hash, Arc::from(name.as_str()));
+        let _ = update_store::<_, core::convert::Infallible>(|store| {
+            let mut snap = store_snapshot(store);
+            let offset_map = offset_maps_mut(&mut snap.offset_maps);
+            let locale_hash = crate::binary_format::fnv1a_64(locale_str.as_bytes());
+            let offset_arc = if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data)
+            {
+                Arc::new(reader.to_offsets())
+            } else {
+                Arc::new(HashMap::new())
+            };
+            offset_map.insert(locale_hash, offset_arc);
+            #[cfg(feature = "debug-keys")]
+            if let Ok(reader) = crate::binary_format::BinaryFormatReader::new(data) {
+                let table = reader.debug_key_table();
+                if !table.is_empty() {
+                    let dk = snap
+                        .debug_keys
+                        .get_or_insert_with(|| Arc::new(HashMap::new()));
+                    let map = Arc::make_mut(dk);
+                    for (hash, name) in table {
+                        map.insert(hash, Arc::from(name.as_str()));
+                    }
                 }
             }
-        }
-        upsert_locale(
-            &mut snap.locales,
-            locale_str.to_string(),
-            StoreData::Static(data, already_verified),
-        );
-        let ns_map = snap
-            .loaded_namespaces
-            .get_or_insert_with(|| Arc::new(HashMap::new()));
-        Arc::make_mut(ns_map).remove(&locale_hash);
-        swap_store(build_store(snap));
+            upsert_locale(
+                &mut snap.locales,
+                locale_str.to_string(),
+                StoreData::Static(data, already_verified),
+            );
+            let ns_map = snap
+                .loaded_namespaces
+                .get_or_insert_with(|| Arc::new(HashMap::new()));
+            Arc::make_mut(ns_map).remove(&locale_hash);
+            Ok(build_store(snap))
+        });
         emit_locale_changed(locale_str);
         true
     }
@@ -931,6 +987,19 @@ pub fn locale_parent(locale: &str) -> Option<&str> {
 type LocaleChangeFn = fn(locale: &str);
 static LOCALE_CHANGE_CALLBACKS: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Boxed dynamic callback (std): `Mutex<Option<Arc<...>>>` instead of a raw
+/// `AtomicPtr` — the previous scheme leaked the old callback on
+/// re-registration and could drop the box while another thread was calling
+/// through it (use-after-free). This is a cold path; a lock is fine.
+#[cfg(feature = "std")]
+type BoxedLocaleCallback = Arc<std::sync::Mutex<Box<dyn Fn(&str) + Send>>>;
+#[cfg(feature = "std")]
+static LOCALE_CHANGE_BOXED: std::sync::Mutex<Option<BoxedLocaleCallback>> =
+    std::sync::Mutex::new(None);
+
+/// Boxed dynamic callback (no_std, single-threaded): plain pointer slot.
+#[cfg(not(feature = "std"))]
 static LOCALE_CHANGE_BOXED: core::sync::atomic::AtomicPtr<()> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 
@@ -940,76 +1009,60 @@ pub fn on_locale_changed(callback: LocaleChangeFn) {
 }
 
 /// Registers a boxed dynamic callback for WASM bindings.
+/// Re-registration replaces (and drops) the previous callback.
 pub fn on_locale_changed_boxed(callback: alloc::boxed::Box<dyn Fn(&str) + Send>) {
-    let ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(callback));
-    LOCALE_CHANGE_BOXED.store(ptr as *mut (), core::sync::atomic::Ordering::Release);
+    #[cfg(feature = "std")]
+    {
+        *LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = Some(Arc::new(std::sync::Mutex::new(callback)));
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(callback));
+        let old = LOCALE_CHANGE_BOXED.swap(ptr as *mut (), core::sync::atomic::Ordering::AcqRel);
+        if !old.is_null() {
+            // SAFETY: single-threaded no_std — no concurrent caller can hold
+            // the old pointer.
+            unsafe {
+                drop(alloc::boxed::Box::from_raw(
+                    old as *mut Box<dyn Fn(&str) + Send>,
+                ));
+            }
+        }
+    }
 }
 
 /// Removes all locale change callbacks.
 pub fn clear_locale_changed_callbacks() {
     LOCALE_CHANGE_CALLBACKS.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
-    let old =
-        LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
-    if !old.is_null() {
-        unsafe {
-            drop(alloc::boxed::Box::from_raw(
-                old as *mut Box<dyn Fn(&str) + Send>,
-            ));
+    #[cfg(feature = "std")]
+    {
+        *LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = None;
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let old =
+            LOCALE_CHANGE_BOXED.swap(core::ptr::null_mut(), core::sync::atomic::Ordering::AcqRel);
+        if !old.is_null() {
+            unsafe {
+                drop(alloc::boxed::Box::from_raw(
+                    old as *mut Box<dyn Fn(&str) + Send>,
+                ));
+            }
         }
     }
 }
 
 #[cfg(feature = "std")]
-fn invalidate_translate_caches_for_store_locale(store_id: u32, locale: &str) {
-    let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
-    TRANSLATE_CACHE_FAST.with(|cell| {
-        cell.borrow_mut()
-            .retain(|(sid, lh, _), _| *sid != store_id || *lh != locale_hash);
-    });
-    TRANSLATE_CACHE_FAST_ORDER.with(|order_cell| {
-        order_cell
-            .borrow_mut()
-            .retain(|(sid, lh, _)| *sid != store_id || *lh != locale_hash);
-    });
-    TRANSLATE_CACHE.with(|cell| {
-        cell.borrow_mut()
-            .retain(|(sid, lh, _, _, _), _| *sid != store_id || *lh != locale_hash);
-    });
-    TRANSLATE_CACHE_ORDER.with(|order_cell| {
-        order_cell
-            .borrow_mut()
-            .retain(|(sid, lh, _, _, _)| *sid != store_id || *lh != locale_hash);
-    });
-}
-
-#[cfg(feature = "std")]
-fn invalidate_all_translate_caches_for_store(store_id: u32) {
-    TRANSLATE_CACHE_FAST.with(|cell| {
-        cell.borrow_mut().retain(|(sid, _, _), _| *sid != store_id);
-    });
-    TRANSLATE_CACHE_FAST_ORDER.with(|order_cell| {
-        order_cell
-            .borrow_mut()
-            .retain(|(sid, _, _)| *sid != store_id);
-    });
-    TRANSLATE_CACHE.with(|cell| {
-        cell.borrow_mut()
-            .retain(|(sid, _, _, _, _), _| *sid != store_id);
-    });
-    TRANSLATE_CACHE_ORDER.with(|order_cell| {
-        order_cell
-            .borrow_mut()
-            .retain(|(sid, _, _, _, _)| *sid != store_id);
-    });
-}
-
-#[cfg(feature = "std")]
-pub(crate) fn emit_locale_changed_for_store(store_id: u32, locale: &str) {
-    if locale == "*" {
-        invalidate_all_translate_caches_for_store(store_id);
-    } else {
-        invalidate_translate_caches_for_store_locale(store_id, locale);
-    }
+pub(crate) fn emit_locale_changed_for_store(_store_id: u32, _locale: &str) {
+    // Translate caches are thread-local, so this thread cannot clear another
+    // thread's entries directly. Bumping the global generation makes EVERY
+    // thread (this one included) drop its caches on its next translate call.
+    // Store mutations are rare; losing unrelated cached entries is acceptable.
+    bump_store_generation();
 }
 
 fn invoke_locale_changed_callbacks(locale: &str) {
@@ -1018,10 +1071,30 @@ fn invoke_locale_changed_callbacks(locale: &str) {
         let f: LocaleChangeFn = unsafe { core::mem::transmute(ptr) };
         f(locale);
     }
-    let boxed_ptr = LOCALE_CHANGE_BOXED.load(core::sync::atomic::Ordering::Acquire);
-    if !boxed_ptr.is_null() {
-        unsafe {
-            (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale);
+    #[cfg(feature = "std")]
+    {
+        // Clone the Arc under the registry lock, call outside it: a concurrent
+        // clear/re-register only drops the callback after this call returns.
+        let callback = LOCALE_CHANGE_BOXED
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        if let Some(callback) = callback {
+            // try_lock: a callback that itself triggers a locale change must
+            // not deadlock — the nested notification is skipped instead.
+            if let Ok(guard) = callback.try_lock() {
+                (guard)(locale);
+            }
+        }
+    }
+    #[cfg(not(feature = "std"))]
+    {
+        let boxed_ptr = LOCALE_CHANGE_BOXED.load(core::sync::atomic::Ordering::Acquire);
+        if !boxed_ptr.is_null() {
+            // SAFETY: single-threaded no_std — no concurrent clear can drop it.
+            unsafe {
+                (*(boxed_ptr as *mut Box<dyn Fn(&str) + Send>))(locale);
+            }
         }
     }
 }
@@ -1039,79 +1112,129 @@ pub(crate) fn emit_locale_changed(locale: &str) {
     invoke_locale_changed_callbacks(locale);
 }
 
+// Scratch buffer for format_message_checked (committed to the caller's writer
+// only on success).
+#[cfg(feature = "std")]
+thread_local! {
+    static FORMAT_SCRATCH: RefCell<String> = const { RefCell::new(String::new()) };
+}
+
+/// Formats `bytecode` into `writer`, committing output only when the WHOLE
+/// message formats successfully. Formatting directly into the caller's writer
+/// would leave partial text behind on a mid-message error, and the fallback
+/// locale's translation (or the key-hash placeholder) would then be appended
+/// after it, producing garbled concatenated output.
+fn format_message_checked<W: core::fmt::Write>(
+    bytecode: &[u8],
+    locale: &str,
+    params: &[(&str, &str)],
+    writer: &mut W,
+) -> bool {
+    #[cfg(feature = "std")]
+    {
+        let done = FORMAT_SCRATCH.with(|cell| {
+            // try_borrow_mut: a custom formatter callback may re-enter
+            // translation; fall back to a fresh local buffer in that case.
+            if let Ok(mut buf) = cell.try_borrow_mut() {
+                buf.clear();
+                if format_message(bytecode, locale, params, &mut *buf).is_ok() {
+                    Some(writer.write_str(&buf).is_ok())
+                } else {
+                    Some(false)
+                }
+            } else {
+                None
+            }
+        });
+        if let Some(result) = done {
+            return result;
+        }
+    }
+    let mut buf = String::new();
+    if format_message(bytecode, locale, params, &mut buf).is_ok() {
+        writer.write_str(&buf).is_ok()
+    } else {
+        false
+    }
+}
+
 /// Attempts to translate `key_hash` from `locale` in `store`, writing to `writer`.
 /// Returns `true` if translation succeeded.
+/// Slices `buf[off..off+len]` with overflow-safe bounds (u32 offsets can wrap
+/// `usize` on 32-bit targets) and formats the entry, committing on success.
+#[cfg(feature = "std")]
 #[inline]
+fn try_offset_entry<W: core::fmt::Write>(
+    buf: &[u8],
+    off: u32,
+    len: u32,
+    locale: &str,
+    params: &[(&str, &str)],
+    writer: &mut W,
+) -> bool {
+    let start = off as usize;
+    let Some(end) = start.checked_add(len as usize) else {
+        return false;
+    };
+    if end > buf.len() {
+        return false;
+    }
+    format_message_checked(&buf[start..end], locale, params, writer)
+}
+
+#[inline]
+// `store` is only read inside the `#[cfg(feature = "std")]` offset-map fast
+// path below; the no_std fallback path doesn't need it.
+#[cfg_attr(not(feature = "std"), allow(unused_variables))]
 fn try_locale<W: core::fmt::Write>(
     store: &TranslationStore,
     locale: &str,
+    buf: &[u8],
     key_hash: u64,
     context_hash: Option<u64>,
     params: &[(&str, &str)],
     writer: &mut W,
 ) -> bool {
-    if let Some(buf) = store.lookup(locale) {
-        #[cfg(feature = "std")]
-        {
-            let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
-            let lazy_offsets = store
-                .lazy_cache
-                .as_ref()
-                .and_then(|c| c.get(&locale_hash))
-                .and_then(|entry| entry.get().map(|(_, offsets)| offsets));
-            let map = store
-                .offset_maps
-                .as_ref()
-                .and_then(|m| m.get(&locale_hash))
-                .filter(|m| !m.is_empty())
-                .or(lazy_offsets);
-            if let Some(map) = map {
-                let mut used_offset_map = false;
-                if let Some(ctx_hash) = context_hash {
-                    if let Some(&(off, len)) = map.get(&ctx_hash) {
-                        used_offset_map = true;
-                        let start = off as usize;
-                        let end = start + (len as usize);
-                        if end <= buf.len()
-                            && format_message(&buf[start..end], locale, params, writer).is_ok()
-                        {
-                            return true;
-                        }
-                        crate::metrics::inc_format_errors();
-                    }
-                }
-                if let Some(&(off, len)) = map.get(&key_hash) {
-                    used_offset_map = true;
-                    let start = off as usize;
-                    let end = start + (len as usize);
-                    if end <= buf.len()
-                        && format_message(&buf[start..end], locale, params, writer).is_ok()
-                    {
-                        return true;
-                    }
-                    crate::metrics::inc_format_errors();
-                }
-                if used_offset_map {
-                    return false;
-                }
-            }
-        }
-        // Fallback: BinaryFormatReader on already-decompressed buf
-        if let Ok(reader) = BinaryFormatReader::new(buf) {
+    #[cfg(feature = "std")]
+    {
+        if let Some(map) = offset_map_for_locale(store, locale) {
+            let mut used_offset_map = false;
             if let Some(ctx_hash) = context_hash {
-                if let Some(bytecode) = reader.lookup(ctx_hash) {
-                    if format_message(bytecode, locale, params, writer).is_ok() {
+                if let Some(&(off, len)) = map.get(&ctx_hash) {
+                    used_offset_map = true;
+                    if try_offset_entry(buf, off, len, locale, params, writer) {
                         return true;
                     }
                     crate::metrics::inc_format_errors();
                 }
             }
-            if let Some(bytecode) = reader.lookup(key_hash) {
-                if format_message(bytecode, locale, params, writer).is_ok() {
+            if let Some(&(off, len)) = map.get(&key_hash) {
+                used_offset_map = true;
+                if try_offset_entry(buf, off, len, locale, params, writer) {
                     return true;
                 }
                 crate::metrics::inc_format_errors();
             }
+            if used_offset_map {
+                return false;
+            }
+        }
+    }
+    // Fallback: BinaryFormatReader on already-decompressed buf
+    if let Ok(reader) = BinaryFormatReader::new(buf) {
+        if let Some(ctx_hash) = context_hash {
+            if let Some(bytecode) = reader.lookup(ctx_hash) {
+                if format_message_checked(bytecode, locale, params, writer) {
+                    return true;
+                }
+                crate::metrics::inc_format_errors();
+            }
+        }
+        if let Some(bytecode) = reader.lookup(key_hash) {
+            if format_message_checked(bytecode, locale, params, writer) {
+                return true;
+            }
+            crate::metrics::inc_format_errors();
         }
     }
     false
@@ -1138,8 +1261,7 @@ pub fn translate_to_writer_with_status<W: core::fmt::Write>(
     }
 
     let status = read_store(|store| {
-        let locale_loaded = store.lookup(locale).is_some();
-        let found = resolve_translate_in_store(
+        let (found, locale_loaded) = resolve_translate_in_store(
             store,
             &store.fallback_chain,
             locale,
@@ -1186,8 +1308,7 @@ pub fn translate_to_writer_with_status_for_store<W: core::fmt::Write>(
     }
 
     let status = read_store_for(handle, |store| {
-        let locale_loaded = store.lookup(locale).is_some();
-        let found = resolve_translate_in_store(
+        let (found, locale_loaded) = resolve_translate_in_store(
             store,
             &store.fallback_chain,
             locale,
@@ -1254,6 +1375,7 @@ pub fn translate_for_store(
     context_hash: Option<u64>,
     params: &[(&str, &str)],
 ) -> String {
+    sync_translate_cache_generation();
     let store_id = store_id_from_handle(handle);
     let locale_hash = crate::binary_format::fnv1a_64(locale.as_bytes());
     let use_fast_cache = context_hash.is_none() && params.is_empty();
@@ -1281,16 +1403,22 @@ pub fn translate_for_store(
             key_found: false,
             locale_loaded: false,
         });
-        (core::mem::take(&mut *guard), status.key_found)
+        // clone() instead of mem::take: taking would zero the buffer's
+        // capacity and force it to re-grow on every call.
+        (guard.clone(), status.key_found)
     });
     if key_found {
         if use_fast_cache {
             cache_insert_fast(store_id, locale_hash, key_hash, &result);
         } else {
-            let shared = Arc::<str>::from(result);
-            let output = shared.to_string();
-            cache_insert_full(store_id, locale, key_hash, context_hash, params, shared);
-            return output;
+            cache_insert_full(
+                store_id,
+                locale,
+                key_hash,
+                context_hash,
+                params,
+                Arc::<str>::from(result.as_str()),
+            );
         }
     }
     result
@@ -1922,5 +2050,104 @@ mod store_extra_tests {
         let r2 = translate("en", key_hash, Some(ctx_hash), &[]);
         assert_eq!(r1, "friend-male");
         assert_eq!(r1, r2);
+    }
+
+    /// A message that fails to format halfway must not leave partial text in
+    /// the output before the fallback locale's translation is appended.
+    #[cfg(feature = "std")]
+    #[test]
+    fn failed_format_does_not_leak_partial_output() {
+        let _lock = lock_extra();
+        clear_translations();
+        // Bytecode: text node "Ho" followed by a truncated variable opcode —
+        // formats "Ho" then errors.
+        let mut broken = vec![0x01, 0, 0, 0, 2, b'H', b'o'];
+        broken.extend_from_slice(&[0x02, 0, 0, 0, 40]); // var len 40, no bytes
+        assert!(crate::loader::load_raw_bytes(
+            "es",
+            make_binary_with_key("greet", &broken)
+        ));
+        assert!(crate::loader::load_raw_bytes(
+            "en",
+            make_binary_with_key("greet", b"Hello")
+        ));
+        set_fallback_chain(&["en"]);
+        let result = translate("es", hash("greet"), None, &[]);
+        assert_eq!(
+            result, "Hello",
+            "partial output from the broken es message leaked into the result"
+        );
+    }
+
+    /// Two concurrent loads of different locales must both survive: the
+    /// snapshot→mutate→swap sequence is serialized by the writer lock, so
+    /// neither writer can base its new store on a stale snapshot.
+    #[cfg(feature = "std")]
+    #[test]
+    fn concurrent_loads_do_not_lose_locales() {
+        let _lock = lock_extra();
+        for round in 0..20 {
+            clear_translations();
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let b2 = std::sync::Arc::clone(&barrier);
+            let worker = std::thread::spawn(move || {
+                b2.wait();
+                assert!(crate::loader::load_raw_bytes(
+                    "aa",
+                    make_binary_with_key("k", b"a")
+                ));
+            });
+            barrier.wait();
+            assert!(crate::loader::load_raw_bytes(
+                "bb",
+                make_binary_with_key("k", b"b")
+            ));
+            worker.join().unwrap();
+            assert!(
+                locale_loaded("aa") && locale_loaded("bb"),
+                "concurrent load lost a locale (round {round})"
+            );
+        }
+    }
+
+    /// Translate caches are thread-local; a reload on one thread must
+    /// invalidate the caches of every other thread (via the store generation).
+    #[cfg(feature = "std")]
+    #[test]
+    fn translate_cache_invalidated_across_threads() {
+        let _lock = lock_extra();
+        clear_translations();
+        assert!(crate::loader::load_raw_bytes(
+            "en",
+            make_binary_with_key("xthread", b"old-text")
+        ));
+        let key_hash = hash("xthread");
+
+        let (task_tx, task_rx) = std::sync::mpsc::channel::<()>();
+        let (result_tx, result_rx) = std::sync::mpsc::channel::<String>();
+        let worker = std::thread::spawn(move || {
+            while task_rx.recv().is_ok() {
+                let _ = result_tx.send(translate("en", key_hash, None, &[]));
+            }
+        });
+
+        task_tx.send(()).unwrap();
+        assert_eq!(result_rx.recv().unwrap(), "old-text");
+
+        // Reload with different text from THIS thread; the worker's
+        // thread-local cache must not survive it.
+        assert!(crate::loader::load_raw_bytes(
+            "en",
+            make_binary_with_key("xthread", b"new-text")
+        ));
+
+        task_tx.send(()).unwrap();
+        assert_eq!(
+            result_rx.recv().unwrap(),
+            "new-text",
+            "worker thread served stale cached text after reload"
+        );
+        drop(task_tx);
+        worker.join().unwrap();
     }
 }

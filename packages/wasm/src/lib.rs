@@ -97,22 +97,21 @@ fn translate_cached(
                     key_found: false,
                     locale_loaded: false,
                 });
-        (std::mem::take(&mut *guard), status.key_found)
+        // clone() instead of mem::take: taking would zero the buffer's
+        // capacity and force it to re-grow on every call.
+        (guard.clone(), status.key_found)
     });
 
     if key_found {
-        let shared = Arc::<str>::from(text.as_str());
         cache_store(
             locale_hash,
             key_hash,
             context_hash,
             params_key,
-            Arc::clone(&shared),
+            Arc::<str>::from(text.as_str()),
         );
-        shared.to_string()
-    } else {
-        text
     }
+    text
 }
 
 #[wasm_bindgen]
@@ -204,16 +203,20 @@ pub fn l10n4x_translate_with_params(
     key_hash: u64,
     param_keys: Vec<String>,
     param_values: Vec<String>,
-) -> String {
+) -> Result<String, JsValue> {
     if param_keys.len() != param_values.len() {
-        return format!("{:#x}", key_hash);
+        return Err(JsValue::from_str(&format!(
+            "param_keys/param_values length mismatch: {} keys vs {} values",
+            param_keys.len(),
+            param_values.len()
+        )));
     }
     let params: Vec<(&str, &str)> = param_keys
         .iter()
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    translate_cached(locale, key_hash, None, &params)
+    Ok(translate_cached(locale, key_hash, None, &params))
 }
 
 /// Translates a key with context suffix support (e.g. `friend_male` → key = `friend`).
@@ -230,16 +233,25 @@ pub fn l10n4x_translate_with_context_and_params(
     context_hash: u64,
     param_keys: Vec<String>,
     param_values: Vec<String>,
-) -> String {
+) -> Result<String, JsValue> {
     if param_keys.len() != param_values.len() {
-        return format!("{:#x}", key_hash);
+        return Err(JsValue::from_str(&format!(
+            "param_keys/param_values length mismatch: {} keys vs {} values",
+            param_keys.len(),
+            param_values.len()
+        )));
     }
     let params: Vec<(&str, &str)> = param_keys
         .iter()
         .zip(param_values.iter())
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
-    translate_cached(locale, key_hash, Some(context_hash), &params)
+    Ok(translate_cached(
+        locale,
+        key_hash,
+        Some(context_hash),
+        &params,
+    ))
 }
 
 #[wasm_bindgen]

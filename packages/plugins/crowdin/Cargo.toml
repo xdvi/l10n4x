@@ -21,6 +21,7 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+ahash = { version = "0.8", default-features = false, features = ["std"] }
 l10n4x-compiler = { version = "0.1.0", path = "../../compiler" }
 l10n4x-tms = { version = "0.1.0", path = "../../tms" }
 serde = { version = "1", features = ["derive"] }

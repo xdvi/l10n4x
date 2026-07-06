@@ -6,7 +6,7 @@
 extern crate alloc;
 
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicPtr, Ordering};
 
 use crate::error::CoreResult;
 
@@ -18,23 +18,22 @@ use aes_gcm::{
 
 const KEY_LEN: usize = 32;
 
-static KEY_PARTS: [AtomicU32; 8] = [const { AtomicU32::new(0) }; 8];
-static KEY_SET: AtomicBool = AtomicBool::new(false);
+/// Single atomically-swapped key slot. The previous scheme stored the key as
+/// 8 independent `AtomicU32`s, so a reader racing a concurrent
+/// `set_decrypt_key` could observe a torn key (half old, half new) and fail
+/// to decrypt. Same epoch-reclaimed pattern as `integrity::VERIFY_KEY`.
+static DECRYPT_KEY: AtomicPtr<[u8; KEY_LEN]> = AtomicPtr::new(core::ptr::null_mut());
 
-fn load_key() -> [u8; KEY_LEN] {
-    let mut key = [0u8; KEY_LEN];
-    for i in 0..8 {
-        let val = KEY_PARTS[i].load(Ordering::SeqCst);
-        key[i * 4..(i + 1) * 4].copy_from_slice(&val.to_be_bytes());
+fn load_key() -> Option<[u8; KEY_LEN]> {
+    #[cfg(feature = "std")]
+    let _guard = crossbeam_epoch::pin();
+    let ptr = DECRYPT_KEY.load(Ordering::Acquire);
+    if ptr.is_null() {
+        return None;
     }
-    key
-}
-
-fn store_key(key: &[u8; KEY_LEN]) {
-    for i in 0..8 {
-        let val = u32::from_be_bytes(key[i * 4..(i + 1) * 4].try_into().unwrap());
-        KEY_PARTS[i].store(val, Ordering::SeqCst);
-    }
+    // SAFETY: under std the epoch guard defers reclamation of the old slot;
+    // under no_std execution is single-threaded.
+    Some(unsafe { *ptr })
 }
 
 /// Sets the 32-byte AES key for optional `L10E` envelope encryption/decryption.
@@ -44,25 +43,27 @@ pub fn set_decrypt_key(key: &[u8]) -> bool {
     }
     let mut arr = [0u8; KEY_LEN];
     arr.copy_from_slice(key);
-    store_key(&arr);
-    KEY_SET.store(true, Ordering::SeqCst);
+    let new_ptr = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(arr));
+    let old_ptr = DECRYPT_KEY.swap(new_ptr, Ordering::SeqCst);
+    if !old_ptr.is_null() {
+        crate::reclaim::schedule_drop(old_ptr);
+    }
     true
 }
 
 /// Returns whether a decrypt key has been configured.
 pub fn decrypt_key_configured() -> bool {
-    KEY_SET.load(Ordering::SeqCst)
+    !DECRYPT_KEY.load(Ordering::Acquire).is_null()
 }
 
 /// Encrypts bytes with AES-256-GCM (12-byte random nonce prepended to ciphertext).
 #[cfg(feature = "encryption")]
 pub fn encrypt_aes_gcm(plaintext: &[u8]) -> CoreResult<Vec<u8>> {
-    if !KEY_SET.load(Ordering::SeqCst) {
+    let Some(key_bytes) = load_key() else {
         return Err(crate::CoreError::KeyNotConfigured(
             "Decrypt key not configured",
         ));
-    }
-    let key_bytes = load_key();
+    };
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
     #[cfg(feature = "std")]
@@ -93,12 +94,11 @@ pub fn decrypt_aes_gcm(data: &[u8]) -> CoreResult<Vec<u8>> {
             "Encrypted payload too short",
         ));
     }
-    if !KEY_SET.load(Ordering::SeqCst) {
+    let Some(key_bytes) = load_key() else {
         return Err(crate::CoreError::KeyNotConfigured(
             "Decrypt key not configured",
         ));
-    }
-    let key_bytes = load_key();
+    };
     let key = Key::<Aes256Gcm>::from_slice(&key_bytes);
     let cipher = Aes256Gcm::new(key);
     let (nonce_bytes, ciphertext) = data.split_at(12);

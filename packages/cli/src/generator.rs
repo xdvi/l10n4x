@@ -1,6 +1,5 @@
 use crate::config::Target;
 use crate::targets::{self, GenerateContext};
-use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 
@@ -47,7 +46,7 @@ pub fn to_lower_camel_case(s: &str) -> String {
 #[allow(clippy::too_many_arguments)]
 pub fn generate_bindings(
     targets: &[Target],
-    _keys: &HashSet<String>,
+    key_pairs: &[(u64, String)],
     fallback: &str,
     source_dir: &str,
     output_dir: &str,
@@ -65,7 +64,6 @@ pub fn generate_bindings(
         encrypt,
         encrypt_key_env,
     };
-    let key_pairs = l10n4x_compiler::compile_key_pairs(Path::new(source_dir))?;
 
     for target in targets {
         let out_dir = Path::new(&target.out_dir);
@@ -78,7 +76,7 @@ pub fn generate_bindings(
         };
         match target_type {
             "go" => {
-                targets::go::generate(out_dir, &key_pairs, &target.options, &ctx, to_pascal_case)?;
+                targets::go::generate(out_dir, key_pairs, &target.options, &ctx, to_pascal_case)?;
             }
             "typescript" => {
                 let params_map =
@@ -86,7 +84,7 @@ pub fn generate_bindings(
                         .unwrap_or_default();
                 targets::typescript::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     &ctx,
                     &params_map,
@@ -95,19 +93,19 @@ pub fn generate_bindings(
             "flutter" => {
                 targets::flutter::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     &ctx,
                     to_lower_camel_case,
                 )?;
             }
             "c" => {
-                targets::c::generate(out_dir, &key_pairs, &target.options, to_upper_snake_case)?;
+                targets::c::generate(out_dir, key_pairs, &target.options, to_upper_snake_case)?;
             }
             "python" => {
                 targets::python::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     to_upper_snake_case,
                 )?;
@@ -187,10 +185,10 @@ mod tests {
             out_dir: "/tmp".to_string(),
             options: serde_json::json!({}),
         }];
-        let keys: HashSet<String> = ["a.b".to_string()].into_iter().collect();
+        let key_pairs = vec![(0xabcdefu64, "a.b".to_string())];
         let result = generate_bindings(
             &targets,
-            &keys,
+            &key_pairs,
             "en",
             ".",
             "/tmp",
@@ -231,10 +229,10 @@ mod tests {
                 options: serde_json::json!({}),
             },
         ];
-        let keys: HashSet<String> = ["a.b".to_string()].into_iter().collect();
+        let key_pairs = vec![(0xabcdefu64, "a.b".to_string())];
         let result = generate_bindings(
             &targets,
-            &keys,
+            &key_pairs,
             "en",
             ".",
             temp.path().to_str().unwrap(),

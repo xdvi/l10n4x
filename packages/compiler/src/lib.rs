@@ -7,20 +7,26 @@ pub mod icu_parser;
 pub mod mf2_parser;
 pub mod signing;
 
+use ahash::AHashMap as HashMap;
 use binary_writer::{write_binary_format, write_binary_format_with_keys};
 use icu_parser::MessageParser;
 use l10n4x_core::envelope;
 use l10n4x_core::pak::{build_unsigned, seal};
+use rayon::prelude::*;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::HashMap as StdHashMap;
 use std::fs;
+use std::io::BufReader;
 use std::path::Path;
+use std::sync::Mutex;
 
 /// Per-locale map of key hashes to parsed message nodes.
-pub type TranslationsMap = HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
+/// The outer `StdHashMap` enables rayon parallel iteration over locales.
+pub type TranslationsMap = StdHashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>;
 /// Per-locale namespace → hashed nodes (modular bundle mode).
+/// The outer `StdHashMap` enables rayon parallel iteration over locales and namespaces.
 pub type ModularTranslationsMap =
-    HashMap<String, HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>>;
+    StdHashMap<String, HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>>;
 
 /// Bundle output strategy for `compile_translations`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -61,15 +67,30 @@ impl Default for CompileOptions {
 /// (e.g. `menu.items` -> `["Home","Settings"]`). Arrays of objects require
 /// semantic keys inside each element; numeric index flattening is not supported.
 pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, String>) {
+    flatten_value_cb(prefix, value, &mut |k, v| {
+        map.insert(k.to_string(), v.to_string());
+    });
+}
+
+/// Like flatten_value, but invokes `on_pair` for each (key, value) leaf instead
+/// of inserting into a map. The key `&str` is only valid for the duration of
+/// the callback (it points into a reused prefix buffer).
+pub fn flatten_value_cb<F: FnMut(&str, &str)>(prefix: String, value: &Value, on_pair: &mut F) {
+    let mut buf = prefix;
+    flatten_value_buf(&mut buf, value, on_pair);
+}
+
+fn flatten_value_buf<F: FnMut(&str, &str)>(buf: &mut String, value: &Value, on_pair: &mut F) {
     match value {
         Value::Object(obj) => {
             for (k, v) in obj {
-                let new_prefix = if prefix.is_empty() {
-                    k.clone()
-                } else {
-                    format!("{}.{}", prefix, k)
-                };
-                flatten_value(new_prefix, v, map);
+                let saved_len = buf.len();
+                if !buf.is_empty() {
+                    buf.push('.');
+                }
+                buf.push_str(k);
+                flatten_value_buf(buf, v, on_pair);
+                buf.truncate(saved_len);
             }
         }
         Value::Array(arr) => {
@@ -79,36 +100,29 @@ pub fn flatten_value(prefix: String, value: &Value, map: &mut HashMap<String, St
                     Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null
                 )
             }) {
-                if let Ok(literal) = serde_json::to_string(arr) {
-                    map.insert(prefix, literal);
-                }
+                let json_str = serde_json::to_string(value)
+                    .expect("array of primitives is always JSON-serializable");
+                on_pair(buf, &json_str);
             } else {
                 for v in arr {
                     if let Value::Object(obj) = v {
                         for (k, inner) in obj {
-                            let new_prefix = if prefix.is_empty() {
-                                k.clone()
-                            } else {
-                                format!("{}.{}", prefix, k)
-                            };
-                            flatten_value(new_prefix, inner, map);
+                            let saved_len = buf.len();
+                            if !buf.is_empty() {
+                                buf.push('.');
+                            }
+                            buf.push_str(k);
+                            flatten_value_buf(buf, inner, on_pair);
+                            buf.truncate(saved_len);
                         }
                     }
                 }
             }
         }
-        Value::String(s) => {
-            map.insert(prefix, s.clone());
-        }
-        Value::Number(n) => {
-            map.insert(prefix, n.to_string());
-        }
-        Value::Bool(b) => {
-            map.insert(prefix, b.to_string());
-        }
-        Value::Null => {
-            map.insert(prefix, String::new());
-        }
+        Value::String(s) => on_pair(buf, s),
+        Value::Number(n) => on_pair(buf, &n.to_string()),
+        Value::Bool(b) => on_pair(buf, if *b { "true" } else { "false" }),
+        Value::Null => on_pair(buf, ""),
     }
 }
 
@@ -184,10 +198,10 @@ fn resolve_single(
     for node in nodes {
         match node {
             MessageNode::KeyRef(ref_key) => {
-                if !resolving.contains(&ref_key) {
-                    resolve_single(ref_key.clone(), translations, resolving);
+                if !resolving.contains(&*ref_key) {
+                    resolve_single(ref_key.to_string(), translations, resolving);
                 }
-                match translations.get(&ref_key) {
+                match translations.get(&*ref_key) {
                     Some(target_nodes)
                         if !target_nodes
                             .iter()
@@ -214,9 +228,15 @@ fn write_signed_pak(
     encrypt: bool,
     compression_level: i32,
 ) -> Result<Vec<u8>, CompileError> {
-    let compressed_bytes = zstd::encode_all(&binary_bytes[..], compression_level)
-        .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
-    let unsigned = build_unsigned(&compressed_bytes, parent);
+    use std::io::Write;
+    let mut compressed = Vec::with_capacity(binary_bytes.len() / 2);
+    {
+        let mut encoder = zstd::stream::write::Encoder::new(&mut compressed, compression_level)
+            .map_err(|e| CompileError::Io(std::io::Error::other(e)))?;
+        encoder.write_all(&binary_bytes).map_err(CompileError::Io)?;
+        encoder.finish().map_err(CompileError::Io)?;
+    }
+    let unsigned = build_unsigned(&compressed, parent);
     let signature = signing::sign(&unsigned)?;
     let signed = seal(&unsigned, &signature);
     if encrypt {
@@ -266,49 +286,68 @@ fn compile_monolith(
     out_path: &Path,
     options: &CompileOptions,
 ) -> Result<(), CompileError> {
-    let compiled = compile_pipeline(src_path)?;
     #[cfg(feature = "debug-keys")]
-    let key_pairs = compile_key_pairs(src_path).ok();
+    let (compiled, all_key_names) = compile_pipeline_inner(src_path, options.embed_debug_keys)?;
+    #[cfg(not(feature = "debug-keys"))]
+    let compiled = compile_pipeline(src_path)?;
 
-    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
-    sorted_locales.sort();
-    for locale in sorted_locales {
-        let nodes = &compiled[locale];
-        let parent = l10n4x_core::locale_parent(locale);
-        let to_write: HashMap<u64, Vec<icu_parser::MessageNode>> =
-            match parent.and_then(|p| compiled.get(p)) {
-                Some(parent_map) => nodes
-                    .iter()
-                    .filter(|(hash, v)| parent_map.get(hash) != Some(v))
-                    .map(|(k, v)| (*k, v.clone()))
-                    .collect(),
-                None => nodes.clone(),
+    let compile_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+    let encryption = options.encrypt;
+    let compression = options.compression_level;
+    #[cfg(feature = "debug-keys")]
+    let embed_debug_keys = options.embed_debug_keys;
+
+    compiled.par_iter().for_each(|(locale, nodes)| {
+        if let Err(e) = (|| -> Result<(), CompileError> {
+            let parent = l10n4x_core::locale_parent(locale);
+            // Borrow the AST nodes instead of deep-cloning them; the map only lives
+            // until serialization below.
+            let to_write: HashMap<u64, &[icu_parser::MessageNode]> =
+                match parent.and_then(|p| compiled.get(p)) {
+                    Some(parent_map) => nodes
+                        .iter()
+                        .filter(|(hash, v)| parent_map.get(hash) != Some(v))
+                        .map(|(k, v)| (*k, v.as_slice()))
+                        .collect(),
+                    None => nodes.iter().map(|(k, v)| (*k, v.as_slice())).collect(),
+                };
+            let effective_parent = parent.filter(|p| compiled.contains_key(*p));
+
+            #[cfg(feature = "debug-keys")]
+            let key_names = if embed_debug_keys {
+                Some(
+                    all_key_names
+                        .iter()
+                        .filter(|(hash, _)| to_write.contains_key(hash))
+                        .map(|(hash, name)| (*hash, name.clone()))
+                        .collect::<HashMap<u64, String>>(),
+                )
+            } else {
+                None
             };
-        let effective_parent = parent.filter(|p| compiled.contains_key(*p));
+            #[cfg(not(feature = "debug-keys"))]
+            let key_names: Option<HashMap<u64, String>> = None;
 
-        #[cfg(feature = "debug-keys")]
-        let key_names = if options.embed_debug_keys {
-            key_pairs.as_ref().map(|pairs| {
-                pairs
-                    .iter()
-                    .filter(|(hash, _)| to_write.contains_key(hash))
-                    .map(|(hash, name)| (*hash, name.clone()))
-                    .collect::<HashMap<u64, String>>()
-            })
-        } else {
-            None
-        };
-        #[cfg(not(feature = "debug-keys"))]
-        let key_names: Option<HashMap<u64, String>> = None;
+            let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
+            let pak_bytes =
+                write_signed_pak(binary_bytes, effective_parent, encryption, compression)?;
+            fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+            Ok(())
+        })() {
+            compile_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(e);
+        }
+    });
 
-        let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
-        let pak_bytes = write_signed_pak(
-            binary_bytes,
-            effective_parent,
-            options.encrypt,
-            options.compression_level,
-        )?;
-        fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+    if let Some(first) = compile_errors
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+        .into_iter()
+        .next()
+    {
+        return Err(first);
     }
     Ok(())
 }
@@ -318,50 +357,76 @@ fn compile_modular(
     out_path: &Path,
     options: &CompileOptions,
 ) -> Result<(), CompileError> {
+    #[cfg(feature = "debug-keys")]
+    let (compiled, all_key_names) =
+        compile_pipeline_modular_inner(src_path, options.embed_debug_keys)?;
+    #[cfg(not(feature = "debug-keys"))]
     let compiled = compile_pipeline_modular(src_path)?;
-    let mut manifest_locales: HashMap<String, Vec<String>> = HashMap::new();
+    let manifest_locales: Mutex<HashMap<String, Vec<String>>> = Mutex::new(HashMap::new());
+    let compile_errors: Mutex<Vec<CompileError>> = Mutex::new(Vec::new());
+    let encryption = options.encrypt;
+    let compression = options.compression_level;
+    #[cfg(feature = "debug-keys")]
+    let embed_debug_keys = options.embed_debug_keys;
 
-    let mut sorted_locales: Vec<&String> = compiled.keys().collect();
-    sorted_locales.sort();
-    for locale in sorted_locales {
-        let namespaces = &compiled[locale];
-        let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
-        sorted_ns.sort();
-        let mut ns_list = Vec::new();
-        let locale_dir = out_path.join(locale.as_str());
-        fs::create_dir_all(&locale_dir)?;
+    compiled.par_iter().for_each(|(locale, namespaces)| {
+        if let Err(e) = (|| -> Result<(), CompileError> {
+            let mut sorted_ns: Vec<&String> = namespaces.keys().collect();
+            sorted_ns.sort();
+            let mut ns_list = Vec::new();
+            let locale_dir = out_path.join(locale.as_str());
+            fs::create_dir_all(&locale_dir)?;
 
-        for namespace in sorted_ns {
-            ns_list.push(namespace.clone());
-            let nodes = &namespaces[namespace];
-            #[cfg(feature = "debug-keys")]
-            let key_names = if options.embed_debug_keys {
-                let file_path = src_path.join(locale).join(format!("{namespace}.json"));
-                compile_namespace_key_names(&file_path, namespace)
-                    .ok()
-                    .map(|all| {
-                        all.into_iter()
-                            .filter(|(hash, _)| nodes.contains_key(hash))
-                            .collect::<HashMap<u64, String>>()
-                    })
-            } else {
-                None
-            };
-            #[cfg(not(feature = "debug-keys"))]
-            let key_names: Option<HashMap<u64, String>> = None;
+            for namespace in sorted_ns {
+                ns_list.push(namespace.clone());
+                let nodes = &namespaces[namespace];
+                #[cfg(feature = "debug-keys")]
+                let key_names = if embed_debug_keys {
+                    all_key_names
+                        .get(locale.as_str())
+                        .and_then(|by_ns| by_ns.get(namespace.as_str()))
+                        .map(|all| {
+                            all.iter()
+                                .filter(|(hash, _)| nodes.contains_key(*hash))
+                                .map(|(hash, name)| (*hash, name.clone()))
+                                .collect::<HashMap<u64, String>>()
+                        })
+                } else {
+                    None
+                };
+                #[cfg(not(feature = "debug-keys"))]
+                let key_names: Option<HashMap<u64, String>> = None;
 
-            let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
-            let pak_bytes = write_signed_pak(
-                binary_bytes,
-                None,
-                options.encrypt,
-                options.compression_level,
-            )?;
-            fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+                let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
+                let pak_bytes = write_signed_pak(binary_bytes, None, encryption, compression)?;
+                fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+            }
+            ns_list.sort();
+            manifest_locales
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .insert(locale.clone(), ns_list);
+            Ok(())
+        })() {
+            compile_errors
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .push(e);
         }
-        ns_list.sort();
-        manifest_locales.insert(locale.clone(), ns_list);
+    });
+
+    if let Some(first) = compile_errors
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner())
+        .into_iter()
+        .next()
+    {
+        return Err(first);
     }
+
+    let manifest_locales = manifest_locales
+        .into_inner()
+        .unwrap_or_else(|p| p.into_inner());
 
     let manifest = serde_json::json!({
         "version": 1,
@@ -398,6 +463,7 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
         .to_string();
 
     let mut result: HashMap<String, Vec<String>> = HashMap::new();
+    let mut errors: Vec<CompileError> = Vec::new();
 
     for file_entry in std::fs::read_dir(&lang_path)? {
         let file_entry = file_entry?;
@@ -411,26 +477,34 @@ pub fn extract_params_map(src_path: &Path) -> Result<HashMap<String, Vec<String>
             .and_then(|s| s.to_str())
             .ok_or(CompileError::InvalidFileName)?
             .to_string();
-        let content = std::fs::read_to_string(&file_path)?;
-        let parsed_json: serde_json::Value = serde_json::from_str(&content)?;
-        let mut flat: HashMap<String, String> = HashMap::new();
-        flatten_value(file_name, &parsed_json, &mut flat);
+        let file = std::fs::File::open(&file_path)?;
+        let reader = std::io::BufReader::new(file);
+        let parsed_json: serde_json::Value = serde_json::from_reader(reader)?;
 
-        for (key, template) in flat {
-            let parser = MessageParser::new(&template);
-            let nodes = parser
-                .parse()
-                .map_err(|message| CompileError::TemplateParseError {
-                    locale: locale.clone(),
-                    key: key.clone(),
-                    message,
-                })?;
-            let mut params = icu_parser::extract_params(&nodes);
-            params.sort();
-            if !params.is_empty() {
-                result.insert(key, params);
+        flatten_value_cb(file_name, &parsed_json, &mut |key, template| {
+            if !errors.is_empty() {
+                return; // short-circuit remaining pairs after first parse error
             }
-        }
+            let parser = MessageParser::new(template);
+            match parser.parse() {
+                Ok(nodes) => {
+                    let mut params = icu_parser::extract_params(&nodes);
+                    params.sort();
+                    if !params.is_empty() {
+                        result.insert(key.to_string(), params);
+                    }
+                }
+                Err(message) => errors.push(CompileError::TemplateParseError {
+                    locale: locale.clone(),
+                    key: key.to_string(),
+                    message,
+                }),
+            }
+        });
+    }
+
+    if let Some(first) = errors.into_iter().next() {
+        return Err(first);
     }
     Ok(result)
 }
@@ -444,64 +518,117 @@ pub use l10n4x_core::binary_format::fnv1a_64;
 /// This is the core pipeline shared by `compile_translations` and
 /// `compile_translations_to_bytes`.
 fn compile_pipeline(src_path: &Path) -> Result<TranslationsMap, CompileError> {
+    Ok(compile_pipeline_inner(src_path, false)?.0)
+}
+
+/// Like `compile_pipeline`, but when `collect_key_names` is true it also returns
+/// the global hash → original key name map, gathered from the key strings the
+/// pipeline already holds before hashing (avoids a second read+flatten pass of
+/// every JSON file for debug-keys embedding).
+fn compile_pipeline_inner(
+    src_path: &Path,
+    collect_key_names: bool,
+) -> Result<(TranslationsMap, HashMap<u64, String>), CompileError> {
     if !src_path.is_dir() {
         return Err(CompileError::SourceNotADirectory);
     }
 
-    let lang_dirs = fs::read_dir(src_path)?;
-    let mut all_translations: TranslationsMap = HashMap::new();
+    let lang_paths: Vec<std::path::PathBuf> = fs::read_dir(src_path)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
 
-    for lang_entry in lang_dirs {
-        let lang_entry = lang_entry?;
-        let lang_path = lang_entry.path();
-        if !lang_path.is_dir() {
-            continue;
+    let compiled = lang_paths
+        .par_iter()
+        .map(|lang_path| compile_locale_dir(lang_path, collect_key_names))
+        .collect::<Result<Vec<_>, CompileError>>()?;
+
+    let mut all_translations: TranslationsMap = StdHashMap::new();
+    let mut all_key_names: HashMap<u64, String> = HashMap::new();
+    for (lang, hashed, key_names) in compiled.into_iter().flatten() {
+        if let Some(names) = key_names {
+            all_key_names.extend(names);
         }
-
-        let lang = lang_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or(CompileError::InvalidDirectoryName)?
-            .to_string();
-
-        let mut raw_flat_translations = HashMap::new();
-        let mut file_count = 0;
-
-        let files = fs::read_dir(&lang_path)?;
-
-        for file_entry in files {
-            let file_entry = file_entry?;
-            let file_path = file_entry.path();
-            if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
-                let file_name = file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or(CompileError::InvalidFileName)?
-                    .to_string();
-
-                let content = fs::read_to_string(&file_path)?;
-                let parsed_json: Value = serde_json::from_str(&content)?;
-
-                flatten_value(file_name, &parsed_json, &mut raw_flat_translations);
-                file_count += 1;
-            }
-        }
-
-        if file_count == 0 {
-            continue;
-        }
-
-        let mut parsed_translations = parse_flat_translations(&lang, raw_flat_translations)?;
-        resolve_key_refs(&mut parsed_translations);
-
-        let hashed: HashMap<u64, Vec<icu_parser::MessageNode>> = parsed_translations
-            .into_iter()
-            .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
-            .collect();
         all_translations.insert(lang, hashed);
     }
+    Ok((all_translations, all_key_names))
+}
 
-    Ok(all_translations)
+/// Compiles a single locale directory (all its JSON files) into hashed AST form.
+/// Returns `Ok(None)` when the directory contains no JSON files.
+type CompiledLocale = (
+    String,
+    HashMap<u64, Vec<icu_parser::MessageNode>>,
+    Option<HashMap<u64, String>>,
+);
+
+fn compile_locale_dir(
+    lang_path: &Path,
+    collect_key_names: bool,
+) -> Result<Option<CompiledLocale>, CompileError> {
+    let lang = lang_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or(CompileError::InvalidDirectoryName)?
+        .to_string();
+
+    let entries: Vec<fs::DirEntry> = fs::read_dir(lang_path)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|e| {
+            let p = e.path();
+            p.is_file() && p.extension().is_some_and(|ext| ext == "json")
+        })
+        .collect();
+    if entries.is_empty() {
+        return Ok(None);
+    }
+    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
+        HashMap::with_capacity(entries.len() * 5);
+    let mut first_error: Option<CompileError> = None;
+
+    for file_entry in entries {
+        let file_path = file_entry.path();
+        let file_name = file_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .ok_or(CompileError::InvalidFileName)?
+            .to_string();
+
+        let file = fs::File::open(&file_path)?;
+        let reader = BufReader::new(file);
+        let parsed_json: Value = serde_json::from_reader(reader)?;
+
+        flatten_value_cb(file_name, &parsed_json, &mut |key, template| {
+            if first_error.is_some() {
+                return;
+            }
+            if let Err(e) =
+                parse_flat_translations_inline(&lang, key, template, &mut parsed_translations)
+            {
+                first_error = Some(e);
+            }
+        });
+    }
+
+    if let Some(e) = first_error {
+        return Err(e);
+    }
+    resolve_key_refs(&mut parsed_translations);
+
+    let key_names = collect_key_names.then(|| {
+        parsed_translations
+            .keys()
+            .map(|k| (fnv1a_64(k.as_bytes()), k.clone()))
+            .collect::<HashMap<u64, String>>()
+    });
+    let hashed: HashMap<u64, Vec<icu_parser::MessageNode>> = parsed_translations
+        .into_iter()
+        .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
+        .collect();
+    Ok(Some((lang, hashed, key_names)))
 }
 
 fn validate_template_nodes(
@@ -518,118 +645,172 @@ fn validate_template_nodes(
     })
 }
 
-fn parse_flat_translations(
+fn parse_flat_translations_inline(
     locale: &str,
-    raw_flat: HashMap<String, String>,
-) -> Result<HashMap<String, Vec<icu_parser::MessageNode>>, CompileError> {
-    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> = HashMap::new();
-    for (k, template) in raw_flat {
-        if let Some(interval_cases) = icu_parser::parse_interval_plural(&template) {
-            let nodes = vec![icu_parser::MessageNode::Plural {
-                var: "count".to_string(),
-                ordinal: false,
-                cases: interval_cases,
-            }];
-            parsed_translations.insert(k, nodes);
-        } else {
-            let parser = MessageParser::new(&template);
-            let nodes = parser
-                .parse()
-                .map_err(|message| CompileError::TemplateParseError {
-                    locale: locale.to_string(),
-                    key: k.clone(),
-                    message,
-                })?;
-            validate_template_nodes(locale, &k, &nodes)?;
-            parsed_translations.insert(k, nodes);
-        }
+    key: &str,
+    template: &str,
+    parsed_translations: &mut HashMap<String, Vec<icu_parser::MessageNode>>,
+) -> Result<(), CompileError> {
+    if let Some(interval_cases) =
+        icu_parser::parse_interval_plural(template).map_err(|message| {
+            CompileError::TemplateParseError {
+                locale: locale.to_string(),
+                key: key.to_string(),
+                message,
+            }
+        })?
+    {
+        let nodes = vec![icu_parser::MessageNode::Plural {
+            var: "count".into(),
+            ordinal: false,
+            cases: interval_cases,
+        }];
+        parsed_translations.insert(key.to_string(), nodes);
+    } else {
+        let parser = MessageParser::new(template);
+        let nodes = parser
+            .parse()
+            .map_err(|message| CompileError::TemplateParseError {
+                locale: locale.to_string(),
+                key: key.to_string(),
+                message,
+            })?;
+        validate_template_nodes(locale, key, &nodes)?;
+        parsed_translations.insert(key.to_string(), nodes);
     }
-    Ok(parsed_translations)
+    Ok(())
 }
+
+type CompiledNamespace = (
+    HashMap<u64, Vec<icu_parser::MessageNode>>,
+    Option<HashMap<u64, String>>,
+);
 
 fn compile_namespace_file(
     locale: &str,
     file_path: &Path,
     namespace: &str,
-) -> Result<HashMap<u64, Vec<icu_parser::MessageNode>>, CompileError> {
-    let content = fs::read_to_string(file_path)?;
-    let parsed_json: Value = serde_json::from_str(&content)?;
-    let mut raw_flat_translations = HashMap::new();
-    flatten_value(
-        namespace.to_string(),
-        &parsed_json,
-        &mut raw_flat_translations,
-    );
-    let mut parsed_translations = parse_flat_translations(locale, raw_flat_translations)?;
+    collect_key_names: bool,
+) -> Result<CompiledNamespace, CompileError> {
+    let file = fs::File::open(file_path)?;
+    let reader = BufReader::new(file);
+    let parsed_json: Value = serde_json::from_reader(reader)?;
+    let mut parsed_translations: HashMap<String, Vec<icu_parser::MessageNode>> =
+        HashMap::with_capacity(50);
+    let mut first_error: Option<CompileError> = None;
+
+    flatten_value_cb(namespace.to_string(), &parsed_json, &mut |key, template| {
+        if first_error.is_some() {
+            return;
+        }
+        if let Err(e) =
+            parse_flat_translations_inline(locale, key, template, &mut parsed_translations)
+        {
+            first_error = Some(e);
+        }
+    });
+
+    if let Some(e) = first_error {
+        return Err(e);
+    }
+
     resolve_key_refs(&mut parsed_translations);
-    Ok(parsed_translations
+    let key_names = collect_key_names.then(|| {
+        parsed_translations
+            .keys()
+            .map(|k| (fnv1a_64(k.as_bytes()), k.clone()))
+            .collect::<HashMap<u64, String>>()
+    });
+    let hashed = parsed_translations
         .into_iter()
         .map(|(k, v)| (fnv1a_64(k.as_bytes()), v))
-        .collect())
+        .collect();
+    Ok((hashed, key_names))
 }
 
-#[cfg(feature = "debug-keys")]
-fn compile_namespace_key_names(
-    file_path: &Path,
-    namespace: &str,
-) -> Result<HashMap<u64, String>, CompileError> {
-    let content = fs::read_to_string(file_path)?;
-    let parsed_json: Value = serde_json::from_str(&content)?;
-    let mut raw_flat = HashMap::new();
-    flatten_value(namespace.to_string(), &parsed_json, &mut raw_flat);
-    Ok(raw_flat
-        .into_keys()
-        .map(|k| (fnv1a_64(k.as_bytes()), k))
-        .collect())
-}
+/// Per-locale, per-namespace hash → original key name maps (debug-keys embedding).
+type ModularKeyNames = StdHashMap<String, HashMap<String, HashMap<u64, String>>>;
 
+#[cfg(not(feature = "debug-keys"))]
 fn compile_pipeline_modular(src_path: &Path) -> Result<ModularTranslationsMap, CompileError> {
+    Ok(compile_pipeline_modular_inner(src_path, false)?.0)
+}
+
+fn compile_pipeline_modular_inner(
+    src_path: &Path,
+    collect_key_names: bool,
+) -> Result<(ModularTranslationsMap, ModularKeyNames), CompileError> {
     if !src_path.is_dir() {
         return Err(CompileError::SourceNotADirectory);
     }
 
-    let mut all_translations: ModularTranslationsMap = HashMap::new();
+    let lang_paths: Vec<std::path::PathBuf> = fs::read_dir(src_path)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir())
+        .collect();
 
-    for lang_entry in fs::read_dir(src_path)? {
-        let lang_entry = lang_entry?;
-        let lang_path = lang_entry.path();
-        if !lang_path.is_dir() {
-            continue;
+    let compiled = lang_paths
+        .par_iter()
+        .map(|lang_path| compile_locale_namespaces(lang_path, collect_key_names))
+        .collect::<Result<Vec<_>, CompileError>>()?;
+
+    let mut all_translations: ModularTranslationsMap = StdHashMap::new();
+    let mut all_key_names: ModularKeyNames = StdHashMap::new();
+    for (lang, namespaces, key_names) in compiled.into_iter().flatten() {
+        if !key_names.is_empty() {
+            all_key_names.insert(lang.clone(), key_names);
         }
-
-        let lang = lang_path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .ok_or(CompileError::InvalidDirectoryName)?
-            .to_string();
-
-        let mut namespaces: HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>> =
-            HashMap::new();
-        let mut file_count = 0;
-
-        for file_entry in fs::read_dir(&lang_path)? {
-            let file_entry = file_entry?;
-            let file_path = file_entry.path();
-            if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
-                let namespace = file_path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .ok_or(CompileError::InvalidFileName)?
-                    .to_string();
-                let hashed = compile_namespace_file(&lang, &file_path, &namespace)?;
-                namespaces.insert(namespace, hashed);
-                file_count += 1;
-            }
-        }
-
-        if file_count == 0 {
-            continue;
-        }
-
         all_translations.insert(lang, namespaces);
     }
+    Ok((all_translations, all_key_names))
+}
 
-    Ok(all_translations)
+type CompiledLocaleNamespaces = (
+    String,
+    HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>>,
+    HashMap<String, HashMap<u64, String>>,
+);
+
+/// Compiles a single locale directory into per-namespace hashed ASTs.
+/// Returns `Ok(None)` when the directory contains no JSON files.
+fn compile_locale_namespaces(
+    lang_path: &Path,
+    collect_key_names: bool,
+) -> Result<Option<CompiledLocaleNamespaces>, CompileError> {
+    let lang = lang_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or(CompileError::InvalidDirectoryName)?
+        .to_string();
+
+    let mut namespaces: HashMap<String, HashMap<u64, Vec<icu_parser::MessageNode>>> =
+        HashMap::new();
+    let mut key_names_by_ns: HashMap<String, HashMap<u64, String>> = HashMap::new();
+
+    for file_entry in fs::read_dir(lang_path)? {
+        let file_entry = file_entry?;
+        let file_path = file_entry.path();
+        if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "json") {
+            let namespace = file_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .ok_or(CompileError::InvalidFileName)?
+                .to_string();
+            let (hashed, key_names) =
+                compile_namespace_file(&lang, &file_path, &namespace, collect_key_names)?;
+            if let Some(names) = key_names {
+                key_names_by_ns.insert(namespace.clone(), names);
+            }
+            namespaces.insert(namespace, hashed);
+        }
+    }
+
+    if namespaces.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some((lang, namespaces, key_names_by_ns)))
 }
 
 /// Returns sorted (hash, original_key_name) for all keys across all locales.
@@ -653,14 +834,14 @@ pub fn compile_key_pairs(src_path: &Path) -> Result<Vec<(u64, String)>, CompileE
                     .and_then(|s| s.to_str())
                     .ok_or(CompileError::InvalidFileName)?
                     .to_string();
-                let content = fs::read_to_string(&file_path)?;
-                let parsed: Value = serde_json::from_str(&content)?;
-                let mut raw_flat = HashMap::new();
-                flatten_value(file_name, &parsed, &mut raw_flat);
-                for k in raw_flat.keys() {
-                    let hash = fnv1a_64(k.as_bytes());
-                    seen.entry(k.clone()).or_insert(hash);
-                }
+                let file = fs::File::open(&file_path)?;
+                let reader = BufReader::new(file);
+                let parsed: Value = serde_json::from_reader(reader)?;
+                flatten_value_cb(file_name, &parsed, &mut |key, _template| {
+                    if !seen.contains_key(key) {
+                        seen.insert(key.to_string(), fnv1a_64(key.as_bytes()));
+                    }
+                });
             }
         }
     }
@@ -721,7 +902,7 @@ mod key_ref_tests {
 
         let nodes = translations.get("button.save").unwrap();
         assert_eq!(nodes.len(), 1);
-        assert!(matches!(&nodes[0], MessageNode::Text(t) if t == "OK"));
+        assert!(matches!(&nodes[0], MessageNode::Text(t) if &t[..] == "OK"));
     }
 
     #[test]
@@ -766,6 +947,11 @@ mod key_ref_tests {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    /// Serializes tests that touch the process-global translation store
+    /// (`clear_translations` + `translate`). Without it, parallel test
+    /// execution races on the store and the e2e tests read each other's data.
+    static STORE_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn flatten_primitive_array_as_literal() {
@@ -901,7 +1087,7 @@ mod tests {
         );
         resolve_key_refs(&mut translations);
         let nodes = translations.get("source").unwrap();
-        assert!(matches!(&nodes[0], icu_parser::MessageNode::Text(t) if t == "hello"));
+        assert!(matches!(&nodes[0], icu_parser::MessageNode::Text(t) if &t[..] == "hello"));
     }
 
     #[test]
@@ -1025,6 +1211,7 @@ mod tests {
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
+        let _store_guard = STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let tmp = std::env::temp_dir().join("l10n4x_test_int_e2e");
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");
@@ -1068,6 +1255,7 @@ mod tests {
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
+        let _store_guard = STORE_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let tmp = std::env::temp_dir().join("l10n4x_test_int_large");
         let _ = fs::remove_dir_all(&tmp);
         let en_dir = tmp.join("en");

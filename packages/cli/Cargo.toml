@@ -40,6 +40,7 @@ regex-lite = "0.1"
 glob = { version = "0.3", default-features = false }
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
 sha2 = "0.10"
+ahash = { version = "0.8", default-features = false, features = ["std"] }
 
 [dev-dependencies]
 tempfile = "3"
