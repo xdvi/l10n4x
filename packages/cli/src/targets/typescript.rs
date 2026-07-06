@@ -56,7 +56,6 @@ pub fn generate(
 mod tests {
     use super::*;
     use crate::targets::GenerateContext;
-    use std::collections::HashMap;
 
     fn test_ctx() -> GenerateContext<'static> {
         GenerateContext {
@@ -74,7 +73,7 @@ mod tests {
     fn generates_thin_keys_only() {
         let dir = tempfile::tempdir().unwrap();
         let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "welcome.title".to_string())];
-        let params = HashMap::new();
+        let params = AHashMap::new();
         generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();
         assert!(content.contains("WelcomeTitle: 0xabcdef0123456789"));
@@ -87,7 +86,7 @@ mod tests {
     fn generates_param_types() {
         let dir = tempfile::tempdir().unwrap();
         let key_pairs: Vec<(u64, String)> = vec![(0xabcdef0123456789, "greeting".to_string())];
-        let mut params = HashMap::new();
+        let mut params = AHashMap::new();
         params.insert("greeting".to_string(), vec!["name".to_string()]);
         generate(dir.path(), &key_pairs, &Value::Null, &test_ctx(), &params).unwrap();
         let content = std::fs::read_to_string(dir.path().join("generated.ts")).unwrap();

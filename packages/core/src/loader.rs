@@ -446,7 +446,6 @@ mod tests {
     use super::*;
     use crate::binary_format::{fnv1a_64, merge_l10n_buffers, pack_l10n, RUNTIME_VERSION};
     use crate::store::{clear_translations, locale_loaded, namespace_loaded};
-    use alloc::collections::BTreeMap;
     use alloc::vec::Vec;
 
     #[cfg(feature = "std")]
@@ -458,8 +457,7 @@ mod tests {
     }
 
     fn make_l10n_with_key(key: &str, val: &[u8]) -> Vec<u8> {
-        let mut entries = BTreeMap::new();
-        entries.insert(fnv1a_64(key.as_bytes()), val.to_vec());
+        let entries: Vec<(u64, Vec<u8>)> = vec![(fnv1a_64(key.as_bytes()), val.to_vec())];
         pack_l10n(
             &entries,
             RUNTIME_VERSION,
@@ -476,7 +474,7 @@ mod tests {
         assert!(load_raw_bytes(
             "test",
             pack_l10n(
-                &BTreeMap::new(),
+                &[],
                 RUNTIME_VERSION,
                 crate::locale_data::LOCALE_DATA_VERSION,
                 None,

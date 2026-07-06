@@ -261,7 +261,7 @@ fn serialize_decl_expr<W: Write>(node: &MessageNode, w: &mut W) -> io::Result<()
             literal_operand,
             format,
         } => (
-            var.as_str(),
+            &**var,
             literal_operand.as_deref().unwrap_or(""),
             format.formatter.as_str(),
             format
@@ -271,9 +271,9 @@ fn serialize_decl_expr<W: Write>(node: &MessageNode, w: &mut W) -> io::Result<()
                 .collect::<Vec<_>>()
                 .join(","),
         ),
-        MessageNode::Variable(name) => (name.as_str(), "", "", String::new()),
+        MessageNode::Variable(name) => (&**name, "", "", String::new()),
         MessageNode::VariableWithDefault { name, default } => {
-            (name.as_str(), default.as_str(), "string", String::new())
+            (&**name, &**default, "string", String::new())
         }
         _ => ("", "", "", String::new()),
     };
@@ -285,31 +285,35 @@ fn serialize_decl_expr<W: Write>(node: &MessageNode, w: &mut W) -> io::Result<()
     Ok(())
 }
 
-pub fn write_binary_format(
-    translations: &AHashMap<u64, Vec<MessageNode>>,
+pub fn write_binary_format<V: AsRef<[MessageNode]>>(
+    translations: &AHashMap<u64, V>,
 ) -> Vec<u8> {
     write_binary_format_with_keys(translations, None)
 }
 
-pub fn write_binary_format_with_keys(
-    translations: &AHashMap<u64, Vec<MessageNode>>,
+pub fn write_binary_format_with_keys<V: AsRef<[MessageNode]>>(
+    translations: &AHashMap<u64, V>,
     key_names: Option<&AHashMap<u64, String>>,
 ) -> Vec<u8> {
-    use std::collections::BTreeMap;
-    let mut entries = BTreeMap::new();
+    // Build a contiguous, sorted entry list instead of a BTreeMap: a single allocation
+    // versus one-per-node, and sort_unstable_by_key on u64 keys is cheaper than tree rebalancing.
+    let mut entries: Vec<(u64, Vec<u8>)> = Vec::with_capacity(translations.len());
     for (&hash, nodes) in translations {
-        entries.insert(hash, serialize_message(nodes));
+        entries.push((hash, serialize_message(nodes.as_ref())));
     }
+    entries.sort_unstable_by_key(|(hash, _)| *hash);
+
     #[cfg(feature = "debug-keys")]
     let debug = key_names.map(|m| {
-        let mut out = BTreeMap::new();
+        let mut out: Vec<(u64, String)> = Vec::with_capacity(m.len());
         for (&hash, name) in m {
-            out.insert(hash, name.clone());
+            out.push((hash, name.clone()));
         }
+        out.sort_unstable_by_key(|(hash, _)| *hash);
         out
     });
     #[cfg(feature = "debug-keys")]
-    let debug_ref = debug.as_ref();
+    let debug_ref = debug.as_deref();
     #[cfg(not(feature = "debug-keys"))]
     let _ = key_names;
     l10n4x_core::binary_format::pack_l10n(
@@ -342,7 +346,7 @@ mod tests {
 
     #[test]
     fn test_serialize_text() {
-        let nodes = vec![MessageNode::Text("Hello World".to_string())];
+        let nodes = vec![MessageNode::Text("Hello World".into())];
         let bytes = serialize_nodes_vec(&nodes);
         // Single text node emits raw bytes with no opcode prefix
         assert_eq!(&bytes, b"Hello World");
@@ -350,7 +354,7 @@ mod tests {
 
     #[test]
     fn test_serialize_variable() {
-        let nodes = vec![MessageNode::Variable("name".to_string())];
+        let nodes = vec![MessageNode::Variable("name".into())];
         let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0B);
         let len = u32::from_be_bytes(bytes[1..5].try_into().unwrap()) as usize;
@@ -361,7 +365,7 @@ mod tests {
 
     #[test]
     fn test_serialize_raw_variable() {
-        let nodes = vec![MessageNode::RawVariable("html".to_string())];
+        let nodes = vec![MessageNode::RawVariable("html".into())];
         let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0B);
         assert_eq!(bytes[9], 0x01); // raw flag
@@ -370,16 +374,16 @@ mod tests {
     #[test]
     fn test_serialize_plural_cardinal() {
         let nodes = vec![MessageNode::Plural {
-            var: "count".to_string(),
+            var: "count".into(),
             ordinal: false,
             cases: vec![
                 (
                     PluralCaseKey::One,
-                    vec![MessageNode::Text("item".to_string())],
+                    vec![MessageNode::Text("item".into())],
                 ),
                 (
                     PluralCaseKey::Other,
-                    vec![MessageNode::Text("items".to_string())],
+                    vec![MessageNode::Text("items".into())],
                 ),
             ],
         }];
@@ -397,16 +401,16 @@ mod tests {
     #[test]
     fn test_serialize_plural_range() {
         let nodes = vec![MessageNode::Plural {
-            var: "count".to_string(),
+            var: "count".into(),
             ordinal: false,
             cases: vec![
                 (
                     PluralCaseKey::Range(4, 500),
-                    vec![MessageNode::Text("many".to_string())],
+                    vec![MessageNode::Text("many".into())],
                 ),
                 (
                     PluralCaseKey::Range(7, i32::MAX),
-                    vec![MessageNode::Text("lots".to_string())],
+                    vec![MessageNode::Text("lots".into())],
                 ),
             ],
         }];
@@ -430,16 +434,16 @@ mod tests {
     #[test]
     fn test_serialize_plural_ordinal() {
         let nodes = vec![MessageNode::Plural {
-            var: "n".to_string(),
+            var: "n".into(),
             ordinal: true,
             cases: vec![
                 (
                     PluralCaseKey::One,
-                    vec![MessageNode::Text("1st".to_string())],
+                    vec![MessageNode::Text("1st".into())],
                 ),
                 (
                     PluralCaseKey::Other,
-                    vec![MessageNode::Text("th".to_string())],
+                    vec![MessageNode::Text("th".into())],
                 ),
             ],
         }];
@@ -450,15 +454,15 @@ mod tests {
     #[test]
     fn test_serialize_select() {
         let nodes = vec![MessageNode::Select {
-            var: "gender".to_string(),
+            var: "gender".into(),
             cases: vec![
                 (
-                    "male".to_string(),
-                    vec![MessageNode::Text("Mr.".to_string())],
+                    "male".into(),
+                    vec![MessageNode::Text("Mr.".into())],
                 ),
                 (
-                    "other".to_string(),
-                    vec![MessageNode::Text("Mx.".to_string())],
+                    "other".into(),
+                    vec![MessageNode::Text("Mx.".into())],
                 ),
             ],
         }];
@@ -472,7 +476,7 @@ mod tests {
     #[test]
     fn test_serialize_number_decimal() {
         let nodes = vec![MessageNode::Number {
-            var: "val".to_string(),
+            var: "val".into(),
             style: NumberStyle::Decimal,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -483,7 +487,7 @@ mod tests {
     #[test]
     fn test_serialize_number_percent() {
         let nodes = vec![MessageNode::Number {
-            var: "val".to_string(),
+            var: "val".into(),
             style: NumberStyle::Percent,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -493,7 +497,7 @@ mod tests {
     #[test]
     fn test_serialize_number_integer() {
         let nodes = vec![MessageNode::Number {
-            var: "val".to_string(),
+            var: "val".into(),
             style: NumberStyle::Integer,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -503,7 +507,7 @@ mod tests {
     #[test]
     fn test_serialize_number_currency() {
         let nodes = vec![MessageNode::Number {
-            var: "amt".to_string(),
+            var: "amt".into(),
             style: NumberStyle::Currency("USD".to_string()),
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -524,7 +528,7 @@ mod tests {
             (DateStyle::DateTime, 0x02),
         ] {
             let nodes = vec![MessageNode::Date {
-                var: "d".to_string(),
+                var: "d".into(),
                 style,
             }];
             let bytes = serialize_nodes_vec(&nodes);
@@ -535,8 +539,8 @@ mod tests {
     #[test]
     fn test_serialize_variable_with_default() {
         let nodes = vec![MessageNode::VariableWithDefault {
-            name: "user".to_string(),
-            default: "Guest".to_string(),
+            name: "user".into(),
+            default: "Guest".into(),
         }];
         let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x0C);
@@ -560,7 +564,7 @@ mod tests {
     #[test]
     fn test_serialize_list_conjunction() {
         let nodes = vec![MessageNode::List {
-            var: "items".to_string(),
+            var: "items".into(),
             style: ListStyle::Conjunction,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -571,7 +575,7 @@ mod tests {
     #[test]
     fn test_serialize_list_disjunction() {
         let nodes = vec![MessageNode::List {
-            var: "items".to_string(),
+            var: "items".into(),
             style: ListStyle::Disjunction,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -581,7 +585,7 @@ mod tests {
     #[test]
     fn test_serialize_list_unit() {
         let nodes = vec![MessageNode::List {
-            var: "items".to_string(),
+            var: "items".into(),
             style: ListStyle::Unit,
         }];
         let bytes = serialize_nodes_vec(&nodes);
@@ -601,7 +605,7 @@ mod tests {
             (RelTimeStyle::Years, 0x07),
         ] {
             let nodes = vec![MessageNode::RelTime {
-                var: "t".to_string(),
+                var: "t".into(),
                 style,
             }];
             let bytes = serialize_nodes_vec(&nodes);
@@ -616,7 +620,7 @@ mod tests {
         opts.insert("suffix".to_string(), ">".to_string());
         let nodes = vec![MessageNode::Custom {
             literal_operand: None,
-            var: "val".to_string(),
+            var: "val".into(),
             format: CustomFormat {
                 formatter: "wrap".to_string(),
                 options: opts,
@@ -633,7 +637,7 @@ mod tests {
 
     #[test]
     fn test_serialize_keyref() {
-        let nodes = vec![MessageNode::KeyRef("other.key".to_string())];
+        let nodes = vec![MessageNode::KeyRef("other.key".into())];
         let bytes = serialize_nodes_vec(&nodes);
         assert_eq!(bytes[0], 0x01); // emitted as text
         let s = String::from_utf8_lossy(&bytes);
@@ -642,7 +646,7 @@ mod tests {
 
     #[test]
     fn test_write_binary_format_empty() {
-        let translations = AHashMap::new();
+        let translations: AHashMap<u64, Vec<MessageNode>> = AHashMap::new();
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
         let version = u32::from_be_bytes(bytes[4..8].try_into().unwrap());
@@ -656,7 +660,7 @@ mod tests {
         let mut translations = AHashMap::new();
         translations.insert(
             fnv1a_64(b"key1"),
-            vec![MessageNode::Text("Hello".to_string())],
+            vec![MessageNode::Text("Hello".into())],
         );
         let bytes = write_binary_format(&translations);
         assert_eq!(&bytes[0..4], b"L10N");
@@ -674,9 +678,9 @@ mod tests {
         let mut translations = AHashMap::new();
         translations.insert(
             fnv1a_64(b"b"),
-            vec![MessageNode::Text("second".to_string())],
+            vec![MessageNode::Text("second".into())],
         );
-        translations.insert(fnv1a_64(b"a"), vec![MessageNode::Text("first".to_string())]);
+        translations.insert(fnv1a_64(b"a"), vec![MessageNode::Text("first".into())]);
         let bytes = write_binary_format(&translations);
         let reader = l10n4x_core::binary_format::BinaryFormatReader::new(&bytes).unwrap();
         // keys should be sorted
@@ -695,9 +699,9 @@ mod tests {
         translations.insert(
             fnv1a_64(b"greeting"),
             vec![
-                MessageNode::Text("Hello ".to_string()),
-                MessageNode::Variable("name".to_string()),
-                MessageNode::Text("!".to_string()),
+                MessageNode::Text("Hello ".into()),
+                MessageNode::Variable("name".into()),
+                MessageNode::Text("!".into()),
             ],
         );
         let bytes = write_binary_format(&translations);

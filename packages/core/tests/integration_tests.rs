@@ -180,10 +180,8 @@ fn test_lock_free_concurrency_rcu() {
     let swapper = thread::spawn(move || {
         use l10n4x_core::binary_format::{fnv1a_64, pack_l10n, RUNTIME_VERSION};
         use l10n4x_core::loader::try_load_raw_bytes;
-        use std::collections::BTreeMap;
         while active_clone.load(core::sync::atomic::Ordering::Relaxed) {
-            let mut entries = BTreeMap::new();
-            entries.insert(fnv1a_64(b"reload.key"), b"v".to_vec());
+            let entries: Vec<(u64, Vec<u8>)> = vec![(fnv1a_64(b"reload.key"), b"v".to_vec())];
             let bytes = pack_l10n(
                 &entries,
                 RUNTIME_VERSION,
