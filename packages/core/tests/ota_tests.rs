@@ -8,7 +8,6 @@ use l10n4x_core::metrics;
 use l10n4x_core::ota::{ota_can_rollback, try_ota_reload_pak, try_ota_rollback};
 use l10n4x_core::pak::{build_unsigned, seal};
 use l10n4x_core::store::{clear_translations, translate};
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 static OTA_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -29,8 +28,7 @@ fn text_bytecode(text: &str) -> Vec<u8> {
 }
 
 fn make_l10n(key: &str, text: &str) -> Vec<u8> {
-    let mut entries = BTreeMap::new();
-    entries.insert(fnv1a_64(key.as_bytes()), text_bytecode(text));
+    let entries: Vec<(u64, Vec<u8>)> = vec![(fnv1a_64(key.as_bytes()), text_bytecode(text))];
     pack_l10n(
         &entries,
         RUNTIME_VERSION,

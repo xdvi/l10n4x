@@ -39,7 +39,7 @@ fn test_binary_header_magic_and_version() {
     let mut translations = AHashMap::new();
     translations.insert(
         fnv1a_64(b"test.key"),
-        vec![MessageNode::Text("val".to_string())],
+        vec![MessageNode::Text("val".into())],
     );
     let binary_bytes = write_binary_format(&translations);
 
@@ -99,9 +99,9 @@ fn test_parser_simple() {
     let parser = MessageParser::new("Hello {name}!");
     let nodes = parser.parse().unwrap();
     assert_eq!(nodes.len(), 3);
-    assert_eq!(nodes[0], MessageNode::Text("Hello ".to_string()));
-    assert_eq!(nodes[1], MessageNode::Variable("name".to_string()));
-    assert_eq!(nodes[2], MessageNode::Text("!".to_string()));
+    assert_eq!(nodes[0], MessageNode::Text("Hello ".into()));
+    assert_eq!(nodes[1], MessageNode::Variable("name".into()));
+    assert_eq!(nodes[2], MessageNode::Text("!".into()));
 }
 
 #[test]
@@ -116,18 +116,18 @@ fn test_parser_plural_mf1() {
         cases,
     } = &nodes[0]
     {
-        assert_eq!(var, "count");
+        assert_eq!(&var[..], "count");
         assert_eq!(cases.len(), 3);
         assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
         assert_eq!(
             cases[0].1,
-            vec![MessageNode::Text("no messages".to_string())]
+            vec![MessageNode::Text("no messages".into())]
         );
 
         assert_eq!(cases[1].0, PluralCaseKey::Exact(1.0));
         assert_eq!(
             cases[1].1,
-            vec![MessageNode::Text("one message".to_string())]
+            vec![MessageNode::Text("one message".into())]
         );
 
         assert_eq!(cases[2].0, PluralCaseKey::Other);
@@ -135,8 +135,8 @@ fn test_parser_plural_mf1() {
         assert_eq!(
             cases[2].1,
             vec![
-                MessageNode::Variable("count".to_string()),
-                MessageNode::Text(" messages".to_string())
+                MessageNode::Variable("count".into()),
+                MessageNode::Text(" messages".into())
             ]
         );
     } else {
@@ -168,10 +168,10 @@ fn test_parser_select_exact_value() {
     let nodes = parser.parse().unwrap();
     assert_eq!(nodes.len(), 1);
     if let MessageNode::Select { var, cases } = &nodes[0] {
-        assert_eq!(var, "status");
-        assert!(cases.iter().any(|(k, _)| k == "ok"));
-        assert!(cases.iter().any(|(k, _)| k == "error"));
-        assert!(cases.iter().any(|(k, _)| k == "other"));
+        assert_eq!(&var[..], "status");
+        assert!(cases.iter().any(|(k, _)| &k[..] == "ok"));
+        assert!(cases.iter().any(|(k, _)| &k[..] == "error"));
+        assert!(cases.iter().any(|(k, _)| &k[..] == "other"));
     }
 }
 
@@ -219,7 +219,7 @@ fn test_parser_number_style_currency() {
     let parser = MessageParser::new("{price, number, currency}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if var == "price" && code.is_empty())
+        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if &var[..] == "price" && code.is_empty())
     );
 }
 
@@ -237,7 +237,7 @@ fn test_parser_only_text() {
     assert_eq!(nodes.len(), 1);
     assert_eq!(
         &nodes[0],
-        &MessageNode::Text("Just plain text without variables".to_string())
+        &MessageNode::Text("Just plain text without variables".into())
     );
 }
 
@@ -262,7 +262,7 @@ fn test_parser_mf2_inline_datetime() {
     let parser = MessageParser::new("{$date :datetime}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::DateTime } if var == "date")
+        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::DateTime } if &var[..] == "date")
     );
 }
 
@@ -271,7 +271,7 @@ fn test_parser_mf2_inline_number_integer() {
     let parser = MessageParser::new("{$n :number style=integer}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Integer } if var == "n")
+        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Integer } if &var[..] == "n")
     );
 }
 
@@ -280,7 +280,7 @@ fn test_parser_mf2_variable_pipe_default() {
     let parser = MessageParser::new("{name|Guest}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if name == "name" && default == "Guest")
+        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if &name[..] == "name" && &default[..] == "Guest")
     );
 }
 
@@ -288,7 +288,7 @@ fn test_parser_mf2_variable_pipe_default() {
 fn test_parser_mf2_raw_variable() {
     let parser = MessageParser::new("{- name}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::RawVariable(v) if v == "name"));
+    assert!(matches!(&nodes[0], MessageNode::RawVariable(v) if &v[..] == "name"));
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn test_parser_mf2_raw_variable_with_default() {
     let parser = MessageParser::new("{- name|fallback}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if name == "name" && default == "fallback")
+        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if &name[..] == "name" && &default[..] == "fallback")
     );
 }
 
@@ -305,7 +305,7 @@ fn test_parser_mf2_selectordinal_multi_line() {
     let parser =
         MessageParser::new("match $n selectordinal\nwhen one {1st}\nwhen two {2nd}\n* {th}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Plural { var, ordinal: true, .. } if var == "n"));
+    assert!(matches!(&nodes[0], MessageNode::Plural { var, ordinal: true, .. } if &var[..] == "n"));
 }
 
 #[test]
@@ -316,7 +316,7 @@ fn test_adversarial_match_no_body() {
     assert!(result.is_ok(), "Match with no body returns empty plural");
     let nodes = result.unwrap();
     assert!(matches!(&nodes[0], MessageNode::Plural { var, cases, .. }
-        if var == "x" && cases.is_empty()));
+        if &var[..] == "x" && cases.is_empty()));
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn test_adversarial_icu1_unknown_type_empty_string() {
 fn test_adversarial_unicode_in_variable_name() {
     let parser = MessageParser::new("{名前}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Variable(v) if v == "名前"));
+    assert!(matches!(&nodes[0], MessageNode::Variable(v) if &v[..] == "名前"));
 }
 
 #[test]
@@ -360,23 +360,23 @@ fn test_adversarial_emoji_in_text() {
     let parser = MessageParser::new("Hello 😊 {name}!");
     let nodes = parser.parse().unwrap();
     assert_eq!(nodes.len(), 3);
-    assert!(matches!(&nodes[0], MessageNode::Text(t) if t == "Hello 😊 "));
-    assert!(matches!(&nodes[1], MessageNode::Variable(v) if v == "name"));
-    assert!(matches!(&nodes[2], MessageNode::Text(t) if t == "!"));
+    assert!(matches!(&nodes[0], MessageNode::Text(t) if &t[..] == "Hello 😊 "));
+    assert!(matches!(&nodes[1], MessageNode::Variable(v) if &v[..] == "name"));
+    assert!(matches!(&nodes[2], MessageNode::Text(t) if &t[..] == "!"));
 }
 
 #[test]
 fn test_adversarial_rtl_override_in_text() {
     let parser = MessageParser::new("LTR\u{202E}RTL\u{202C}{var}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[1], MessageNode::Variable(v) if v == "var"));
+    assert!(matches!(&nodes[1], MessageNode::Variable(v) if &v[..] == "var"));
 }
 
 #[test]
 fn test_adversarial_interval_plural_empty_input() {
     let result = parse_interval_plural("");
     assert!(
-        result.is_none(),
+        result.unwrap().is_none(),
         "Empty string should not be interval plural"
     );
 }
@@ -384,13 +384,19 @@ fn test_adversarial_interval_plural_empty_input() {
 #[test]
 fn test_adversarial_interval_plural_no_close_bracket() {
     let result = parse_interval_plural("(0[none]");
-    assert!(result.is_none(), "Missing ')' should return None");
+    assert!(
+        result.is_err(),
+        "Missing ')' should be a hard error, not a silent None"
+    );
 }
 
 #[test]
 fn test_adversarial_interval_plural_malformed_range() {
     let result = parse_interval_plural("(abc)[test]");
-    assert!(result.is_none(), "Non-numeric range should return None");
+    assert!(
+        result.is_err(),
+        "Non-numeric range should be a hard error, not a silent None"
+    );
 }
 
 #[test]
@@ -418,7 +424,7 @@ when * * {other}"#;
     );
     match &result.unwrap()[0] {
         MessageNode::Select { var, cases: _ } => {
-            assert_eq!(var, "size", "Outer var should be the 2nd selector");
+            assert_eq!(&var[..], "size", "Outer var should be the 2nd selector");
         }
         other => panic!("Expected Select, got {:?}", other),
     }
@@ -451,14 +457,14 @@ fn test_parser_mf2_match_select() {
     let parser =
         MessageParser::new("match $gender\nwhen male {Mr.}\nwhen female {Ms.}\nwhen * {Mx.}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Select { var, .. } if var == "gender"));
+    assert!(matches!(&nodes[0], MessageNode::Select { var, .. } if &var[..] == "gender"));
 }
 
 #[test]
 fn test_parser_icu1_date_style_time() {
     let parser = MessageParser::new("{now, time}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if var == "now"));
+    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "now"));
 }
 
 #[test]
@@ -466,7 +472,7 @@ fn test_parser_icu1_date_style_datetime() {
     let parser = MessageParser::new("{now, datetime}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::DateTime } if var == "now")
+        matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::DateTime } if &var[..] == "now")
     );
 }
 
@@ -485,7 +491,7 @@ fn test_parser_icu1_reltime_explicit_styles() {
         let parser = MessageParser::new(input);
         let nodes = parser.parse().unwrap();
         assert!(
-            matches!(&nodes[0], MessageNode::RelTime { var, style } if var == "t" && *style == expected_style),
+            matches!(&nodes[0], MessageNode::RelTime { var, style } if &var[..] == "t" && *style == expected_style),
             "Failed for input: {}",
             input
         );
@@ -510,7 +516,7 @@ fn test_parser_mf2_raw_variable_with_pipe_default() {
     let parser = MessageParser::new("{- name|FallbackName}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if name == "name" && default == "FallbackName")
+        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if &name[..] == "name" && &default[..] == "FallbackName")
     );
 }
 
@@ -518,14 +524,14 @@ fn test_parser_mf2_raw_variable_with_pipe_default() {
 fn test_parser_mf2_inline_date_style() {
     let parser = MessageParser::new("{$d :date}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Date } if var == "d"));
+    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Date } if &var[..] == "d"));
 }
 
 #[test]
 fn test_parser_mf2_inline_time_style() {
     let parser = MessageParser::new("{$t :time}");
     let nodes = parser.parse().unwrap();
-    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if var == "t"));
+    assert!(matches!(&nodes[0], MessageNode::Date { var, style: DateStyle::Time } if &var[..] == "t"));
 }
 
 #[test]
@@ -583,7 +589,7 @@ fn test_parser_mf2_inline_relativetime_units() {
         let parser = MessageParser::new(input);
         let nodes = parser.parse().unwrap();
         assert!(
-            matches!(&nodes[0], MessageNode::RelTime { var, style } if var == "t" && *style == expected),
+            matches!(&nodes[0], MessageNode::RelTime { var, style } if &var[..] == "t" && *style == expected),
             "Failed for input: {}",
             input
         );
@@ -595,7 +601,7 @@ fn test_parser_mf2_inline_number_currency_with_code() {
     let parser = MessageParser::new("{$p :number style=currency currency=EUR}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if var == "p" && code == "EUR")
+        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Currency(code) } if &var[..] == "p" && &code[..] == "EUR")
     );
 }
 
@@ -604,7 +610,7 @@ fn test_parser_mf2_inline_string_with_default() {
     let parser = MessageParser::new("{$name :string default=Guest}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if name == "name" && default == "Guest")
+        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if &name[..] == "name" && &default[..] == "Guest")
     );
 }
 
@@ -613,7 +619,7 @@ fn test_parser_mf2_inline_string_with_quoted_default() {
     let parser = MessageParser::new(r#"{$name :string default="John Doe"}"#);
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if name == "name" && default == "John Doe")
+        matches!(&nodes[0], MessageNode::VariableWithDefault { name, default } if &name[..] == "name" && &default[..] == "John Doe")
     );
 }
 
@@ -624,7 +630,7 @@ fn test_parser_icu1_currency_fallback_decimal() {
     let parser = MessageParser::new("{price, number, currency, EUR}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Decimal } if var == "price")
+        matches!(&nodes[0], MessageNode::Number { var, style: NumberStyle::Decimal } if &var[..] == "price")
     );
 }
 
@@ -634,7 +640,7 @@ fn test_parser_custom_formatter_with_options() {
     let nodes = parser.parse().unwrap();
     match &nodes[0] {
         MessageNode::Custom { var, format, .. } => {
-            assert_eq!(var, "val");
+            assert_eq!(&var[..], "val");
             assert_eq!(format.formatter, "suffix");
             assert_eq!(
                 format.options.get("prefix").map(|s| s.as_str()),
@@ -654,7 +660,7 @@ fn test_parser_icu1_custom_formatter_no_options() {
     let parser = MessageParser::new("{x, someFormatter}");
     let nodes = parser.parse().unwrap();
     assert!(
-        matches!(&nodes[0], MessageNode::Custom { var, format, .. } if var == "x" && format.formatter == "someFormatter" && format.options.is_empty())
+        matches!(&nodes[0], MessageNode::Custom { var, format, .. } if &var[..] == "x" && format.formatter == "someFormatter" && format.options.is_empty())
     );
 }
 
@@ -680,7 +686,7 @@ when * * {people}"#;
     assert_eq!(nodes.len(), 1);
     match &nodes[0] {
         MessageNode::Select { var, cases } => {
-            assert_eq!(var, "gender");
+            assert_eq!(&var[..], "gender");
             assert_eq!(cases.len(), 3);
         }
         other => panic!("Expected Select, got {:?}", other),
@@ -699,7 +705,7 @@ when other other {{count} items}"#;
     assert_eq!(nodes.len(), 1);
     match &nodes[0] {
         MessageNode::Plural { var, cases, .. } => {
-            assert_eq!(var, "items");
+            assert_eq!(&var[..], "items");
             assert_eq!(cases.len(), 2);
         }
         other => panic!("Expected Plural, got {:?}", other),
@@ -716,7 +722,7 @@ when * * {Unknown}"#;
     let nodes = MessageParser::new(input).parse().unwrap();
     match &nodes[0] {
         MessageNode::Select { var, cases } => {
-            assert_eq!(var, "level");
+            assert_eq!(&var[..], "level");
             assert_eq!(cases.len(), 3, "expected debug, error, other");
         }
         other => panic!("Expected Select, got {:?}", other),
@@ -732,7 +738,7 @@ when * * {all}"#;
     let nodes = MessageParser::new(input).parse().unwrap();
     match &nodes[0] {
         MessageNode::Select { var, cases: _ } => {
-            assert_eq!(var, "b");
+            assert_eq!(&var[..], "b");
         }
         other => panic!("Expected Select, got {:?}", other),
     }
@@ -802,27 +808,27 @@ fn test_parser_plural_mf2() {
         cases,
     } = &nodes[0]
     {
-        assert_eq!(var, "count");
+        assert_eq!(&var[..], "count");
         assert_eq!(cases.len(), 3);
 
         assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
         assert_eq!(
             cases[0].1,
-            vec![MessageNode::Text("no messages".to_string())]
+            vec![MessageNode::Text("no messages".into())]
         );
 
         assert_eq!(cases[1].0, PluralCaseKey::One);
         assert_eq!(
             cases[1].1,
-            vec![MessageNode::Text("one message".to_string())]
+            vec![MessageNode::Text("one message".into())]
         );
 
         assert_eq!(cases[2].0, PluralCaseKey::Other);
         assert_eq!(
             cases[2].1,
             vec![
-                MessageNode::Variable("count".to_string()),
-                MessageNode::Text(" messages".to_string())
+                MessageNode::Variable("count".into()),
+                MessageNode::Text(" messages".into())
             ]
         );
     } else {

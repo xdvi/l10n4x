@@ -298,6 +298,8 @@ impl<'a> BinaryFormatReader<'a> {
 pub fn merge_l10n_buffers(existing: &[u8], newer: &[u8]) -> CoreResult<Vec<u8>> {
     let left = BinaryFormatReader::new(existing)?;
     let right = BinaryFormatReader::new(newer)?;
+    // Dedup-by-hash via a BTreeMap (later buffer wins), then drain into a sorted Vec —
+    // BTreeMap iteration is already ascending by hash, satisfying pack_l10n's contract.
     let mut merged: BTreeMap<u64, Vec<u8>> = BTreeMap::new();
     for (hash, bytes) in left.collect_entries() {
         merged.insert(hash, bytes);
@@ -305,27 +307,29 @@ pub fn merge_l10n_buffers(existing: &[u8], newer: &[u8]) -> CoreResult<Vec<u8>> 
     for (hash, bytes) in right.collect_entries() {
         merged.insert(hash, bytes);
     }
+    let merged: Vec<(u64, Vec<u8>)> = merged.into_iter().collect();
     #[cfg(feature = "debug-keys")]
     let mut debug_keys: BTreeMap<u64, String> = BTreeMap::new();
     #[cfg(feature = "debug-keys")]
-    {
+    let debug_keys_vec: Vec<(u64, String)> = {
         for (h, k) in left.debug_key_table() {
             debug_keys.insert(h, k);
         }
         for (h, k) in right.debug_key_table() {
             debug_keys.insert(h, k);
         }
-    }
+        debug_keys.into_iter().collect()
+    };
     let locale_data_version = left.locale_data_version().max(right.locale_data_version());
     Ok(pack_l10n(
         &merged,
         RUNTIME_VERSION,
         locale_data_version,
         #[cfg(feature = "debug-keys")]
-        if debug_keys.is_empty() {
+        if debug_keys_vec.is_empty() {
             None
         } else {
-            Some(&debug_keys)
+            Some(&debug_keys_vec)
         },
         #[cfg(not(feature = "debug-keys"))]
         None,
@@ -333,13 +337,18 @@ pub fn merge_l10n_buffers(existing: &[u8], newer: &[u8]) -> CoreResult<Vec<u8>> 
 }
 
 /// Packs sorted value blobs into an L10N buffer (v3 when `locale_data_version > 0`, else v2).
+///
+/// `entries` and `debug_keys` are slices that **must already be sorted ascending by hash**;
+/// the binary index is laid out in iteration order. Prefer a `Vec<(u64, Vec<u8>)>` built up
+/// and sorted with `sort_unstable_by_key` over a `BTreeMap` — a contiguous buffer is a single
+/// allocation versus one per tree node.
 #[cfg(feature = "std")]
 pub fn pack_l10n(
-    entries: &BTreeMap<u64, Vec<u8>>,
+    entries: &[(u64, Vec<u8>)],
     min_runtime_version: u32,
     locale_data_version: u32,
-    #[cfg(feature = "debug-keys")] debug_keys: Option<&BTreeMap<u64, String>>,
-    #[cfg(not(feature = "debug-keys"))] _debug_keys: Option<&BTreeMap<u64, String>>,
+    #[cfg(feature = "debug-keys")] debug_keys: Option<&[(u64, String)]>,
+    #[cfg(not(feature = "debug-keys"))] _debug_keys: Option<&[(u64, String)]>,
 ) -> Vec<u8> {
     let mut data_pool = Vec::new();
     let mut index_entries = Vec::with_capacity(entries.len());
@@ -350,7 +359,7 @@ pub fn pack_l10n(
     };
     let mut current_offset = header_size as u32;
 
-    for (&hash, val_bytes) in entries {
+    for &(hash, ref val_bytes) in entries {
         let val_offset = current_offset;
         let val_len = val_bytes.len() as u32;
         data_pool.extend_from_slice(val_bytes);
@@ -372,7 +381,7 @@ pub fn pack_l10n(
         if !keys.is_empty() {
             data_pool.extend_from_slice(DEBUG_SECTION_MAGIC);
             data_pool.extend_from_slice(&(keys.len() as u32).to_be_bytes());
-            for (&hash, key) in keys {
+            for &(hash, ref key) in keys {
                 data_pool.extend_from_slice(&hash.to_be_bytes());
                 let kb = key.as_bytes();
                 data_pool.extend_from_slice(&(kb.len() as u32).to_be_bytes());
@@ -405,7 +414,7 @@ mod tests {
 
     fn create_minimal_binary() -> Vec<u8> {
         pack_l10n(
-            &BTreeMap::new(),
+            &[],
             RUNTIME_VERSION,
             crate::locale_data::LOCALE_DATA_VERSION,
             None,
@@ -444,6 +453,7 @@ mod tests {
     fn lookup_roundtrip_v2() {
         let mut entries = BTreeMap::new();
         entries.insert(hash("a"), b"val-a".to_vec());
+        let entries: Vec<(u64, Vec<u8>)> = entries.into_iter().collect();
         let buf = pack_l10n(
             &entries,
             RUNTIME_VERSION,
@@ -460,9 +470,11 @@ mod tests {
         let mut left = BTreeMap::new();
         left.insert(hash("a"), b"old".to_vec());
         left.insert(hash("b"), b"keep".to_vec());
+        let left: Vec<(u64, Vec<u8>)> = left.into_iter().collect();
         let mut right = BTreeMap::new();
         right.insert(hash("a"), b"new".to_vec());
         right.insert(hash("c"), b"added".to_vec());
+        let right: Vec<(u64, Vec<u8>)> = right.into_iter().collect();
         let merged = merge_l10n_buffers(
             &pack_l10n(
                 &left,
@@ -487,7 +499,7 @@ mod tests {
     #[test]
     fn new_rejects_future_min_runtime() {
         let buf = pack_l10n(
-            &BTreeMap::new(),
+            &[],
             RUNTIME_VERSION + 1,
             crate::locale_data::LOCALE_DATA_VERSION,
             None,
@@ -506,7 +518,7 @@ mod tests {
     #[test]
     fn new_rejects_future_locale_data_version() {
         let buf = pack_l10n(
-            &BTreeMap::new(),
+            &[],
             RUNTIME_VERSION,
             crate::locale_data::SUPPORTED_LOCALE_DATA_VERSION + 1,
             None,
@@ -518,7 +530,7 @@ mod tests {
     #[test]
     fn v3_header_pins_locale_data_version() {
         let buf = pack_l10n(
-            &BTreeMap::new(),
+            &[],
             RUNTIME_VERSION,
             crate::locale_data::LOCALE_DATA_VERSION,
             None,
@@ -534,10 +546,9 @@ mod tests {
     #[cfg(feature = "debug-keys")]
     #[test]
     fn debug_key_table_roundtrip() {
-        let mut entries = BTreeMap::new();
-        entries.insert(hash("common.welcome"), b"hi".to_vec());
-        let mut keys = BTreeMap::new();
-        keys.insert(hash("common.welcome"), "common.welcome".to_string());
+        let entries: Vec<(u64, Vec<u8>)> = vec![(hash("common.welcome"), b"hi".to_vec())];
+        let keys: Vec<(u64, String)> =
+            vec![(hash("common.welcome"), "common.welcome".to_string())];
         let buf = pack_l10n(
             &entries,
             RUNTIME_VERSION,

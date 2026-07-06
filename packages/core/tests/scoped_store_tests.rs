@@ -5,14 +5,12 @@ use l10n4x_core::loader::try_load_static_bytes_for_store;
 use l10n4x_core::pak::{build_unsigned, seal};
 use l10n4x_core::store::{clear_translations_for_store, translate, translate_for_store};
 use l10n4x_core::store_registry::{create_store, destroy_store, StoreHandle};
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 static OTA_SCOPED_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
 fn pak_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
-    let mut entries = BTreeMap::new();
-    entries.insert(hash, text.to_vec());
+    let entries: Vec<(u64, Vec<u8>)> = vec![(hash, text.to_vec())];
     pack_l10n(&entries, RUNTIME_VERSION, 1, None)
 }
 
