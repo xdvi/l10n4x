@@ -14,7 +14,7 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "monthly"    # no native biweekly interval; monthly halves weekly's PR volume
+      interval: "monthly"
       time: "06:00"          # early UTC — merges before EU/US business hours
       timezone: "UTC"
     open-pull-requests-limit: 20   # generous ceiling; groups collapse many into few PRs
