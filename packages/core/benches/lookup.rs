@@ -2,8 +2,8 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use l10n4x_compiler::signing;
 use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::integrity;
-use l10n4x_core::loader::{load_raw_bytes, try_load_pak_lazy};
-use l10n4x_core::pak::{build_unsigned, seal};
+use l10n4x_core::loader::{load_raw_bytes, try_load_lpk_lazy};
+use l10n4x_core::lpk::{build_unsigned, seal};
 use l10n4x_core::store::{
     clear_translations, key_exists, set_fallback_locale, swap_store, translate,
     translate_to_writer, translate_to_writer_with_status, StoreData, TranslationStore,
@@ -63,9 +63,9 @@ fn setup_locales() {
     set_fallback_locale("en");
 }
 
-fn lazy_pak_bytes() -> &'static [u8] {
-    static PAK: OnceLock<Vec<u8>> = OnceLock::new();
-    PAK.get_or_init(|| {
+fn lazy_lpk_bytes() -> &'static [u8] {
+    static LPK: OnceLock<Vec<u8>> = OnceLock::new();
+    LPK.get_or_init(|| {
         let seed = [42u8; 32];
         assert!(signing::set_signing_key(&seed));
         let pubkey = signing::signing_public_key().unwrap();
@@ -82,7 +82,7 @@ fn lazy_pak_bytes() -> &'static [u8] {
 
 fn setup_lazy_locale() -> u64 {
     clear_translations();
-    assert!(try_load_pak_lazy("lazy", lazy_pak_bytes()).is_ok());
+    assert!(try_load_lpk_lazy("lazy", lazy_lpk_bytes()).is_ok());
     fnv1a_64(b"common.welcome")
 }
 
@@ -230,6 +230,8 @@ fn bench_lookup(c: &mut Criterion) {
                 offset_maps: None,
                 #[cfg(feature = "std")]
                 loaded_namespaces: None,
+                #[cfg(feature = "debug-keys")]
+                debug_keys: None,
             };
             swap_store(black_box(store));
         })
@@ -252,6 +254,8 @@ fn bench_lookup(c: &mut Criterion) {
                 offset_maps: None,
                 #[cfg(feature = "std")]
                 loaded_namespaces: None,
+                #[cfg(feature = "debug-keys")]
+                debug_keys: None,
             };
             swap_store(black_box(store));
         });

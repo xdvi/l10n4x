@@ -4,7 +4,7 @@ import 'package:l10n4x_example/l10n4c.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('L10n4c loads signed paks and translates', () async {
+  test('L10n4c loads signed lpks and translates', () async {
     await L10n4c.init(fallbackLocale: 'en');
 
     expect(await L10n4c.loadLocaleFromAsset('es'), isTrue);

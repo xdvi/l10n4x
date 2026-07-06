@@ -64,7 +64,7 @@ export L10N4X_SIGNING_KEY="<the-64-char-hex>"
 
 ```bash
 cargo run -- init          # Interactive config wizard
-cargo run -- build         # Compile .pak files
+cargo run -- build         # Compile .lpk files
 cargo run -- dev           # Hot-reload dev server
 ```
 
@@ -222,6 +222,6 @@ This project follows the [Rust Code of Conduct](https://www.rust-lang.org/polici
 
 - Open an issue on GitHub for bugs or feature requests.
 - Discuss architecture decisions in issues before opening large PRs.
-- For questions about the `.pak` format, see `docs/PAK_FORMAT.md`.
+- For questions about the `.lpk` format, see `docs/LPK_FORMAT.md`.
 - For the threat model and security considerations, see `docs/THREAT_MODEL.md`.
 - For enterprise adoption patterns, see `docs/ENTERPRISE_ADOPTION.md`.

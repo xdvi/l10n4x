@@ -25,7 +25,7 @@ struct WebhookArtifact {
     namespace: Option<String>,
     path: String,
     sha256: String,
-    pak_base64: String,
+    lpk_base64: String,
 }
 
 pub fn run_sync(
@@ -76,7 +76,7 @@ fn run_webhook_provider(config: &Config, direction: SyncDirection) -> Result<(),
         anyhow::bail!("webhook provider only supports --direction push");
     }
     push_webhook(config)?;
-    println!("Signed paks pushed to webhook");
+    println!("Signed lpks pushed to webhook");
     Ok(())
 }
 
@@ -128,7 +128,7 @@ fn push_webhook_with_config(
         .as_deref()
         .and_then(|var| std::env::var(var).ok());
 
-    let artifacts = collect_pak_artifacts(config)?;
+    let artifacts = collect_lpk_artifacts(config)?;
     let payload = WebhookPayload {
         project: config.project.clone(),
         pushed_at: iso_timestamp(),
@@ -148,7 +148,7 @@ fn push_webhook_with_config(
     Ok(())
 }
 
-fn collect_pak_artifacts(config: &Config) -> Result<Vec<WebhookArtifact>, anyhow::Error> {
+fn collect_lpk_artifacts(config: &Config) -> Result<Vec<WebhookArtifact>, anyhow::Error> {
     let out = Path::new(&config.output_dir);
     let mut artifacts = Vec::new();
 
@@ -160,38 +160,38 @@ fn collect_pak_artifacts(config: &Config) -> Result<Vec<WebhookArtifact>, anyhow
                 continue;
             }
             let locale = locale_entry.file_name().to_string_lossy().to_string();
-            for pak_entry in fs::read_dir(&locale_path)? {
-                let pak_entry = pak_entry?;
-                let pak_path = pak_entry.path();
-                if pak_path.extension().and_then(|e| e.to_str()) != Some("pak") {
+            for lpk_entry in fs::read_dir(&locale_path)? {
+                let lpk_entry = lpk_entry?;
+                let lpk_path = lpk_entry.path();
+                if lpk_path.extension().and_then(|e| e.to_str()) != Some("lpk") {
                     continue;
                 }
-                let namespace = pak_path
+                let namespace = lpk_path
                     .file_stem()
                     .and_then(|s| s.to_str())
                     .map(str::to_string);
-                artifacts.push(pak_artifact(&pak_path, &locale, namespace)?);
+                artifacts.push(lpk_artifact(&lpk_path, &locale, namespace)?);
             }
         }
     } else {
         for entry in fs::read_dir(out)? {
             let entry = entry?;
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("pak") {
+            if path.extension().and_then(|e| e.to_str()) != Some("lpk") {
                 continue;
             }
             let locale = path
                 .file_stem()
                 .and_then(|s| s.to_str())
-                .ok_or_else(|| anyhow::anyhow!("invalid pak name {}", path.display()))?
+                .ok_or_else(|| anyhow::anyhow!("invalid lpk name {}", path.display()))?
                 .to_string();
-            artifacts.push(pak_artifact(&path, &locale, None)?);
+            artifacts.push(lpk_artifact(&path, &locale, None)?);
         }
     }
 
     if artifacts.is_empty() {
         anyhow::bail!(
-            "no .pak artifacts found in '{}' — run `l10n4x build` first",
+            "no .lpk artifacts found in '{}' — run `l10n4x build` first",
             config.output_dir
         );
     }
@@ -202,7 +202,7 @@ fn collect_pak_artifacts(config: &Config) -> Result<Vec<WebhookArtifact>, anyhow
     Ok(artifacts)
 }
 
-fn pak_artifact(
+fn lpk_artifact(
     path: &Path,
     locale: &str,
     namespace: Option<String>,
@@ -214,7 +214,7 @@ fn pak_artifact(
         namespace,
         path: path.display().to_string(),
         sha256,
-        pak_base64: B64.encode(bytes),
+        lpk_base64: B64.encode(bytes),
     })
 }
 

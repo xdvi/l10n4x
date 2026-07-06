@@ -31,11 +31,11 @@ typedef _SetDecryptKey = int Function(ffi.Pointer<ffi.Uint8> key, int keyLen);
 typedef _SetFallbackLocaleNative = ffi.Int32 Function(ffi.Pointer<Utf8> locale);
 typedef _SetFallbackLocale = int Function(ffi.Pointer<Utf8> locale);
 
-typedef _LoadPakLocaleNative = ffi.Int32 Function(
+typedef _LoadLpkLocaleNative = ffi.Int32 Function(
   ffi.Pointer<Utf8> locale,
   ffi.Pointer<Utf8> filePath,
 );
-typedef _LoadPakLocale = int Function(
+typedef _LoadLpkLocale = int Function(
   ffi.Pointer<Utf8> locale,
   ffi.Pointer<Utf8> filePath,
 );
@@ -102,7 +102,7 @@ class L10n4c {
   static late final _SetVerifyKey _setVerifyKey;
   static late final _SetDecryptKey _setDecryptKey;
   static late final _SetFallbackLocale _setFallbackLocale;
-  static late final _LoadPakLocale _loadPakLocale;
+  static late final _LoadLpkLocale _loadLpkLocale;
   static late final _TranslateAlloc _translateAlloc;
   static late final _TranslateWithParamsAlloc _translateWithParamsAlloc;
   static late final _FreeString _freeString;
@@ -127,8 +127,8 @@ class L10n4c {
           'l10n4c_set_fallback_locale',
         )
         .asFunction();
-    _loadPakLocale = _lib
-        .lookup<ffi.NativeFunction<_LoadPakLocaleNative>>('l10n4c_load_pak_locale')
+    _loadLpkLocale = _lib
+        .lookup<ffi.NativeFunction<_LoadLpkLocaleNative>>('l10n4c_load_lpk_locale')
         .asFunction();
     _translateAlloc = _lib
         .lookup<ffi.NativeFunction<_TranslateAllocNative>>('l10n4c_translate_alloc')
@@ -160,14 +160,14 @@ class L10n4c {
     if (_loadedLocales.contains(locale)) return true;
 
     try {
-      final bytes = await rootBundle.load('assets/locales/$locale.pak');
+      final bytes = await rootBundle.load('assets/locales/$locale.lpk');
       final tempDir = await Directory.systemTemp.createTemp('l10n4x_');
-      final pakFile = File('${tempDir.path}/$locale.pak');
-      await pakFile.writeAsBytes(bytes.buffer.asUint8List());
+      final lpkFile = File('${tempDir.path}/$locale.lpk');
+      await lpkFile.writeAsBytes(bytes.buffer.asUint8List());
 
       final cLocale = locale.toNativeUtf8();
-      final cPath = pakFile.path.toNativeUtf8();
-      final success = _loadPakLocale(cLocale, cPath) == ok;
+      final cPath = lpkFile.path.toNativeUtf8();
+      final success = _loadLpkLocale(cLocale, cPath) == ok;
       calloc.free(cLocale);
       calloc.free(cPath);
 

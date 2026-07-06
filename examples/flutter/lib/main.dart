@@ -56,7 +56,7 @@ class _HomePageState extends State<HomePage> {
       final loaded = await L10n4c.loadLocaleFromAsset(_locale);
       if (!loaded) {
         throw StateError(
-          'Could not load assets/locales/$_locale.pak — run l10n4x build and copy examples/dist/locales/*.pak',
+          'Could not load assets/locales/$_locale.lpk — run l10n4x build and copy examples/dist/locales/*.lpk',
         );
       }
       final text = L10n4c.translate(_locale, _demoKey);
@@ -123,7 +123,7 @@ class _HomePageState extends State<HomePage> {
             Text(
               'Native lib: GitHub Releases → examples/lib/\n'
               'Verify key: --dart-define=L10N4X_VERIFY_PUBLIC_KEY=<hex>\n'
-              'Paks: l10n4x build → copy to assets/locales/',
+              'Lpks: l10n4x build → copy to assets/locales/',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ],

@@ -7,7 +7,7 @@
 
 > *Modern, Dynamic, and Type-Safe Localization (l10n) Engine and Toolkit in Rust.*
 
-`l10n4x` compiles translation bundles into compressed `.pak` files, loads them dynamically in any runtime, and generates **type-safe bindings** for Go, TypeScript/React, C/C++, Python, and Flutter/Dart.
+`l10n4x` compiles translation bundles into compressed `.lpk` files, loads them dynamically in any runtime, and generates **type-safe bindings** for Go, TypeScript/React, C/C++, Python, and Flutter/Dart.
 
 ---
 
@@ -34,7 +34,7 @@ No Rust toolchain required for consumers. Building from source is optional (for 
 | Flutter | [`examples/flutter`](examples/flutter) |
 | TypeScript (SSR) | [`examples/typescript`](examples/typescript) |
 
-Smoke-test all examples (builds `l10n4c`, compiles fixture paks, runs each binding):
+Smoke-test all examples (builds `l10n4c`, compiles fixture lpks, runs each binding):
 
 ```bash
 ./scripts/verify.sh
@@ -46,7 +46,7 @@ Smoke-test all examples (builds `l10n4c`, compiles fixture paks, runs each bindi
 
 | Command | Description |
 |---------|-------------|
-| `l10n4x build` | Compile `.pak` files and generate bindings (CI-safe) |
+| `l10n4x build` | Compile `.lpk` files and generate bindings (CI-safe) |
 | `l10n4x build --dry-run` | Validate keys without writing output |
 | `l10n4x dev` | Hot-reload dev server |
 | `l10n4x validate` | Check key consistency |
@@ -81,7 +81,7 @@ char *out = l10n4c_translate_with_params_alloc("en", "welcome", params, 1);
 l10n4c_free_string(out);
 ```
 
-`.pak` files are **signed** (Ed25519, mandatory). Optional AES-GCM encryption (`"encrypt": true`) wraps the signed pak for confidentiality — see [docs/PAK_FORMAT.md](docs/PAK_FORMAT.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
+`.lpk` files are **signed** (Ed25519, mandatory). Optional AES-GCM encryption (`"encrypt": true`) wraps the signed lpk for confidentiality — see [docs/LPK_FORMAT.md](docs/LPK_FORMAT.md) and [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md).
 
 ---
 

@@ -23,11 +23,11 @@ if (L10n.l10n4c_set_fallback_locale("es") != L10n.L10N4C_OK)
 }
 
 var examplesDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
-var pakDir = Path.Combine(examplesDir, "dist", "locales");
+var lpkDir = Path.Combine(examplesDir, "dist", "locales");
 
-if (L10n.l10n4c_load_pak_directory(pakDir) != L10n.L10N4C_OK)
+if (L10n.l10n4c_load_lpk_directory(lpkDir) != L10n.L10N4C_OK)
 {
-    Console.WriteLine("Failed to load pak directory.");
+    Console.WriteLine("Failed to load lpk directory.");
     return 1;
 }
 

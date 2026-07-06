@@ -1,6 +1,6 @@
 # Architecture
 
-l10n4x is a localization toolkit built around a compile-time pipeline: JSON translation files are compiled into signed, compressed binary `.pak` files that a minimal `no_std` runtime can load and format. All heavy work (parsing, compilation, type generation) happens offline.
+l10n4x is a localization toolkit built around a compile-time pipeline: JSON translation files are compiled into signed, compressed binary `.lpk` files that a minimal `no_std` runtime can load and format. All heavy work (parsing, compilation, type generation) happens offline.
 
 ---
 
@@ -20,7 +20,7 @@ l10n4x is a localization toolkit built around a compile-time pipeline: JSON tran
      |-- optional AES-GCM envelope (L10E)
          |
          v
-  .pak file (per locale, binary, signed)
+  .lpk file (per locale, binary, signed)
          |
          v
   [l10n4x-core runtime]
@@ -67,7 +67,7 @@ Modules:
 | `reltime.rs` | Relative time strings ("in 3 days", "2 minutes ago") |
 | `list_format.rs` | Conjunction/disjunction/unit list formatting |
 | `integrity.rs` | Ed25519 signature verification |
-| `loader.rs` | `.pak` decompression and store loading |
+| `loader.rs` | `.lpk` decompression and store loading |
 | `store.rs` | Lock-free RCU translation store; scoped `*_for_store` APIs |
 | `store_cell.rs` | Reusable RCU cell (`AtomicPtr` + writer mutex) per store |
 | `store_registry.rs` | `StoreHandle` registry for tenant-scoped cells |
@@ -103,7 +103,7 @@ Commands:
 | Command | Description |
 |---------|-------------|
 | `init` | Interactive wizard to create `l10n4x.config.json` |
-| `build` | Compile `.pak` files and generate type-safe bindings |
+| `build` | Compile `.lpk` files and generate type-safe bindings |
 | `validate` | Check translation key consistency across locales |
 | `dev` | Hot-reload dev server (SSE + file watcher) |
 | `generate` | Generate bindings for a specific target |
@@ -133,7 +133,7 @@ Web runtime and framework adapters (React, Vue, Svelte, Angular) live in the sep
 | Library types | `cdylib`, `staticlib`, `rlib` |
 | Header | `l10n4c.h` (distributed with binary releases) |
 
-Covers: load paks, translate with typed `L10n4cParam` arrays, manage fallback locale, missing key callbacks.
+Covers: load lpks, translate with typed `L10n4cParam` arrays, manage fallback locale, missing key callbacks.
 
 ### `l10n4x-wasm` (WASM bindings)
 
@@ -143,18 +143,18 @@ Covers: load paks, translate with typed `L10n4cParam` arrays, manage fallback lo
 | Crate | `l10n4x-wasm` |
 | Technology | `wasm-bindgen` + `js-sys` |
 
-Covers: `l10n4x_translate()`, `l10n4x_load_pak_bytes()`, `l10n4x_set_fallback_chain()`, etc.
+Covers: `l10n4x_translate()`, `l10n4x_load_lpk_bytes()`, `l10n4x_set_fallback_chain()`, etc.
 
 ---
 
-## `.pak` File Format
+## `.lpk` File Format
 
-For full specification, see [PAK_FORMAT.md](./PAK_FORMAT.md).
+For full specification, see [LPK_FORMAT.md](./LPK_FORMAT.md).
 
-### Outer container (`L10P`)
+### Outer container (`L10K`)
 
 ```
-[L10P magic: 4B][Version: 4B][Payload len: 4B][zstd payload: N B][Ed25519 sig: 64B]
+[L10K magic: 4B][Version: 4B][Payload len: 4B][zstd payload: N B][Ed25519 sig: 64B]
 ```
 
 ### Optional encrypted envelope (`L10E`)
@@ -198,9 +198,9 @@ The index is sorted alphabetically by key, enabling O(log N) binary search.
 
 ### Principles
 
-1. **Mandatory signing.** Every `.pak` file is Ed25519-signed. The runtime refuses to load unsigned or tampered paks.
+1. **Mandatory signing.** Every `.lpk` file is Ed25519-signed. The runtime refuses to load unsigned or tampered lpks.
 2. **Signing key isolation.** The signing seed (`L10N4X_SIGNING_KEY`) is only accessible to the compiler crate and CLI. The core runtime has no signing capability -- it only verifies.
-3. **Optional encryption.** AES-256-GCM (`L10E` envelope) wraps the signed pak for confidentiality in transit. Encryption does not replace signing -- it wraps the already-signed container.
+3. **Optional encryption.** AES-256-GCM (`L10E` envelope) wraps the signed lpk for confidentiality in transit. Encryption does not replace signing -- it wraps the already-signed container.
 4. **No `eval()`.** The runtime never evaluates dynamic code. All formatting is opcode-based with fixed locale tables.
 5. **Input validation.** All external inputs (locale codes, file paths, key names) are validated for length, character set, and path traversal before use.
 
@@ -214,7 +214,7 @@ Build time:                    Runtime:
         |                              |
   [compiler] sign()              [core] verify()
         |                              |
-  .pak (signed) ──────────────> .pak (verified)
+  .lpk (signed) ──────────────> .lpk (verified)
 ```
 
 ---
@@ -265,7 +265,7 @@ The global `TranslationStore` uses RCU (Read-Copy-Update) for lock-free concurre
 
 - **Readers** (`translate`, `key_exists`, `locale_loaded`): Call `read_store()` which pins an epoch guard via `crossbeam-epoch`, then loads the store pointer atomically. Multiple readers proceed in parallel with no contention.
 - **Writers** (`load_raw_bytes`, `load_namespace`, `swap_store`, `clear_translations`): Clone the current snapshot, apply mutations, then publish via `swap_store`. Writers are serialized with `STORE_WRITE_MUTEX` so concurrent reloads cannot tear state; readers still proceed lock-free.
-- **Modular bundles** (opt-in): `build` with `"bundles": { "mode": "modular" }` emits `{locale}/{namespace}.pak` plus `namespaces.json`. `load_namespace` merges namespace paks into a locale buffer; `init_modular` preloads namespaces listed in the manifest.
+- **Modular bundles** (opt-in): `build` with `"bundles": { "mode": "modular" }` emits `{locale}/{namespace}.lpk` plus `namespaces.json`. `load_namespace` merges namespace lpks into a locale buffer; `init_modular` preloads namespaces listed in the manifest.
 - **Reclamation**: `schedule_drop()` defers the `Box::from_raw` drop until the current epoch ends (under `std` with `crossbeam-epoch`). Under `no_std` (single-threaded), drops happen immediately.
 
 This design provides:
@@ -282,15 +282,15 @@ Server-side runtimes can hold multiple isolated `TranslationStore` instances wit
 | `StoreCell` | RCU cell — one per global store or per `StoreHandle` |
 | `StoreHandle` | Opaque tenant id (`NonZeroU32`); `None` selects the global cell |
 | `store_registry` | `create_store` / `destroy_store`; serializes registry mutations |
-| `*_for_store` APIs | `translate_for_store`, `try_load_static_bytes_for_store`, `clear_translations_for_store`, `try_ota_reload_pak_for_store`, etc. |
+| `*_for_store` APIs | `translate_for_store`, `try_load_static_bytes_for_store`, `clear_translations_for_store`, `try_ota_reload_lpk_for_store`, etc. |
 
 **Default behavior:** legacy `translate()`, `read_store()`, and `l10n4c_*` global exports delegate to `StoreHandle::GLOBAL` (`None`) — unchanged for existing callers.
 
 **TLS translate cache:** keys include `store_id` (`0` = global) plus locale and key hashes so concurrent tenants cannot pollute each other's fast or full caches.
 
-**FFI:** `l10n4c_store_create`, `l10n4c_store_destroy`, `l10n4c_store_load_pak_locale`, `l10n4c_store_translate`, `l10n4c_store_clear`, `l10n4c_store_ota_reload_pak` — handle `0` is reserved and invalid.
+**FFI:** `l10n4c_store_create`, `l10n4c_store_destroy`, `l10n4c_store_load_lpk_locale`, `l10n4c_store_translate`, `l10n4c_store_clear`, `l10n4c_store_ota_reload_lpk` — handle `0` is reserved and invalid.
 
-**Out of scope (P2.5.1):** overlay/inheritance (tenant inherits base paks), WASM multi-instance, Angular/React binding changes.
+**Out of scope (P2.5.1):** overlay/inheritance (tenant inherits base lpks), WASM multi-instance, Angular/React binding changes.
 
 ---
 
@@ -319,7 +319,7 @@ l10n4x-wasm:
 The `no_std` configuration (`--no-default-features --features alloc`) removes:
 - Crossbeam epoch (RCU becomes immediate swap + drop)
 - AES-GCM encryption (L10E envelope rejected)
-- File system I/O (`load_pak_directory`, `load_pak_locale`)
+- File system I/O (`load_lpk_directory`, `load_lpk_locale`)
 - `std::error::Error` impls
 
 ---
@@ -349,7 +349,7 @@ l10n4x/
     wasm/                 # l10n4x-wasm (WASM bindings)
       src/
   docs/                   # Documentation
-    PAK_FORMAT.md
+    LPK_FORMAT.md
     THREAT_MODEL.md
     ARCHITECTURE.md
     MIGRATION.md

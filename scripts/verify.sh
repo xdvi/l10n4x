@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LIB_DIR="$ROOT/examples/lib"
-PAK_DIR="$ROOT/examples/dist/locales"
+LPK_DIR="$ROOT/examples/dist/locales"
 # WARNING: This static seed is for test/CI verification only. Never use this in production.
 SIGNING_SEED="$(printf '%0.s1' {1..32})"
 
@@ -27,7 +27,7 @@ cat > "$ROOT/locales/es/common.json" <<'JSON'
 {"welcome": "¡Bienvenido!", "greet": "¡Hola, {name}!"}
 JSON
 
-echo "==> Building signed .pak files"
+echo "==> Building signed .lpk files"
 (cd "$ROOT" && "$LIB_DIR/l10n4x" build)
 
 VERIFY_HEX="$(python3 -c "import json; print(json.load(open('$ROOT/l10n4x.config.json'))['verifyPublicKey'])")"
@@ -55,7 +55,7 @@ run_check "Python example" bash -c "cd '$ROOT/examples/python' && python3 main.p
 run_check "C# example" bash -c "cd '$ROOT/examples/csharp' && dotnet run --nologo -v q"
 
 mkdir -p "$ROOT/examples/flutter/assets/locales"
-cp "$PAK_DIR"/*.pak "$ROOT/examples/flutter/assets/locales/"
+cp "$LPK_DIR"/*.lpk "$ROOT/examples/flutter/assets/locales/"
 
 FLUTTER_DEFINE="--dart-define=L10N4X_VERIFY_PUBLIC_KEY=$VERIFY_HEX"
 export L10N4X_LIB_DIR="$LIB_DIR"

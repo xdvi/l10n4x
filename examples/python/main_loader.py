@@ -23,9 +23,9 @@ def examples_dir() -> str:
 def main() -> int:
     global _loader_keepalive
 
-    pak_dir = os.path.join(examples_dir(), "dist", "locales")
+    lpk_dir = os.path.join(examples_dir(), "dist", "locales")
     if len(sys.argv) > 1:
-        pak_dir = sys.argv[1]
+        lpk_dir = sys.argv[1]
 
     try:
         tr = Translator()
@@ -41,10 +41,10 @@ def main() -> int:
     tr.set_fallback_locale("en")
 
     # 2. Definir nuestra lógica de carga en Python
-    # Este callback lee el archivo .pak desde el disco de manera perezosa (bajo demanda)
+    # Este callback lee el archivo .lpk desde el disco de manera perezosa (bajo demanda)
     def my_python_loader(locale_bytes: bytes, out_bytes_ptr, out_len_ptr) -> int:
         locale = locale_bytes.decode("utf-8")
-        file_path = os.path.join(pak_dir, f"{locale}.pak")
+        file_path = os.path.join(lpk_dir, f"{locale}.lpk")
         
         try:
             print(f"[Python Loader Backend] Cargando '{file_path}' de manera perezosa...")
@@ -82,7 +82,7 @@ def main() -> int:
         return 1
 
     # 4. Traducir en caliente
-    # Nota: No llamamos a tr.load_pak_directory(). Al pedir "es", Rust llamará a nuestro callback.
+    # Nota: No llamamos a tr.load_lpk_directory(). Al pedir "es", Rust llamará a nuestro callback.
     es_welcome = tr.translate("es", "common.welcome")
     en_welcome = tr.translate("en", "common.welcome")
     en_greet = tr.translate("en", "common.greet", params={"name": "Diego"})

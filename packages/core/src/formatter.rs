@@ -359,7 +359,7 @@ fn format_mf2_match<W: core::fmt::Write>(
 }
 
 /// Maximum nesting depth of plural/select/MF2-match patterns. The bytecode is
-/// untrusted input (unsigned load paths exist); without a cap, a crafted pak
+/// untrusted input (unsigned load paths exist); without a cap, a crafted lpk
 /// with deeply nested cases overflows the stack and aborts the process.
 const MAX_FORMAT_DEPTH: u32 = 64;
 

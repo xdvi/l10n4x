@@ -45,7 +45,7 @@ jobs:
           wasm-pack build packages/wasm --profile release-size --target nodejs --out-dir ../../_wasm_pkg --out-name l10n4x
           ls -la _wasm_pkg/
 
-      - name: Compile fixture .pak files
+      - name: Compile fixture .lpk files
         run: |
           mkdir -p locales/en locales/es
           printf '{"welcome":"Welcome!","greet":"Hello, {name}!"}' > locales/en/common.json
@@ -59,7 +59,7 @@ jobs:
           HEX=$(python3 -c "import json; print(json.load(open('l10n4x.config.json'))['verifyPublicKey'])")
           echo "verify_hex=$HEX" >> "$GITHUB_OUTPUT"
 
-      - name: Upload native library + paks
+      - name: Upload native library + lpks
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: l10n4c-linux
@@ -98,7 +98,7 @@ jobs:
         run: |
           mkdir -p examples/lib examples/dist/locales
           find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
-          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/dist/locales/ \;
 
       - name: Run Python smoke test
         env:
@@ -132,7 +132,7 @@ jobs:
         run: |
           mkdir -p examples/lib examples/dist/locales
           find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
-          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/dist/locales/ \;
 
       - name: Run Go smoke test
         env:
@@ -168,7 +168,7 @@ jobs:
         run: |
           mkdir -p examples/lib examples/dist/locales
           find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
-          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/dist/locales/ \;
 
       - name: Run C# smoke test
         env:
@@ -204,8 +204,8 @@ jobs:
         run: |
           mkdir -p examples/lib examples/dist/locales examples/flutter/assets/locales
           find _native -name "libl10n4c.so" -exec cp {} examples/lib/ \;
-          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
-          find _native -name "*.pak" -exec cp {} examples/flutter/assets/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/flutter/assets/locales/ \;
 
       - name: Install dependencies
         run: |
@@ -253,7 +253,7 @@ jobs:
       - name: Prepare locales
         run: |
           mkdir -p examples/dist/locales
-          find _native -name "*.pak" -exec cp {} examples/dist/locales/ \;
+          find _native -name "*.lpk" -exec cp {} examples/dist/locales/ \;
 
       - name: Install dependencies and WASM package
         run: |

@@ -1,4 +1,4 @@
-//! Optional `L10E` outer envelope: AES-GCM wrapper around a signed `L10P` pak.
+//! Optional `L10E` outer envelope: AES-GCM wrapper around a signed `L10K` lpk.
 
 extern crate alloc;
 use alloc::vec::Vec;
@@ -14,18 +14,18 @@ pub const ENVELOPE_VERSION: u32 = 1;
 /// Header size: magic + version + blob length.
 pub const ENVELOPE_HEADER_SIZE: usize = 12;
 
-/// Wraps a signed `L10P` pak in an encrypted `L10E` envelope.
-pub fn wrap_encrypted(signed_pak: &[u8]) -> CoreResult<Vec<u8>> {
+/// Wraps a signed `L10K` lpk in an encrypted `L10E` envelope.
+pub fn wrap_encrypted(signed_lpk: &[u8]) -> CoreResult<Vec<u8>> {
     #[cfg(not(feature = "encryption"))]
     {
-        let _ = signed_pak;
+        let _ = signed_lpk;
         return Err(crate::CoreError::FeatureNotEnabled(
             "Encryption support not enabled",
         ));
     }
     #[cfg(feature = "encryption")]
     {
-        let encrypted = encryption::encrypt_aes_gcm(signed_pak)?;
+        let encrypted = encryption::encrypt_aes_gcm(signed_lpk)?;
         let mut out = Vec::with_capacity(ENVELOPE_HEADER_SIZE + encrypted.len());
         out.extend_from_slice(ENVELOPE_MAGIC);
         out.extend_from_slice(&ENVELOPE_VERSION.to_be_bytes());
@@ -35,14 +35,14 @@ pub fn wrap_encrypted(signed_pak: &[u8]) -> CoreResult<Vec<u8>> {
     }
 }
 
-/// Unwraps an `L10E` envelope into the inner signed `L10P` bytes.
+/// Unwraps an `L10E` envelope into the inner signed `L10K` bytes.
 pub fn unwrap_encrypted(data: &[u8]) -> CoreResult<Vec<u8>> {
     if data.len() < ENVELOPE_HEADER_SIZE {
-        return Err(crate::CoreError::BufferTooShort("Encrypted pak too short"));
+        return Err(crate::CoreError::BufferTooShort("Encrypted lpk too short"));
     }
     if &data[0..4] != ENVELOPE_MAGIC {
         return Err(crate::CoreError::InvalidMagic(
-            "Invalid encrypted pak magic",
+            "Invalid encrypted lpk magic",
         ));
     }
     let version = u32::from_be_bytes(data[4..8].try_into().unwrap());
@@ -52,9 +52,9 @@ pub fn unwrap_encrypted(data: &[u8]) -> CoreResult<Vec<u8>> {
     let blob_len = u32::from_be_bytes(data[8..12].try_into().unwrap()) as usize;
     let end = ENVELOPE_HEADER_SIZE
         .checked_add(blob_len)
-        .ok_or(crate::CoreError::Overflow("Encrypted pak length overflow"))?;
+        .ok_or(crate::CoreError::Overflow("Encrypted lpk length overflow"))?;
     if data.len() != end {
-        return Err(crate::CoreError::BufferTooShort("Encrypted pak truncated"));
+        return Err(crate::CoreError::BufferTooShort("Encrypted lpk truncated"));
     }
     #[cfg(not(feature = "encryption"))]
     {
@@ -67,15 +67,15 @@ pub fn unwrap_encrypted(data: &[u8]) -> CoreResult<Vec<u8>> {
     encryption::decrypt_aes_gcm(&data[ENVELOPE_HEADER_SIZE..end])
 }
 
-/// Opens on-disk bytes: returns inner signed `L10P` pak (decrypting `L10E` when needed).
+/// Opens on-disk bytes: returns inner signed `L10K` lpk (decrypting `L10E` when needed).
 pub fn open_outer(data: &[u8]) -> CoreResult<Vec<u8>> {
     if data.len() < 4 {
-        return Err(crate::CoreError::BufferTooShort("Pak file too short"));
+        return Err(crate::CoreError::BufferTooShort("Lpk file too short"));
     }
     match &data[0..4] {
-        b"L10P" => Ok(data.to_vec()),
+        b"L10K" => Ok(data.to_vec()),
         b"L10E" => unwrap_encrypted(data),
-        _ => Err(crate::CoreError::InvalidFormat("Unknown pak format")),
+        _ => Err(crate::CoreError::InvalidFormat("Unknown lpk format")),
     }
 }
 
@@ -85,7 +85,7 @@ mod open_outer_tests {
 
     #[test]
     fn open_outer_passes_through_l10p() {
-        let data = b"L10P\x00\x00\x00\x01\x00\x00\x00\x00";
+        let data = b"L10K\x00\x00\x00\x01\x00\x00\x00\x00";
         let result = open_outer(data);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), data);
@@ -147,7 +147,7 @@ mod unwrap_tests {
 mod tests {
     use super::*;
     use crate::encryption::test_helpers::ENC_TEST_LOCK;
-    use crate::pak::{build_unsigned, seal};
+    use crate::lpk::{build_unsigned, seal};
 
     #[test]
     fn l10e_roundtrip() {

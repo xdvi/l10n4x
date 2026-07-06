@@ -215,13 +215,13 @@ fn default_chain() -> Arc<[Arc<str>]> {
 
 /// Holds decompressed L10N binary data for a locale.
 ///
-/// - `Owned` — heap-allocated, used by runtime-loaded `.pak` files.
+/// - `Owned` — heap-allocated, used by runtime-loaded `.lpk` files.
 ///   `is_verified()` always returns `false` for this variant; runtime
 ///   ALWAYS verifies Owned data if a verify key is configured (see Prelude Rule 3).
 /// - `Static` — compile-time embedded via `include_bytes!` or similar.
 ///   The `bool` is the `already_verified` flag passed at load time, stored
 ///   as-is and returned directly by `is_verified()`.
-/// - `Lazy` — raw compressed `.pak` bytes deferred for decompression on first access.
+/// - `Lazy` — raw compressed `.lpk` bytes deferred for decompression on first access.
 ///   Only available under `feature = "std"`.
 ///
 /// # no_std compatibility
@@ -230,12 +230,12 @@ fn default_chain() -> Arc<[Arc<str>]> {
 /// - `StoreData::Owned(Arc<Vec<u8>>)` requires `alloc` (for `Arc` and `Vec`).
 /// - `StoreData::Lazy(Arc<Vec<u8>>)` requires `alloc` + `std` (for OnceLock cache).
 pub enum StoreData {
-    /// Runtime-loaded from a `.pak` file. Verification happens at runtime (if configured).
+    /// Runtime-loaded from a `.lpk` file. Verification happens at runtime (if configured).
     Owned(Arc<Vec<u8>>),
     /// Compile-time embedded data. The `bool` is the `already_verified` flag
     /// passed via `load_static_bytes`. If `true`, build-time verification was performed.
     Static(&'static [u8], bool),
-    /// Raw compressed `.pak` bytes. Decompressed on first lookup via lazy_cache.
+    /// Raw compressed `.lpk` bytes. Decompressed on first lookup via lazy_cache.
     #[cfg(feature = "std")]
     Lazy(Arc<Vec<u8>>),
 }
@@ -452,7 +452,7 @@ impl TranslationStore {
                 // translate time: return None so the fallback chain takes over.
                 let entry = self.lazy_cache.as_ref().and_then(|c| c.get(&locale_hash))?;
                 let (decompressed, _) = entry.get_or_init(|| {
-                    match crate::pak::decompress_zstd_payload(compressed.as_slice()) {
+                    match crate::lpk::decompress_zstd_payload(compressed.as_slice()) {
                         Ok(output) => {
                             let offsets = if let Ok(reader) =
                                 crate::binary_format::BinaryFormatReader::new(&output)

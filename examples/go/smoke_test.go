@@ -7,8 +7,8 @@ import (
 	"testing"
 )
 
-func pakDir() string {
-	if d := os.Getenv("L10N4X_PAK_DIR"); d != "" {
+func lpkDir() string {
+	if d := os.Getenv("L10N4X_LPK_DIR"); d != "" {
 		return d
 	}
 	return filepath.Join("..", "dist", "locales")
@@ -23,7 +23,7 @@ func skipIfNoKey(t *testing.T) {
 
 func TestSpanishWelcome(t *testing.T) {
 	skipIfNoKey(t)
-	tr, err := NewTranslator("es", pakDir())
+	tr, err := NewTranslator("es", lpkDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestSpanishWelcome(t *testing.T) {
 
 func TestEnglishWelcome(t *testing.T) {
 	skipIfNoKey(t)
-	tr, err := NewTranslator("es", pakDir())
+	tr, err := NewTranslator("es", lpkDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestEnglishWelcome(t *testing.T) {
 
 func TestFallbackToSpanish(t *testing.T) {
 	skipIfNoKey(t)
-	tr, err := NewTranslator("es", pakDir())
+	tr, err := NewTranslator("es", lpkDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestFallbackToSpanish(t *testing.T) {
 
 func TestMissingKeyReturnsRaw(t *testing.T) {
 	skipIfNoKey(t)
-	tr, err := NewTranslator("es", pakDir())
+	tr, err := NewTranslator("es", lpkDir())
 	if err != nil {
 		t.Fatal(err)
 	}

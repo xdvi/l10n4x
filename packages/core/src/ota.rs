@@ -1,9 +1,9 @@
-//! OTA (over-the-air) translation pak reload with one-retired-snapshot rollback.
+//! OTA (over-the-air) translation lpk reload with one-retired-snapshot rollback.
 
 extern crate alloc;
 
 use crate::error::CoreResult;
-use crate::pak::decompress_pak;
+use crate::lpk::decompress_lpk;
 use crate::store::{
     build_store, store_snapshot, upsert_locale, LazyDecompressCache, OffsetMap, StoreData,
     StoreSnapshot,
@@ -167,15 +167,15 @@ pub fn ota_can_rollback(_locale: &str) -> bool {
     false
 }
 
-/// Verifies `pak_bytes`, saves the current locale state for rollback, and atomically loads the new pak.
+/// Verifies `lpk_bytes`, saves the current locale state for rollback, and atomically loads the new lpk.
 #[cfg(feature = "std")]
-pub fn try_ota_reload_pak_for_store(
+pub fn try_ota_reload_lpk_for_store(
     handle: Option<StoreHandle>,
     locale: &str,
-    pak_bytes: &[u8],
+    lpk_bytes: &[u8],
 ) -> CoreResult<()> {
     let decompressed =
-        decompress_pak(pak_bytes).inspect_err(|_| crate::metrics::inc_pak_verify_failures())?;
+        decompress_lpk(lpk_bytes).inspect_err(|_| crate::metrics::inc_lpk_verify_failures())?;
 
     // Capture-for-rollback and load must happen in ONE writer critical
     // section: a concurrent load landing between them would make the rollback
@@ -194,18 +194,18 @@ pub fn try_ota_reload_pak_for_store(
         Ok(build_store(snap))
     })?;
     crate::store::notify_locale_changed_for_handle(handle, locale);
-    crate::metrics::inc_pak_reload_total();
+    crate::metrics::inc_lpk_reload_total();
     Ok(())
 }
 
-/// Verifies `pak_bytes`, saves the current locale state for rollback, and atomically loads the new pak.
+/// Verifies `lpk_bytes`, saves the current locale state for rollback, and atomically loads the new lpk.
 #[cfg(feature = "std")]
-pub fn try_ota_reload_pak(locale: &str, pak_bytes: &[u8]) -> CoreResult<()> {
-    try_ota_reload_pak_for_store(None, locale, pak_bytes)
+pub fn try_ota_reload_lpk(locale: &str, lpk_bytes: &[u8]) -> CoreResult<()> {
+    try_ota_reload_lpk_for_store(None, locale, lpk_bytes)
 }
 
 #[cfg(not(feature = "std"))]
-pub fn try_ota_reload_pak(_locale: &str, _pak_bytes: &[u8]) -> CoreResult<()> {
+pub fn try_ota_reload_lpk(_locale: &str, _lpk_bytes: &[u8]) -> CoreResult<()> {
     Err(crate::CoreError::IoError("OTA requires std feature"))
 }
 
@@ -226,7 +226,7 @@ pub fn try_ota_rollback_for_store(handle: Option<StoreHandle>, locale: &str) -> 
         restore_locale_snapshot(&mut snap, locale, retired);
         Ok(build_store(snap))
     })?;
-    crate::metrics::inc_pak_rollback_total();
+    crate::metrics::inc_lpk_rollback_total();
     crate::store::notify_locale_changed_for_handle(handle, locale);
     Ok(())
 }
@@ -244,12 +244,12 @@ pub fn try_ota_rollback(_locale: &str) -> CoreResult<()> {
 
 /// Convenience wrapper returning `true` on successful OTA reload.
 #[cfg(feature = "std")]
-pub fn ota_reload_pak(locale: &str, pak_bytes: &[u8]) -> bool {
-    try_ota_reload_pak(locale, pak_bytes).is_ok()
+pub fn ota_reload_lpk(locale: &str, lpk_bytes: &[u8]) -> bool {
+    try_ota_reload_lpk(locale, lpk_bytes).is_ok()
 }
 
 #[cfg(not(feature = "std"))]
-pub fn ota_reload_pak(_locale: &str, _pak_bytes: &[u8]) -> bool {
+pub fn ota_reload_lpk(_locale: &str, _lpk_bytes: &[u8]) -> bool {
     false
 }
 

@@ -48,7 +48,7 @@ fn compile_error_includes_locale_and_key() {
     // Single-string JSON file → flattened key is the file stem ("hello").
     fs::write(en.join("hello.json"), r#""{unclosed""#).unwrap();
 
-    let out = tmp.path().join("out.pak");
+    let out = tmp.path().join("out.lpk");
     let err = compile_with_options(tmp.path(), &out, CompileOptions::default()).unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("Locale 'en'"), "{msg}");
@@ -66,7 +66,7 @@ fn compile_rejects_forward_local_reference() {
     )
     .unwrap();
 
-    let out = tmp.path().join("out.pak");
+    let out = tmp.path().join("out.lpk");
     let err = compile_with_options(
         tmp.path(),
         &out,

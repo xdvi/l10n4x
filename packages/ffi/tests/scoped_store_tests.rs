@@ -9,7 +9,7 @@ use l10n4x_core::binary_format::{fnv1a_64, pack_l10n, RUNTIME_VERSION};
 use l10n4x_core::loader::try_load_static_bytes_for_store;
 use l10n4x_core::store_registry::StoreHandle;
 
-fn pak_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
+fn lpk_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
     let entries: Vec<(u64, Vec<u8>)> = vec![(hash, text.to_vec())];
     pack_l10n(&entries, RUNTIME_VERSION, 1, None)
 }
@@ -35,8 +35,8 @@ fn ffi_scoped_store_translate_isolated() {
 
     let handle = StoreHandle::from_raw(h).unwrap();
     let key = fnv1a_64(b"hello");
-    let pak = pak_with_text(key, b"scoped");
-    try_load_static_bytes_for_store(Some(handle), "en", &pak, true).unwrap();
+    let lpk = lpk_with_text(key, b"scoped");
+    try_load_static_bytes_for_store(Some(handle), "en", &lpk, true).unwrap();
 
     let locale = CString::new("en").unwrap();
     let mut global_buf = [0u8; 64];

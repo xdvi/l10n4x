@@ -90,8 +90,8 @@ class Translator:
         self._lib.l10n4c_set_fallback_locale.argtypes = [ctypes.c_char_p]
         self._lib.l10n4c_set_fallback_locale.restype = ctypes.c_int
 
-        self._lib.l10n4c_load_pak_directory.argtypes = [ctypes.c_char_p]
-        self._lib.l10n4c_load_pak_directory.restype = ctypes.c_int
+        self._lib.l10n4c_load_lpk_directory.argtypes = [ctypes.c_char_p]
+        self._lib.l10n4c_load_lpk_directory.restype = ctypes.c_int
 
         self._lib.l10n4c_translate_required_size.argtypes = [
             ctypes.c_char_p,
@@ -144,10 +144,10 @@ class Translator:
         if self._lib.l10n4c_set_fallback_locale(c_locale) != L10N4C_OK:
             raise RuntimeError("l10n4c: failed to set fallback locale")
 
-    def load_pak_directory(self, dir_path: str):
+    def load_lpk_directory(self, dir_path: str):
         c_path = dir_path.encode("utf-8")
-        if self._lib.l10n4c_load_pak_directory(c_path) != L10N4C_OK:
-            raise RuntimeError(f"l10n4c: failed to load pak directory: {dir_path}")
+        if self._lib.l10n4c_load_lpk_directory(c_path) != L10N4C_OK:
+            raise RuntimeError(f"l10n4c: failed to load lpk directory: {dir_path}")
 
     def _get_cached_locale(self, locale: str) -> bytes:
         if locale not in self._locale_cache:

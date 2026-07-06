@@ -3,7 +3,7 @@
 ## Overview
 
 Embed compiled translations directly in your binary at compile time,
-eliminating the need for external `.pak` files at runtime.
+eliminating the need for external `.lpk` files at runtime.
 
 ## Security contract
 
@@ -14,7 +14,7 @@ All embedded static data follows these signature handling rules
    the Ed25519 signature before generating the `&'static [u8]` array.
 2. **Runtime never re-verifies static data.** The `StoreData::Static` variant
    is trusted; the `already_verified` flag is informational.
-3. **Runtime always verifies owned data.** The existing `load_pak_bytes` /
+3. **Runtime always verifies owned data.** The existing `load_lpk_bytes` /
    `load_raw_bytes` paths continue to verify at runtime if a verify key
    is configured.
 
@@ -70,8 +70,8 @@ The main recommended flow uses raw L10N bytes with `already_verified = true` (sh
 The signature verification happens at build time, and runtime trusts the
 `already_verified` flag. This is sufficient for most use cases.
 
-An alternative for defense-in-depth is to embed signed `.pak` files instead of raw
-L10N bytes. The runtime then verifies the signature via the existing `load_pak_bytes`
+An alternative for defense-in-depth is to embed signed `.lpk` files instead of raw
+L10N bytes. The runtime then verifies the signature via the existing `load_lpk_bytes`
 path, at the cost of decompression on init:
 
 ```rust
@@ -85,10 +85,10 @@ let mut mod_content = String::new();
 for (locale, bytes) in &translations {
     let signed = signing::sign(&bytes);
     let public_key = signing::signing_public_key().unwrap();
-    let pak = pak::build_unsigned(&bytes, &signed, &public_key);
+    let lpk = lpk::build_unsigned(&bytes, &signed, &public_key);
     mod_content.push_str(&format!(
         "pub const {}: &[u8] = &{:?};\n",
-        locale.to_uppercase(), pak
+        locale.to_uppercase(), lpk
     ));
 }
 ```

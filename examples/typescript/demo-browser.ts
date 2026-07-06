@@ -5,7 +5,7 @@
  *   cd examples/typescript
  *   npx vite --open
  *
- * The bundler must copy .pak files to the public/locales directory, or you
+ * The bundler must copy .lpk files to the public/locales directory, or you
  * can configure vite.config.ts to serve them from a static path.
  */
 

@@ -116,7 +116,7 @@ fn test_translate_helper_and_macro() {
     let val_offset: u32 = 16;
     let index_offset: u32 = val_offset + val_len;
 
-    // mock build pak with new format: [hash:8B][val_offset:4B][val_len:4B]
+    // mock build lpk with new format: [hash:8B][val_offset:4B][val_len:4B]
     let mut data = Vec::new();
     data.extend_from_slice(b"L10N");
     data.extend_from_slice(&1u32.to_be_bytes()); // version
@@ -310,10 +310,10 @@ fn test_ebr_stress() {
 }
 
 #[test]
-fn test_load_pak_lazy_then_translate() {
+fn test_load_lpk_lazy_then_translate() {
     let _lock = TEST_MUTEX.lock().unwrap();
     use l10n4x_core::integrity;
-    use l10n4x_core::loader::try_load_pak_lazy;
+    use l10n4x_core::loader::try_load_lpk_lazy;
     use l10n4x_core::store::{clear_translations, translate};
     use std::fs;
     use std::path::Path;
@@ -334,8 +334,8 @@ fn test_load_pak_lazy_then_translate() {
     fs::create_dir_all(temp_out).unwrap();
     l10n4x_compiler::compile_translations(temp_src, temp_out, false, 8).unwrap();
 
-    let pak_bytes = fs::read(temp_out.join("en.pak")).unwrap();
-    assert!(try_load_pak_lazy("en", &pak_bytes).is_ok());
+    let lpk_bytes = fs::read(temp_out.join("en.lpk")).unwrap();
+    assert!(try_load_lpk_lazy("en", &lpk_bytes).is_ok());
 
     let key_hash = fnv1a_64(b"common.greeting");
     let result = translate("en", key_hash, None, &[]);

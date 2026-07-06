@@ -16,11 +16,11 @@ typescript/
 
 ## Architecture
 
-The key design is **loader injection**: `i18n.ts` does not hardcode how `.pak`
-files are fetched. Instead, it accepts a `PakLoader` function:
+The key design is **loader injection**: `i18n.ts` does not hardcode how `.lpk`
+files are fetched. Instead, it accepts a `LpkLoader` function:
 
 ```ts
-type PakLoader = (locale: string) => Promise<Uint8Array>;
+type LpkLoader = (locale: string) => Promise<Uint8Array>;
 ```
 
 This makes the core isomorphic — the same `createI18n()` factory works in every
@@ -28,9 +28,9 @@ environment by supplying the right loader.
 
 | Environment | Entry point | Loader |
 |---|---|---|
-| Browser / CDN | `client.ts` | `browserPakLoader(baseUrl)` — uses `fetch` |
-| Node.js / SSR | `server.ts` | `nodePakLoader(dir)` — uses `fs/promises` |
-| Custom / Edge | `i18n.ts` | inject your own `PakLoader` |
+| Browser / CDN | `client.ts` | `browserLpkLoader(baseUrl)` — uses `fetch` |
+| Node.js / SSR | `server.ts` | `nodeLpkLoader(dir)` — uses `fs/promises` |
+| Custom / Edge | `i18n.ts` | inject your own `LpkLoader` |
 
 ## Quick start
 
@@ -48,7 +48,7 @@ npm install
 npm run demo:browser
 ```
 
-> Ensure `.pak` files are in `../dist/locales/` (relative to this directory),
+> Ensure `.lpk` files are in `../dist/locales/` (relative to this directory),
 > or adjust the path in `demo-node.ts` / `demo-browser.ts`.
 
 ## Usage in Next.js (App Router)

@@ -12,18 +12,18 @@ extern "C" {
 
 #define L10N4C_OK                  0  /* Success                                    */
 #define L10N4C_KEY_NOT_FOUND       1  /* Key missing in requested + fallback locale  */
-#define L10N4C_LOCALE_NOT_LOADED   2  /* Locale not loaded — call load_pak_* first   */
+#define L10N4C_LOCALE_NOT_LOADED   2  /* Locale not loaded — call load_lpk_* first   */
 #define L10N4C_BUFFER_TOO_SMALL    3  /* Buffer too small — call _required_size      */
 #define L10N4C_INVALID_PARAMS      4  /* Null pointer or invalid UTF-8               */
 #define L10N4C_INTERNAL_ERROR      5  /* Unexpected internal error                   */
 #define L10N4C_INVALID_ENCODING    6  /* Parameter contains invalid UTF-8 encoding   */
 #define L10N4C_IO_ERROR            7  /* File/directory I/O failure                  */
-#define L10N4C_SIGNATURE_INVALID   8  /* Ed25519 signature mismatch (tampered pak)   */
+#define L10N4C_SIGNATURE_INVALID   8  /* Ed25519 signature mismatch (tampered lpk)   */
 #define L10N4C_VERIFY_KEY_NOT_SET  9  /* Call l10n4c_set_verify_key first            */
-#define L10N4C_NOT_INITIALIZED    10  /* Call l10n4c_load_pak_directory first        */
+#define L10N4C_NOT_INITIALIZED    10  /* Call l10n4c_load_lpk_directory first        */
 #define L10N4C_DECRYPT_KEY_NOT_SET 11 /* Call l10n4c_set_decrypt_key first (L10E)    */
 #define L10N4C_BUFFER_OVERFLOW     12 /* Operation resulted in buffer overflow        */
-#define L10N4C_RUNTIME_TOO_OLD      13 /* Pak requires a newer runtime than this build  */
+#define L10N4C_RUNTIME_TOO_OLD      13 /* Lpk requires a newer runtime than this build  */
 
 /* ── Types ────────────────────────────────────────────────────────────────── */
 
@@ -48,11 +48,11 @@ int32_t l10n4c_set_fallback_chain(const char **locales, size_t count);
 
 /* ── Loading (runtime only — compile with `l10n4x build` CLI) ─────────── */
 
-int32_t l10n4c_load_pak_locale(const char *locale, const char *file_path);
+int32_t l10n4c_load_lpk_locale(const char *locale, const char *file_path);
 int32_t l10n4c_load_namespace(const char *locale, const char *namespace,
                                 const char *file_path);
 int32_t l10n4c_init_modular(const char *base_dir, const char *locale);
-int32_t l10n4c_load_pak_directory(const char *dir_path);
+int32_t l10n4c_load_lpk_directory(const char *dir_path);
 int32_t l10n4c_load_static_bytes(const char *locale, const uint8_t *data,
                                    size_t data_len, int32_t already_verified);
 void    l10n4c_clear(void);
@@ -67,8 +67,8 @@ uint32_t l10n4c_store_create(void);
 /** Destroys a scoped store. store_handle must be non-zero. */
 int32_t l10n4c_store_destroy(uint32_t store_handle);
 
-/** Loads a .pak file into a scoped store. */
-int32_t l10n4c_store_load_pak_locale(uint32_t store_handle, const char *locale,
+/** Loads a .lpk file into a scoped store. */
+int32_t l10n4c_store_load_lpk_locale(uint32_t store_handle, const char *locale,
                                      const char *file_path);
 
 /** Translates a key from a scoped store into buf (up to max_len bytes). */
@@ -83,14 +83,14 @@ int32_t l10n4c_store_translate_with_params(uint32_t store_handle, const char *lo
 /** Clears all translations in a scoped store without affecting the global store. */
 int32_t l10n4c_store_clear(uint32_t store_handle);
 
-/** Atomically reloads a signed .pak for locale in a scoped store. */
-int32_t l10n4c_store_ota_reload_pak(uint32_t store_handle, const char *locale,
-                                    const uint8_t *pak_bytes, size_t pak_len);
+/** Atomically reloads a signed .lpk for locale in a scoped store. */
+int32_t l10n4c_store_ota_reload_lpk(uint32_t store_handle, const char *locale,
+                                    const uint8_t *lpk_bytes, size_t lpk_len);
 
 /**
- * Atomically reloads a signed .pak for locale, retaining one retired snapshot for rollback.
+ * Atomically reloads a signed .lpk for locale, retaining one retired snapshot for rollback.
  */
-int32_t l10n4c_ota_reload_pak(const char *locale, const uint8_t *pak_bytes, size_t pak_len);
+int32_t l10n4c_ota_reload_lpk(const char *locale, const uint8_t *lpk_bytes, size_t lpk_len);
 
 /** Restores the retired OTA snapshot for locale when available. */
 int32_t l10n4c_ota_rollback(const char *locale);

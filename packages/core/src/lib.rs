@@ -1,7 +1,7 @@
 //! # l10n4x-core
 //!
 //! `l10n4x-core` is the high-performance, `#![no_std]` compatible runtime library
-//! that processes and formats localization strings directly from decompressed in-memory `.pak` files.
+//! that processes and formats localization strings directly from decompressed in-memory `.lpk` files.
 //!
 //! Key capabilities:
 //! - Zero-copy decoding of compact, sorted binary localization packages.
@@ -28,30 +28,30 @@ pub mod date_format;
 /// Optional AES-GCM encryption (`L10E` envelope).
 #[cfg(feature = "encryption")]
 pub mod encryption;
-/// Optional encrypted outer wrapper around signed paks.
+/// Optional encrypted outer wrapper around signed lpks.
 pub mod envelope;
 /// Float math helpers for `no_std` compatibility.
 pub(crate) mod float_math;
 /// ICU MessageFormat parsing and interpolation engine.
 pub mod formatter;
-/// Ed25519 signing and verification for `.pak` integrity.
+/// Ed25519 signing and verification for `.lpk` integrity.
 pub mod integrity;
 /// Locale-aware list formatting ("A, B, and C").
 pub mod list_format;
-/// Decompression and in-memory pak loading.
+/// Decompression and in-memory lpk loading.
 pub mod loader;
 /// Versioned CLDR metadata, RTL detection, and timezone resolution.
 pub mod locale_data;
 pub(crate) mod locale_util;
+/// Outer `.lpk` container format (zstd + Ed25519).
+pub mod lpk;
 /// MF2 conformance test functions (`:test:*`).
 pub mod mf2_functions;
 /// Locale-aware number formatting (decimal, percent, integer styles).
 pub mod number_format;
-/// OTA pak reload with one-retired-snapshot rollback.
+/// OTA lpk reload with one-retired-snapshot rollback.
 #[cfg(feature = "std")]
 pub mod ota;
-/// Outer `.pak` container format (zstd + Ed25519).
-pub mod pak;
 /// CLDR-accurate plural rule resolution for 120+ locales.
 pub mod plural_rules;
 pub(crate) mod reclaim;
@@ -66,8 +66,8 @@ pub mod store_cell;
 pub mod store_registry;
 #[cfg(feature = "std")]
 pub use ota::{
-    ota_can_rollback, ota_can_rollback_for_store, ota_reload_pak, ota_rollback, try_ota_reload_pak,
-    try_ota_reload_pak_for_store, try_ota_rollback, try_ota_rollback_for_store,
+    ota_can_rollback, ota_can_rollback_for_store, ota_reload_lpk, ota_rollback, try_ota_reload_lpk,
+    try_ota_reload_lpk_for_store, try_ota_rollback, try_ota_rollback_for_store,
 };
 #[cfg(feature = "std")]
 pub use store::hash_params;

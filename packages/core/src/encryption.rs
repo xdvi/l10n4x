@@ -1,6 +1,6 @@
-//! Optional AES-256-GCM encryption for `.pak` transport/storage (`L10E` envelope).
+//! Optional AES-256-GCM encryption for `.lpk` transport/storage (`L10E` envelope).
 //!
-//! Signing (Ed25519) is always applied to the inner `L10P` container. Encryption is an
+//! Signing (Ed25519) is always applied to the inner `L10K` container. Encryption is an
 //! opt-in outer wrapper and does **not** replace signature verification.
 
 extern crate alloc;

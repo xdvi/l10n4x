@@ -35,8 +35,8 @@ typedef L10n4cSetVerifyKey = int Function(ffi.Pointer<ffi.Uint8> key, int key_le
 typedef l10n4c_set_fallback_locale_func = ffi.Int32 Function(ffi.Pointer<Utf8> locale);
 typedef L10n4cSetFallbackLocale = int Function(ffi.Pointer<Utf8> locale);
 
-typedef l10n4c_load_pak_locale_func = ffi.Int32 Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> file_path);
-typedef L10n4cLoadPakLocale = int Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> file_path);
+typedef l10n4c_load_lpk_locale_func = ffi.Int32 Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> file_path);
+typedef L10n4cLoadLpkLocale = int Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> file_path);
 
 typedef l10n4c_translate_alloc_func = ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> key);
 typedef L10n4cTranslateAlloc = ffi.Pointer<Utf8> Function(ffi.Pointer<Utf8> locale, ffi.Pointer<Utf8> key);
@@ -64,7 +64,7 @@ class L10n {
   static late final ffi.DynamicLibrary _lib;
   static late final L10n4cSetVerifyKey _setVerifyKey;
 {{DECRYPT_KEY_FIELDS}}  static late final L10n4cSetFallbackLocale _setFallbackLocale;
-  static late final L10n4cLoadPakLocale _loadPakLocale;
+  static late final L10n4cLoadLpkLocale _loadLpkLocale;
   static late final L10n4cTranslateAlloc _translateAlloc;
   static late final L10n4cTranslateWithParamsAlloc _translateWithParamsAlloc;
   static late final L10n4cFreeString _freeString;
@@ -93,7 +93,7 @@ class L10n {
 
     _setVerifyKey = _lib.lookup<ffi.NativeFunction<l10n4c_set_verify_key_func>>('l10n4c_set_verify_key').asFunction();
 {{DECRYPT_KEY_LOOKUP}}    _setFallbackLocale = _lib.lookup<ffi.NativeFunction<l10n4c_set_fallback_locale_func>>('l10n4c_set_fallback_locale').asFunction();
-    _loadPakLocale = _lib.lookup<ffi.NativeFunction<l10n4c_load_pak_locale_func>>('l10n4c_load_pak_locale').asFunction();
+    _loadLpkLocale = _lib.lookup<ffi.NativeFunction<l10n4c_load_lpk_locale_func>>('l10n4c_load_lpk_locale').asFunction();
     _translateAlloc = _lib.lookup<ffi.NativeFunction<l10n4c_translate_alloc_func>>('l10n4c_translate_alloc').asFunction();
     _translateWithParamsAlloc = _lib.lookup<ffi.NativeFunction<l10n4c_translate_with_params_alloc_func>>('l10n4c_translate_with_params_alloc').asFunction();
     _freeString = _lib.lookup<ffi.NativeFunction<l10n4c_free_string_func>>('l10n4c_free_string').asFunction();
@@ -125,12 +125,12 @@ class L10n {
     if (_loadedLocales.contains(locale)) return true;
 
     try {
-      final pakPath = '$_languagesDir/$locale.pak';
-      final file = File(pakPath);
+      final lpkPath = '$_languagesDir/$locale.lpk';
+      final file = File(lpkPath);
       if (await file.exists()) {
         final cLocale = locale.toNativeUtf8();
-        final cPath = pakPath.toNativeUtf8();
-        final success = _loadPakLocale(cLocale, cPath) == 0;
+        final cPath = lpkPath.toNativeUtf8();
+        final success = _loadLpkLocale(cLocale, cPath) == 0;
         calloc.free(cLocale);
         calloc.free(cPath);
         if (success) {
@@ -139,14 +139,14 @@ class L10n {
         }
       } else {
         try {
-          final byteData = await rootBundle.load('assets/locales/$locale.pak');
+          final byteData = await rootBundle.load('assets/locales/$locale.lpk');
           final tempDir = await Directory.systemTemp.createTemp();
-          final tempFile = File('${tempDir.path}/$locale.pak');
+          final tempFile = File('${tempDir.path}/$locale.lpk');
           await tempFile.writeAsBytes(byteData.buffer.asUint8List());
 
           final cLocale = locale.toNativeUtf8();
           final cPath = tempFile.path.toNativeUtf8();
-          final success = _loadPakLocale(cLocale, cPath) == 0;
+          final success = _loadLpkLocale(cLocale, cPath) == 0;
           calloc.free(cLocale);
           calloc.free(cPath);
 

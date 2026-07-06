@@ -66,13 +66,13 @@ func loadLocale(locale string) bool {
 		return true
 	}
 
-	pakPath := filepath.Join(languagesDir, locale+".pak")
-	if _, err := os.Stat(pakPath); os.IsNotExist(err) {
+	lpkPath := filepath.Join(languagesDir, locale+".lpk")
+	if _, err := os.Stat(lpkPath); os.IsNotExist(err) {
 		currentDir := languagesDir
 		for i := 0; i < 6; i++ {
-			testPath := filepath.Join(currentDir, locale+".pak")
+			testPath := filepath.Join(currentDir, locale+".lpk")
 			if _, statErr := os.Stat(testPath); statErr == nil {
-				pakPath = testPath
+				lpkPath = testPath
 				break
 			}
 			currentDir = filepath.Join("..", currentDir)
@@ -81,10 +81,10 @@ func loadLocale(locale string) bool {
 
 	cLocale := C.CString(locale)
 	defer C.free(unsafe.Pointer(cLocale))
-	cPath := C.CString(pakPath)
+	cPath := C.CString(lpkPath)
 	defer C.free(unsafe.Pointer(cPath))
 
-	success := C.l10n4c_load_pak_locale(cLocale, cPath) == C.L10N4C_OK
+	success := C.l10n4c_load_lpk_locale(cLocale, cPath) == C.L10N4C_OK
 	if success {
 		loadedLocales[locale] = true
 	}
@@ -206,13 +206,13 @@ func (s *Store) loadLocale(locale string) bool {
 		return true
 	}
 
-	pakPath := filepath.Join(languagesDir, locale+".pak")
-	if _, err := os.Stat(pakPath); os.IsNotExist(err) {
+	lpkPath := filepath.Join(languagesDir, locale+".lpk")
+	if _, err := os.Stat(lpkPath); os.IsNotExist(err) {
 		currentDir := languagesDir
 		for i := 0; i < 6; i++ {
-			testPath := filepath.Join(currentDir, locale+".pak")
+			testPath := filepath.Join(currentDir, locale+".lpk")
 			if _, statErr := os.Stat(testPath); statErr == nil {
-				pakPath = testPath
+				lpkPath = testPath
 				break
 			}
 			currentDir = filepath.Join("..", currentDir)
@@ -221,10 +221,10 @@ func (s *Store) loadLocale(locale string) bool {
 
 	cLocale := C.CString(locale)
 	defer C.free(unsafe.Pointer(cLocale))
-	cPath := C.CString(pakPath)
+	cPath := C.CString(lpkPath)
 	defer C.free(unsafe.Pointer(cPath))
 
-	success := C.l10n4c_store_load_pak_locale(s.handle, cLocale, cPath) == C.L10N4C_OK
+	success := C.l10n4c_store_load_lpk_locale(s.handle, cLocale, cPath) == C.L10N4C_OK
 	if success {
 		s.loadedLocales[locale] = true
 	}

@@ -1,12 +1,12 @@
 /**
  * client.ts — Browser entry point for l10n4x
  *
- * Uses the Fetch API to download .pak files. Works in any browser environment
+ * Uses the Fetch API to download .lpk files. Works in any browser environment
  * or bundler (Vite, webpack, Rollup, etc.).
  *
  * Example (in your app's bootstrap):
  *
- *   import { browserPakLoader, createBrowserI18n } from "./client";
+ *   import { browserLpkLoader, createBrowserI18n } from "./client";
  *   const i18n = await createBrowserI18n({
  *     localesBaseUrl: "/locales",
  *     fallbackLocale: "en",
@@ -14,21 +14,21 @@
  *   document.getElementById("greeting")!.textContent = i18n.t("es", "app.greeting");
  */
 
-import { createI18n, type I18nInstance, type I18nOptions, type PakLoader } from "./i18n";
+import { createI18n, type I18nInstance, type I18nOptions, type LpkLoader } from "./i18n";
 
 // ---------------------------------------------------------------------------
 // Loader
 // ---------------------------------------------------------------------------
 
 /**
- * Build a PakLoader backed by the browser's Fetch API.
+ * Build a LpkLoader backed by the browser's Fetch API.
  *
- * @param baseUrl  URL prefix where .pak files live (e.g. "/locales" or
+ * @param baseUrl  URL prefix where .lpk files live (e.g. "/locales" or
  *                 "https://cdn.example.com/locales"). No trailing slash.
  */
-export function browserPakLoader(baseUrl: string): PakLoader {
+export function browserLpkLoader(baseUrl: string): LpkLoader {
   return async (locale: string): Promise<Uint8Array> => {
-    const url = `${baseUrl}/${locale}.pak`;
+    const url = `${baseUrl}/${locale}.lpk`;
     const res = await fetch(url);
     if (!res.ok) {
       throw new Error(
@@ -46,12 +46,12 @@ export function browserPakLoader(baseUrl: string): PakLoader {
 export interface BrowserI18nOptions
   extends Omit<I18nOptions, "loader"> {
   /**
-   * Base URL for .pak files.
+   * Base URL for .lpk files.
    * @default "/locales"
    */
   localesBaseUrl?: string;
   /** Custom loader (overrides localesBaseUrl). */
-  loader?: PakLoader;
+  loader?: LpkLoader;
 }
 
 /**
@@ -67,10 +67,10 @@ export async function createBrowserI18n(
   const baseUrl = options.localesBaseUrl ?? "/locales";
   return createI18n({
     ...options,
-    loader: options.loader ?? browserPakLoader(baseUrl),
+    loader: options.loader ?? browserLpkLoader(baseUrl),
   });
 }
 
 // Re-export core types so consumers can import from a single file.
-export type { I18nInstance, PakLoader };
+export type { I18nInstance, LpkLoader };
 export { createI18n };

@@ -36,7 +36,7 @@ func fnv1aKey(key string) uint64 {
 // Translator wraps the FFI library and caches locale C-strings to avoid cgo overhead.
 type Translator struct {
 	fallback    string
-	pakDir      string
+	lpkDir      string
 	localeCache map[string]*C.char
 	mu          sync.RWMutex
 }
@@ -67,16 +67,16 @@ func installRuntimeKeys() error {
 	return nil
 }
 
-// NewTranslator loads all .pak files from pakDir.
+// NewTranslator loads all .lpk files from lpkDir.
 // Requires L10N4X_VERIFY_PUBLIC_KEY; set L10N4X_ENCRYPT_KEY only when encrypt is enabled in config.
-func NewTranslator(fallbackLocale, pakDir string) (*Translator, error) {
+func NewTranslator(fallbackLocale, lpkDir string) (*Translator, error) {
 	if err := installRuntimeKeys(); err != nil {
 		return nil, err
 	}
 
 	tr := &Translator{
 		fallback:    fallbackLocale,
-		pakDir:      pakDir,
+		lpkDir:      lpkDir,
 		localeCache: make(map[string]*C.char),
 	}
 
@@ -86,10 +86,10 @@ func NewTranslator(fallbackLocale, pakDir string) (*Translator, error) {
 		return nil, fmt.Errorf("l10n4c: failed to set fallback locale")
 	}
 
-	cDir := C.CString(pakDir)
+	cDir := C.CString(lpkDir)
 	defer C.free(unsafe.Pointer(cDir))
-	if C.l10n4c_load_pak_directory(cDir) != C.L10N4C_OK {
-		return nil, fmt.Errorf("l10n4c: failed to load pak directory: %s", pakDir)
+	if C.l10n4c_load_lpk_directory(cDir) != C.L10N4C_OK {
+		return nil, fmt.Errorf("l10n4c: failed to load lpk directory: %s", lpkDir)
 	}
 
 	return tr, nil

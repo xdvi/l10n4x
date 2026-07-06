@@ -1,7 +1,7 @@
 /**
  * server.ts — Node.js / SSR entry point for l10n4x
  *
- * Uses `node:fs/promises` to read .pak files from disk. Suitable for:
+ * Uses `node:fs/promises` to read .lpk files from disk. Suitable for:
  *   - Next.js App Router (Server Components, Route Handlers)
  *   - Express / Fastify / Hono middleware
  *   - Standalone Node.js scripts
@@ -41,7 +41,7 @@
  *   }
  */
 
-import { createI18n, type I18nInstance, type I18nOptions, type PakLoader } from "./i18n";
+import { createI18n, type I18nInstance, type I18nOptions, type LpkLoader } from "./i18n";
 import { join, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 
@@ -50,15 +50,15 @@ import { readFile } from "node:fs/promises";
 // ---------------------------------------------------------------------------
 
 /**
- * Build a PakLoader backed by Node's `fs/promises`.
+ * Build a LpkLoader backed by Node's `fs/promises`.
  *
  * @param localesDir  Absolute or relative path to the directory containing
- *                    `<locale>.pak` files.
+ *                    `<locale>.lpk` files.
  */
-export function nodePakLoader(localesDir: string): PakLoader {
+export function nodeLpkLoader(localesDir: string): LpkLoader {
   const absDir = resolve(localesDir);
   return async (locale: string): Promise<Uint8Array> => {
-    const filePath = join(absDir, `${locale}.pak`);
+    const filePath = join(absDir, `${locale}.lpk`);
     try {
       const buf = await readFile(filePath);
       return new Uint8Array(buf.buffer, buf.byteOffset, buf.byteLength);
@@ -66,7 +66,7 @@ export function nodePakLoader(localesDir: string): PakLoader {
       const msg =
         err instanceof Error ? err.message : String(err);
       throw new Error(
-        `l10n4x: failed to read pak file for locale '${locale}' at '${filePath}': ${msg}`
+        `l10n4x: failed to read lpk file for locale '${locale}' at '${filePath}': ${msg}`
       );
     }
   };
@@ -78,12 +78,12 @@ export function nodePakLoader(localesDir: string): PakLoader {
 
 export interface ServerI18nOptions extends Omit<I18nOptions, "loader"> {
   /**
-   * Directory containing .pak files.
+   * Directory containing .lpk files.
    * @default "./dist/locales"
    */
   localesDir?: string;
   /** Custom loader (overrides localesDir). */
-  loader?: PakLoader;
+  loader?: LpkLoader;
 }
 
 /**
@@ -109,10 +109,10 @@ export async function createServerI18n(
   const localesDir = options.localesDir ?? "./dist/locales";
   return createI18n({
     ...options,
-    loader: options.loader ?? nodePakLoader(localesDir),
+    loader: options.loader ?? nodeLpkLoader(localesDir),
   });
 }
 
 // Re-export core types so consumers can import from a single file.
-export type { I18nInstance, PakLoader };
+export type { I18nInstance, LpkLoader };
 export { createI18n };

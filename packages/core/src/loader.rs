@@ -1,6 +1,6 @@
 extern crate alloc;
 use crate::error::CoreResult;
-use crate::pak::decompress_pak;
+use crate::lpk::decompress_lpk;
 #[cfg(not(feature = "std"))]
 use crate::store::read_store;
 #[cfg(not(feature = "std"))]
@@ -204,35 +204,35 @@ pub fn try_load_namespace_bytes(
     try_load_namespace_bytes_for_store(None, locale_str, namespace, bytes)
 }
 
-/// Merges a signed namespace `.pak` into a scoped store.
+/// Merges a signed namespace `.lpk` into a scoped store.
 #[cfg(feature = "std")]
-pub fn try_load_namespace_pak_for_store(
+pub fn try_load_namespace_lpk_for_store(
     handle: Option<StoreHandle>,
     locale_str: &str,
     namespace: &str,
-    pak_bytes: &[u8],
+    lpk_bytes: &[u8],
 ) -> CoreResult<()> {
-    let decompressed = decompress_pak(pak_bytes)?;
+    let decompressed = decompress_lpk(lpk_bytes)?;
     try_load_namespace_bytes_for_store(handle, locale_str, namespace, decompressed)
 }
 
-/// Merges a signed namespace `.pak` into `locale_str`.
+/// Merges a signed namespace `.lpk` into `locale_str`.
 #[cfg(feature = "std")]
-pub fn try_load_namespace_pak(
+pub fn try_load_namespace_lpk(
     locale_str: &str,
     namespace: &str,
-    pak_bytes: &[u8],
+    lpk_bytes: &[u8],
 ) -> CoreResult<()> {
-    try_load_namespace_pak_for_store(None, locale_str, namespace, pak_bytes)
+    try_load_namespace_lpk_for_store(None, locale_str, namespace, lpk_bytes)
 }
 
-/// Merges a signed namespace `.pak` from raw bytes; returns `true` on success.
+/// Merges a signed namespace `.lpk` from raw bytes; returns `true` on success.
 #[cfg(feature = "std")]
-pub fn load_namespace_pak(locale_str: &str, namespace: &str, pak_bytes: &[u8]) -> bool {
-    try_load_namespace_pak(locale_str, namespace, pak_bytes).is_ok()
+pub fn load_namespace_lpk(locale_str: &str, namespace: &str, lpk_bytes: &[u8]) -> bool {
+    try_load_namespace_lpk(locale_str, namespace, lpk_bytes).is_ok()
 }
 
-/// Loads a namespace `.pak` from disk into a scoped store.
+/// Loads a namespace `.lpk` from disk into a scoped store.
 #[cfg(feature = "std")]
 pub fn try_load_namespace_locale_for_store(
     handle: Option<StoreHandle>,
@@ -243,13 +243,13 @@ pub fn try_load_namespace_locale_for_store(
     let bytes = std::fs::read(path_str).map_err(|e| {
         // CoreError carries only static strings (no_std-compatible); log the
         // real cause instead of discarding it.
-        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        log::warn!("l10n4x: failed to read lpk '{path_str}': {e}");
         crate::CoreError::IoError("read failed")
     })?;
-    try_load_namespace_pak_for_store(handle, locale_str, namespace, &bytes)
+    try_load_namespace_lpk_for_store(handle, locale_str, namespace, &bytes)
 }
 
-/// Loads a namespace `.pak` from disk into `locale_str`.
+/// Loads a namespace `.lpk` from disk into `locale_str`.
 #[cfg(feature = "std")]
 pub fn try_load_namespace_locale(
     locale_str: &str,
@@ -259,7 +259,7 @@ pub fn try_load_namespace_locale(
     try_load_namespace_locale_for_store(None, locale_str, namespace, path_str)
 }
 
-/// Loads a namespace `.pak` from disk; returns `true` on success.
+/// Loads a namespace `.lpk` from disk; returns `true` on success.
 #[cfg(feature = "std")]
 pub fn load_namespace_locale(locale_str: &str, namespace: &str, path_str: &str) -> bool {
     try_load_namespace_locale(locale_str, namespace, path_str).is_ok()
@@ -280,10 +280,10 @@ pub fn init_modular(base_dir: &str, locale: &str) -> CoreResult<()> {
     for ns in preload {
         let path = std::path::Path::new(base_dir)
             .join(locale)
-            .join(format!("{ns}.pak"));
+            .join(format!("{ns}.lpk"));
         let path_str = path
             .to_str()
-            .ok_or(crate::CoreError::InvalidFormat("invalid pak path"))?;
+            .ok_or(crate::CoreError::InvalidFormat("invalid lpk path"))?;
         try_load_namespace_locale(locale, &ns, path_str)?;
     }
     Ok(())
@@ -301,25 +301,25 @@ pub struct NamespaceManifest {
     pub locales: HashMap<String, Vec<String>>,
 }
 
-/// Decompresses and loads a single `.pak` file from raw bytes for a given locale.
-pub fn load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> bool {
-    try_load_pak_bytes(locale_str, pak_bytes).is_ok()
+/// Decompresses and loads a single `.lpk` file from raw bytes for a given locale.
+pub fn load_lpk_bytes(locale_str: &str, lpk_bytes: &[u8]) -> bool {
+    try_load_lpk_bytes(locale_str, lpk_bytes).is_ok()
 }
 
-/// Decompresses and loads a `.pak` into a scoped store, replacing any existing bundle.
+/// Decompresses and loads a `.lpk` into a scoped store, replacing any existing bundle.
 #[cfg(feature = "std")]
-pub fn try_load_pak_bytes_for_store(
+pub fn try_load_lpk_bytes_for_store(
     handle: Option<StoreHandle>,
     locale_str: &str,
-    pak_bytes: &[u8],
+    lpk_bytes: &[u8],
 ) -> CoreResult<()> {
-    let decompressed = decompress_pak(pak_bytes)?;
+    let decompressed = decompress_lpk(lpk_bytes)?;
     try_load_raw_bytes_for_store(handle, locale_str, decompressed)
 }
 
-/// Decompresses and loads a `.pak` for `locale_str`, replacing any existing bundle.
-pub fn try_load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
-    let decompressed = decompress_pak(pak_bytes)?;
+/// Decompresses and loads a `.lpk` for `locale_str`, replacing any existing bundle.
+pub fn try_load_lpk_bytes(locale_str: &str, lpk_bytes: &[u8]) -> CoreResult<()> {
+    let decompressed = decompress_lpk(lpk_bytes)?;
     #[cfg(feature = "std")]
     {
         try_load_raw_bytes_for_store(None, locale_str, decompressed)
@@ -330,18 +330,18 @@ pub fn try_load_pak_bytes(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> 
     }
 }
 
-/// Stores compressed `.pak` bytes for lazy decompression on first lookup.
+/// Stores compressed `.lpk` bytes for lazy decompression on first lookup.
 #[cfg(feature = "std")]
-pub fn load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> bool {
-    try_load_pak_lazy(locale_str, pak_bytes).is_ok()
+pub fn load_lpk_lazy(locale_str: &str, lpk_bytes: &[u8]) -> bool {
+    try_load_lpk_lazy(locale_str, lpk_bytes).is_ok()
 }
 
 /// Verifies signature and stores compressed bytes for lazy decompression.
 #[cfg(feature = "std")]
-pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
+pub fn try_load_lpk_lazy(locale_str: &str, lpk_bytes: &[u8]) -> CoreResult<()> {
     crate::metrics::inc_locale_loads();
-    let signed = crate::envelope::open_outer(pak_bytes)?;
-    let (message, compressed, signature, _parent) = crate::pak::parse_signed(&signed)?;
+    let signed = crate::envelope::open_outer(lpk_bytes)?;
+    let (message, compressed, signature, _parent) = crate::lpk::parse_signed(&signed)?;
     crate::integrity::verify(message, signature)?;
     crate::store::update_store::<_, crate::CoreError>(|store| {
         let mut snap = store_snapshot(store);
@@ -372,15 +372,15 @@ pub fn try_load_pak_lazy(locale_str: &str, pak_bytes: &[u8]) -> CoreResult<()> {
     Ok(())
 }
 
-/// Loads a monolith `{locale}.pak` from disk; returns `true` on success.
+/// Loads a monolith `{locale}.lpk` from disk; returns `true` on success.
 #[cfg(feature = "std")]
-pub fn load_pak_locale(locale_str: &str, path_str: &str) -> bool {
-    try_load_pak_locale(locale_str, path_str).is_ok()
+pub fn load_lpk_locale(locale_str: &str, path_str: &str) -> bool {
+    try_load_lpk_locale(locale_str, path_str).is_ok()
 }
 
-/// Loads a monolith `.pak` from disk into a scoped store.
+/// Loads a monolith `.lpk` from disk into a scoped store.
 #[cfg(feature = "std")]
-pub fn try_load_pak_locale_for_store(
+pub fn try_load_lpk_locale_for_store(
     handle: Option<StoreHandle>,
     locale_str: &str,
     path_str: &str,
@@ -388,16 +388,16 @@ pub fn try_load_pak_locale_for_store(
     let bytes = std::fs::read(path_str).map_err(|e| {
         // CoreError carries only static strings (no_std-compatible); log the
         // real cause instead of discarding it.
-        log::warn!("l10n4x: failed to read pak '{path_str}': {e}");
+        log::warn!("l10n4x: failed to read lpk '{path_str}': {e}");
         crate::CoreError::IoError("read failed")
     })?;
-    try_load_pak_bytes_for_store(handle, locale_str, &bytes)
+    try_load_lpk_bytes_for_store(handle, locale_str, &bytes)
 }
 
-/// Loads a monolith `.pak` from disk, replacing the locale bundle.
+/// Loads a monolith `.lpk` from disk, replacing the locale bundle.
 #[cfg(feature = "std")]
-pub fn try_load_pak_locale(locale_str: &str, path_str: &str) -> CoreResult<()> {
-    try_load_pak_locale_for_store(None, locale_str, path_str)
+pub fn try_load_lpk_locale(locale_str: &str, path_str: &str) -> CoreResult<()> {
+    try_load_lpk_locale_for_store(None, locale_str, path_str)
 }
 
 /// Loads compile-time embedded L10N bytes; returns `true` on success.
@@ -432,9 +432,9 @@ pub fn try_load_static_bytes(
     }
 }
 
-/// Scans a directory for monolith `{locale}.pak` files (legacy layout).
+/// Scans a directory for monolith `{locale}.lpk` files (legacy layout).
 #[cfg(feature = "std")]
-pub fn load_pak_directory(dir_path_str: &str) -> bool {
+pub fn load_lpk_directory(dir_path_str: &str) -> bool {
     let path = std::path::Path::new(dir_path_str);
     if !path.is_dir() {
         return false;
@@ -446,10 +446,10 @@ pub fn load_pak_directory(dir_path_str: &str) -> bool {
     let mut loaded_any = false;
     for entry in entries.flatten() {
         let file_path = entry.path();
-        if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "pak") {
+        if file_path.is_file() && file_path.extension().is_some_and(|ext| ext == "lpk") {
             if let Some(locale) = file_path.file_stem().and_then(|s| s.to_str()) {
                 if let Some(path_str) = file_path.to_str() {
-                    if load_pak_locale(locale, path_str) {
+                    if load_lpk_locale(locale, path_str) {
                         loaded_any = true;
                     }
                 }

@@ -13,7 +13,7 @@ public class SmokeTests : IDisposable
     private const ulong Fnv1aOffset = 0xcbf29ce484222325;
     private const ulong Fnv1aPrime  = 0x100000001b3;
 
-    private static readonly string PakDir;
+    private static readonly string LpkDir;
     private static readonly bool HasKey;
 
     static SmokeTests()
@@ -22,7 +22,7 @@ public class SmokeTests : IDisposable
             Environment.GetEnvironmentVariable("L10N4X_VERIFY_PUBLIC_KEY"));
         var rootDir = Path.GetFullPath(Path.Combine(
             AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
-        PakDir = Environment.GetEnvironmentVariable("L10N4X_PAK_DIR")
+        LpkDir = Environment.GetEnvironmentVariable("L10N4X_LPK_DIR")
             ?? Path.Combine(rootDir, "dist", "locales");
     }
 
@@ -35,8 +35,8 @@ public class SmokeTests : IDisposable
             throw new InvalidOperationException("invalid verify key");
         if (l10n4c_set_fallback_locale("es") != L10N4C_OK)
             throw new InvalidOperationException("set_fallback_locale failed");
-        if (l10n4c_load_pak_directory(PakDir) != L10N4C_OK)
-            throw new InvalidOperationException($"load_pak_directory failed: {PakDir}");
+        if (l10n4c_load_lpk_directory(LpkDir) != L10N4C_OK)
+            throw new InvalidOperationException($"load_lpk_directory failed: {LpkDir}");
     }
 
     public void Dispose()
@@ -86,7 +86,7 @@ public class SmokeTests : IDisposable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int l10n4c_load_pak_directory(
+    private static extern int l10n4c_load_lpk_directory(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dirPath);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]

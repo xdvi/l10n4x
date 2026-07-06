@@ -1,16 +1,16 @@
 /**
  * i18n.ts — l10n4x isomorphic core
  *
- * This module is environment-agnostic. It receives a `PakLoader` function so
- * the caller controls how `.pak` files are fetched: via the Fetch API in
+ * This module is environment-agnostic. It receives a `LpkLoader` function so
+ * the caller controls how `.lpk` files are fetched: via the Fetch API in
  * browsers, via `fs/promises` on Node.js, or via any custom transport (e.g.
  * in-memory cache, CDN pre-fetch, etc.).
  *
  * Usage:
  *   import { createI18n } from "./i18n";
- *   import { nodePakLoader } from "./server";   // or browserPakLoader from "./client"
+ *   import { nodeLpkLoader } from "./server";   // or browserLpkLoader from "./client"
  *
- *   const i18n = await createI18n({ loader: nodePakLoader("/path/to/locales") });
+ *   const i18n = await createI18n({ loader: nodeLpkLoader("/path/to/locales") });
  *   console.log(i18n.t("en", "app.greeting"));
  */
 
@@ -34,15 +34,15 @@ function fnv1a_64(data: Uint8Array): bigint {
   return hash;
 }
 
-/** Function that loads a .pak file and returns its raw bytes. */
-export type PakLoader = (locale: string) => Promise<Uint8Array>;
+/** Function that loads a .lpk file and returns its raw bytes. */
+export type LpkLoader = (locale: string) => Promise<Uint8Array>;
 
 export interface I18nOptions {
   /** Inject the loader implementation (browser fetch, Node fs, custom, …). */
-  loader: PakLoader;
+  loader: LpkLoader;
   /** WASM binary URL or pre-fetched Response/ArrayBuffer (browser only). */
   wasmUrl?: string | URL | Request | BufferSource | WebAssembly.Module;
-  /** 32-byte Ed25519 public key for .pak signature verification. Required. */
+  /** 32-byte Ed25519 public key for .lpk signature verification. Required. */
   verifyKey: Uint8Array;
   /** 32-byte AES key for optional L10E envelope decryption. */
   decryptKey?: Uint8Array;
@@ -108,7 +108,7 @@ export async function createI18n(options: I18nOptions): Promise<I18nInstance> {
   async function loadLocale(locale: string): Promise<void> {
     if (loadedLocales.has(locale)) return;
     const bytes = await options.loader(locale);
-    wasm.l10n4x_load_pak_bytes(bytes, locale);
+    wasm.l10n4x_load_lpk_bytes(bytes, locale);
     loadedLocales.add(locale);
   }
 

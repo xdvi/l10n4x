@@ -4,7 +4,7 @@
 
 | Threat | Mitigation |
 |--------|------------|
-| Tampered `.pak` in transit or on disk | Ed25519 signature verified before decompression |
+| Tampered `.lpk` in transit or on disk | Ed25519 signature verified before decompression |
 | Malformed input | Magic, version, length, and signature checks |
 
 ## Not protected (by design)
@@ -27,4 +27,4 @@ Use encryption only when you understand its limitations. Signature verification 
 - **Build:** `L10N4X_SIGNING_KEY` = 32-byte Ed25519 seed (never in repo, client, or the runtime core crate).
 - **Runtime:** `verifyPublicKey` (hex) embedded in generated bindings — public by design.
 - **Optional encrypt:** `L10N4X_ENCRYPT_KEY` = 32-byte AES key (build + runtime, only when `encrypt` is true).
-- Re-sign all `.pak` files when rotating the signing seed; update `verifyPublicKey` via `l10n4x build`.
+- Re-sign all `.lpk` files when rotating the signing seed; update `verifyPublicKey` via `l10n4x build`.

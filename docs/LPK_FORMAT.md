@@ -1,8 +1,8 @@
-# `.pak` File Format (v1)
+# `.lpk` File Format (v1)
 
 All multi-byte integers are **big-endian**.
 
-## Signed container (`L10P`)
+## Signed container (`L10K`)
 
 Two header formats exist. The parser autodetects which one is used.
 
@@ -10,7 +10,7 @@ Two header formats exist. The parser autodetects which one is used.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 4 | Magic `L10P` |
+| 0 | 4 | Magic `L10K` |
 | 4 | 4 | Version `1` |
 | 8 | 4 | Payload length (N) |
 | 12 | N | zstd-compressed inner `L10N` binary |
@@ -20,7 +20,7 @@ Two header formats exist. The parser autodetects which one is used.
 
 | Offset | Size | Field |
 |--------|------|-------|
-| 0 | 4 | Magic `L10P` |
+| 0 | 4 | Magic `L10K` |
 | 4 | 4 | Version `1` |
 | 8 | 4 | Flags (bit 0 = has_parent_locale) |
 | 12 | 4 | Payload length (N) |
@@ -29,11 +29,11 @@ Two header formats exist. The parser autodetects which one is used.
 | ... | N | zstd-compressed inner `L10N` binary |
 | ...+N | 64 | Ed25519 signature over bytes `[0..parent_end+N)` |
 
-Signature verification is **mandatory** at runtime. Unsigned or tampered paks are rejected.
+Signature verification is **mandatory** at runtime. Unsigned or tampered lpks are rejected.
 
 ## Optional encrypted envelope (`L10E`)
 
-When `"encrypt": true` in `l10n4x.config.json`, each signed `L10P` pak is wrapped:
+When `"encrypt": true` in `l10n4x.config.json`, each signed `L10K` lpk is wrapped:
 
 | Offset | Size | Field |
 |--------|------|-------|
@@ -42,13 +42,13 @@ When `"encrypt": true` in `l10n4x.config.json`, each signed `L10P` pak is wrappe
 | 8 | 4 | Blob length (N) |
 | 12 | N | AES-256-GCM ciphertext (12-byte nonce prepended) |
 
-The AES-GCM plaintext is the complete signed `L10P` pak (including its Ed25519 signature). Encryption is applied **after** signing; decryption happens **before** signature verification.
+The AES-GCM plaintext is the complete signed `L10K` lpk (including its Ed25519 signature). Encryption is applied **after** signing; decryption happens **before** signature verification.
 
 ## Keys
 
 | Key | Where | Purpose |
 |-----|-------|---------|
-| Signing seed (32 B) | `L10N4X_SIGNING_KEY` env, build only | Signs inner `L10P` paks |
+| Signing seed (32 B) | `L10N4X_SIGNING_KEY` env, build only | Signs inner `L10K` lpks |
 | Public key (32 B) | `verifyPublicKey` in config + client bindings | Verifies signatures at runtime |
 | AES key (32 B) | `L10N4X_ENCRYPT_KEY` env (opt-in) | Encrypts/decrypts `L10E` envelope |
 
@@ -117,7 +117,7 @@ The inner `L10N` block uses a sorted u64 hash index for O(log N) binary search l
 | 24 | * | Data pool |
 | index_offset | count * 16 | Index entries |
 
-`locale_data_version` pins the CLDR-lite tables (plural, number, date, RTL) used at compile time. Bump `LOCALE_DATA_VERSION` in the compiler when those tables change incompatibly; ship a runtime that understands the new revision before loading newer paks.
+`locale_data_version` pins the CLDR-lite tables (plural, number, date, RTL) used at compile time. Bump `LOCALE_DATA_VERSION` in the compiler when those tables change incompatibly; ship a runtime that understands the new revision before loading newer lpks.
 
 Optional trailing `DBGK` section (dev builds with `debug-keys` feature): hash → UTF-8 key name table for debugging misses.
 
@@ -139,8 +139,8 @@ When `"bundles": { "mode": "modular" }` in `l10n4x.config.json`, the CLI emits:
 outputDir/
   namespaces.json
   en/
-    common.pak
-    auth.pak
+    common.lpk
+    auth.lpk
 ```
 
 `namespaces.json` lists available namespaces per locale and optional `preload` list for `init_modular()`.
@@ -157,4 +157,4 @@ Key names are not stored in the binary. The index is sorted by hash ascending fo
 
 ## Compile-time validation
 
-Templates are fully validated when building `.pak` files. Invalid MF2 syntax or data-model violations fail the build with locale + key. Runtime assumes bytecode is valid.
+Templates are fully validated when building `.lpk` files. Invalid MF2 syntax or data-model violations fail the build with locale + key. Runtime assumes bytecode is valid.

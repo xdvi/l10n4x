@@ -32,7 +32,7 @@ internal static class L10n
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    public static extern int l10n4c_load_pak_directory(
+    public static extern int l10n4c_load_lpk_directory(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dirPath);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]

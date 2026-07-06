@@ -20,22 +20,22 @@ For adoption patterns (CI/CD, roles, OTA, observability), see [ENTERPRISE_ADOPTI
 - ICU-lite bytecode formatter (opcodes `0x01`–`0x0C`), CLDR plural rules (120+ locales)
 - Multi-target codegen (Go, TypeScript, Python, C, Flutter); web bindings in [l10n4x-js](https://github.com/xdvi/l10n4x-js)
 - Dev server with hot reload, `validate` / `extract` CLI commands
-- Core + FFI benchmarks, basic fuzz targets (`lookup`, `decompress_pak`)
+- Core + FFI benchmarks, basic fuzz targets (`lookup`, `decompress_lpk`)
 
 ### P0 — Production blockers ✅ (v0.1.0)
 
 | Item | Summary |
 |------|---------|
 | **P0.1** Thread-safe reload | Writers serialized; readers lock-free RCU |
-| **P0.2** Modular bundles | `{locale}/{namespace}.pak` + `namespaces.json`; `load_namespace` / `init_modular` |
+| **P0.2** Modular bundles | `{locale}/{namespace}.lpk` + `namespaces.json`; `load_namespace` / `init_modular` |
 | **P0.3** Debug keys | `debug-keys` feature + `validate --report-misses` |
-| **P0.4** Pak versioning | L10N v2, `min_runtime_version`, `RuntimeTooOld` error |
+| **P0.4** Lpk versioning | L10N v2, `min_runtime_version`, `RuntimeTooOld` error |
 
 ### P1 — High ROI ✅ (v0.1.0)
 
 | Item | Summary |
 |------|---------|
-| **P1.1** OTA updates | `try_ota_reload_pak` / `try_ota_rollback` + FFI + metrics |
+| **P1.1** OTA updates | `try_ota_reload_lpk` / `try_ota_rollback` + FFI + metrics |
 | **P1.2** COW locales | Per-entry `Arc<StoreData>` via `upsert_locale` / `remove_locale` |
 | **P1.3** Hot-path parity | Shared `hash_params`; FFI/WASM TLS cache alignment |
 | **P1.4** Observability | v2 `metrics_string`, optional `tracing`, CI bench regression (5%) |
@@ -101,9 +101,9 @@ See [TMS.md](./TMS.md).
 - FFI `l10n4c_store_*` for Go/C server bindings (handle `0` reserved / invalid)
 - Scoped OTA reload and rollback per store (retired snapshots keyed by `(store_id, locale)`)
 - TLS translate cache keyed by `(store_id, locale, key)` — no cross-tenant cache bleed
-- Global APIs unchanged (`translate()`, `l10n4c_translate()`, `l10n4c_load_pak_locale()`)
+- Global APIs unchanged (`translate()`, `l10n4c_translate()`, `l10n4c_load_lpk_locale()`)
 - Go typed `Store` wrapper in generated `i18n.go` (`NewStore`, `Close`, scoped `T`)
-- **Deferred (P2.5.1):** overlay stores (tenant inherits base paks); WASM multi-store
+- **Deferred (P2.5.1):** overlay stores (tenant inherits base lpks); WASM multi-store
 
 ---
 
@@ -130,7 +130,7 @@ graph TD
 | Phase | Done when |
 |-------|-----------|
 | **P0** ✅ | 8 concurrent readers + 1 reloader: no crash, consistent output; staging misses show human keys |
-| **P1** ✅ | OTA pak swap with zero read downtime; WASM bench within ~10% of FFI; CI fails on >5% bench regression |
+| **P1** ✅ | OTA lpk swap with zero read downtime; WASM bench within ~10% of FFI; CI fails on >5% bench regression |
 | **P2** | Translation team syncs via TMS; per-tenant scoped stores for SaaS backends; React/native apps use modular OTA without FFI-only APIs |
 
 ---
@@ -147,6 +147,6 @@ graph TD
 
 - [ENTERPRISE_ADOPTION.md](./ENTERPRISE_ADOPTION.md) — governance, CI/CD, roles, OTA
 - [ARCHITECTURE.md](./ARCHITECTURE.md) — data flow and package layout
-- [PAK_FORMAT.md](./PAK_FORMAT.md) — binary format specification
+- [LPK_FORMAT.md](./LPK_FORMAT.md) — binary format specification
 - [THREAT_MODEL.md](./THREAT_MODEL.md) — security assumptions
 - [l10n4x-js](https://github.com/xdvi/l10n4x-js) — official JavaScript / React packages

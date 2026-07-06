@@ -18,17 +18,17 @@ pub enum CoreError {
     InvalidMagic(&'static str),
     /// Unsupported format version number.
     UnsupportedVersion(u32),
-    /// Pak requires a newer runtime than this build.
-    /// Pak requires a newer runtime than the one linked into this binary.
+    /// Lpk requires a newer runtime than this build.
+    /// Lpk requires a newer runtime than the one linked into this binary.
     RuntimeTooOld {
-        /// Minimum `RUNTIME_VERSION` required by the pak.
+        /// Minimum `RUNTIME_VERSION` required by the lpk.
         required: u32,
         /// Current runtime version.
         current: u32,
     },
-    /// Pak was built with newer CLDR/locale tables than this runtime supports.
+    /// Lpk was built with newer CLDR/locale tables than this runtime supports.
     LocaleDataTooOld {
-        /// `locale_data_version` stored in the pak.
+        /// `locale_data_version` stored in the lpk.
         required: u32,
         /// `SUPPORTED_LOCALE_DATA_VERSION` of this runtime.
         current: u32,
@@ -64,14 +64,14 @@ impl core::fmt::Display for CoreError {
             CoreError::RuntimeTooOld { required, current } => {
                 write!(
                     f,
-                    "Pak requires runtime version {} but current runtime is {}",
+                    "Lpk requires runtime version {} but current runtime is {}",
                     required, current
                 )
             }
             CoreError::LocaleDataTooOld { required, current } => {
                 write!(
                     f,
-                    "Pak requires locale data version {} but current runtime supports {}",
+                    "Lpk requires locale data version {} but current runtime supports {}",
                     required, current
                 )
             }

@@ -93,10 +93,10 @@ def _setup_signatures(lib: ctypes.CDLL) -> None:
     lib.l10n4c_set_verify_key.restype     = ctypes.c_int32
     lib.l10n4c_set_fallback_locale.argtypes = [ctypes.c_char_p]
     lib.l10n4c_set_fallback_locale.restype  = ctypes.c_int32
-    lib.l10n4c_load_pak_locale.argtypes   = [ctypes.c_char_p, ctypes.c_char_p]
-    lib.l10n4c_load_pak_locale.restype    = ctypes.c_int32
-    lib.l10n4c_load_pak_directory.argtypes = [ctypes.c_char_p]
-    lib.l10n4c_load_pak_directory.restype  = ctypes.c_int32
+    lib.l10n4c_load_lpk_locale.argtypes   = [ctypes.c_char_p, ctypes.c_char_p]
+    lib.l10n4c_load_lpk_locale.restype    = ctypes.c_int32
+    lib.l10n4c_load_lpk_directory.argtypes = [ctypes.c_char_p]
+    lib.l10n4c_load_lpk_directory.restype  = ctypes.c_int32
     lib.l10n4c_translate_with_params_alloc.argtypes = [
         ctypes.c_char_p, ctypes.c_uint64,
         ctypes.POINTER(L10n4cParam), ctypes.c_size_t,
@@ -121,13 +121,13 @@ def set_verify_key(key_hex: str) -> bool:
 def set_fallback_locale(locale: str) -> int:
     return int(_get_lib().l10n4c_set_fallback_locale(locale.encode("utf-8")))
 
-def load_pak_locale(locale: str, path: str) -> int:
-    return int(_get_lib().l10n4c_load_pak_locale(
+def load_lpk_locale(locale: str, path: str) -> int:
+    return int(_get_lib().l10n4c_load_lpk_locale(
         locale.encode("utf-8"), path.encode("utf-8")
     ))
 
-def load_pak_directory(directory: str) -> int:
-    return int(_get_lib().l10n4c_load_pak_directory(directory.encode("utf-8")))
+def load_lpk_directory(directory: str) -> int:
+    return int(_get_lib().l10n4c_load_lpk_directory(directory.encode("utf-8")))
 
 def translate(key: "LocaleKey", locale: str = "en", **kwargs: str) -> str:
     lib = _get_lib()
@@ -196,9 +196,9 @@ mod tests {
     }
 
     #[test]
-    fn contains_load_pak_locale() {
+    fn contains_load_lpk_locale() {
         let code = run_generate(&["k"]);
-        assert!(code.contains("l10n4c_load_pak_locale"));
+        assert!(code.contains("l10n4c_load_lpk_locale"));
     }
 
     #[test]

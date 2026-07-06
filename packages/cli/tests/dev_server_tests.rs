@@ -137,13 +137,13 @@ fn test_dev_server_token_auth() {
 
     // 1. Assert protected endpoint without token returns 401
     let (code, _) =
-        send_request(port, "/locales/nonexistent.pak", &[]).expect("Failed to query dev server");
+        send_request(port, "/locales/nonexistent.lpk", &[]).expect("Failed to query dev server");
     assert_eq!(code, 401, "Expected 401 Unauthorized without token");
 
     // 2. Assert protected endpoint with invalid token returns 401
     let (code, _) = send_request(
         port,
-        "/locales/nonexistent.pak",
+        "/locales/nonexistent.lpk",
         &["Authorization: Bearer wrong-token"],
     )
     .expect("Failed to query dev server");
@@ -152,7 +152,7 @@ fn test_dev_server_token_auth() {
     // 3. Assert protected endpoint with valid Bearer token returns 404 (file not found)
     let (code, _) = send_request(
         port,
-        "/locales/nonexistent.pak",
+        "/locales/nonexistent.lpk",
         &["Authorization: Bearer my-test-token-123"],
     )
     .expect("Failed to query dev server");
@@ -161,7 +161,7 @@ fn test_dev_server_token_auth() {
     // 4. Assert protected endpoint with valid query parameter token returns 404 (file not found)
     let (code, _) = send_request(
         port,
-        "/locales/nonexistent.pak?token=my-test-token-123",
+        "/locales/nonexistent.lpk?token=my-test-token-123",
         &[],
     )
     .expect("Failed to query dev server");

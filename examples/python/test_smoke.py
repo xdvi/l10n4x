@@ -16,13 +16,13 @@ class TestL10n4cSmoke(unittest.TestCase):
         if not verify_hex:
             raise unittest.SkipTest("L10N4X_VERIFY_PUBLIC_KEY not set")
         cls.verify_hex = verify_hex
-        cls.pak_dir = os.environ.get("L10N4X_PAK_DIR", DIST_LOCALES)
+        cls.lpk_dir = os.environ.get("L10N4X_LPK_DIR", DIST_LOCALES)
 
     def setUp(self):
         self.tr = Translator()
         self.tr.set_verify_key(bytes.fromhex(self.verify_hex))
         self.tr.set_fallback_locale("es")
-        self.tr.load_pak_directory(self.pak_dir)
+        self.tr.load_lpk_directory(self.lpk_dir)
 
     def tearDown(self):
         self.tr.clear()

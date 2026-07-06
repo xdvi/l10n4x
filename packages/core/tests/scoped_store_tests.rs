@@ -2,14 +2,14 @@ use l10n4x_compiler::signing;
 use l10n4x_core::binary_format::{fnv1a_64, pack_l10n, RUNTIME_VERSION};
 use l10n4x_core::integrity;
 use l10n4x_core::loader::try_load_static_bytes_for_store;
-use l10n4x_core::pak::{build_unsigned, seal};
+use l10n4x_core::lpk::{build_unsigned, seal};
 use l10n4x_core::store::{clear_translations_for_store, translate, translate_for_store};
 use l10n4x_core::store_registry::{create_store, destroy_store, StoreHandle};
 use std::sync::Mutex;
 
 static OTA_SCOPED_TEST_MUTEX: Mutex<()> = Mutex::new(());
 
-fn pak_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
+fn lpk_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
     let entries: Vec<(u64, Vec<u8>)> = vec![(hash, text.to_vec())];
     pack_l10n(&entries, RUNTIME_VERSION, 1, None)
 }
@@ -21,11 +21,11 @@ fn install_test_signing_keys() {
     assert!(integrity::set_verify_key(&pubkey));
 }
 
-fn signed_pak_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
-    let l10n = pak_with_text(hash, text);
+fn signed_lpk_with_text(hash: u64, text: &[u8]) -> Vec<u8> {
+    let l10n = lpk_with_text(hash, text);
     let compressed = zstd::encode_all(l10n.as_slice(), 3).unwrap();
     let unsigned = build_unsigned(&compressed, None);
-    let signature = signing::sign(&unsigned).expect("sign pak");
+    let signature = signing::sign(&unsigned).expect("sign lpk");
     seal(&unsigned, &signature)
 }
 
@@ -64,8 +64,8 @@ fn destroy_invalid_handle_errors() {
 fn scoped_translate_uses_only_that_store() {
     let h = create_store().unwrap();
     let key = fnv1a_64(b"hello");
-    let pak = pak_with_text(key, b"scoped");
-    try_load_static_bytes_for_store(Some(h), "en", &pak, true).unwrap();
+    let lpk = lpk_with_text(key, b"scoped");
+    try_load_static_bytes_for_store(Some(h), "en", &lpk, true).unwrap();
 
     let global = translate("en", key, None, &[]);
     assert_ne!(global, "scoped");
@@ -87,13 +87,13 @@ fn ota_reload_only_affects_target_store() {
     let a = create_store().unwrap();
     let b = create_store().unwrap();
     let key = fnv1a_64(b"k");
-    let pak_v1 = pak_with_text(key, b"v1");
-    let pak_v2 = signed_pak_with_text(key, b"v2");
+    let lpk_v1 = lpk_with_text(key, b"v1");
+    let lpk_v2 = signed_lpk_with_text(key, b"v2");
 
-    try_load_static_bytes_for_store(Some(a), "en", &pak_v1, true).unwrap();
-    try_load_static_bytes_for_store(Some(b), "en", &pak_v1, true).unwrap();
+    try_load_static_bytes_for_store(Some(a), "en", &lpk_v1, true).unwrap();
+    try_load_static_bytes_for_store(Some(b), "en", &lpk_v1, true).unwrap();
 
-    l10n4x_core::ota::try_ota_reload_pak_for_store(Some(a), "en", &pak_v2).unwrap();
+    l10n4x_core::ota::try_ota_reload_lpk_for_store(Some(a), "en", &lpk_v2).unwrap();
     assert_eq!(translate_for_store(Some(a), "en", key, None, &[]), "v2");
     assert_eq!(translate_for_store(Some(b), "en", key, None, &[]), "v1");
 

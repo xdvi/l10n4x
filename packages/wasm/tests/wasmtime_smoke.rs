@@ -72,7 +72,7 @@ fn wasmtime_load_and_call_clear() {
     for export in [
         "l10n4x_clear",
         "l10n4x_load_namespace_bytes",
-        "l10n4x_ota_reload_pak",
+        "l10n4x_ota_reload_lpk",
         "l10n4x_ota_rollback",
         "l10n4x_ota_can_rollback",
     ] {

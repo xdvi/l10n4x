@@ -9,9 +9,9 @@ import (
 const releasesURL = "https://github.com/xdvi/l10n4x/releases/latest"
 
 func main() {
-	pakDir := filepath.Join("..", "dist", "locales")
+	lpkDir := filepath.Join("..", "dist", "locales")
 	if len(os.Args) > 1 {
-		pakDir = os.Args[1]
+		lpkDir = os.Args[1]
 	}
 
 	// Prerequisites:
@@ -23,7 +23,7 @@ func main() {
 	//   3. export L10N4X_VERIFY_PUBLIC_KEY=<verifyPublicKey from l10n4x.config.json>
 	//   4. (optional) export L10N4X_ENCRYPT_KEY=<32-byte key> when encrypt: true
 
-	tr, err := NewTranslator("es", pakDir)
+	tr, err := NewTranslator("es", lpkDir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "hint: extract release assets to examples/lib/ — see %s\n", releasesURL)
 		panic(err)

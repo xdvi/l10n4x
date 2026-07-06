@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use l10n4x_core::binary_format::fnv1a_64;
-use l10n4x_core::ota::{ota_can_rollback, try_ota_reload_pak, try_ota_rollback};
+use l10n4x_core::ota::{ota_can_rollback, try_ota_reload_lpk, try_ota_rollback};
 use l10n4x_core::store::{hash_params, translate_to_writer_with_status, TranslateStatus};
 use wasm_bindgen::prelude::*;
 
@@ -135,7 +135,7 @@ pub fn l10n4x_set_fallback_chain(locales: Vec<String>) {
     l10n4x_core::store::set_fallback_chain(&refs);
 }
 
-/// Merges a signed namespace `.pak` into an existing locale (modular bundle mode).
+/// Merges a signed namespace `.lpk` into an existing locale (modular bundle mode).
 #[wasm_bindgen]
 pub fn l10n4x_load_namespace_bytes(
     bytes: &[u8],
@@ -147,7 +147,7 @@ pub fn l10n4x_load_namespace_bytes(
             "Signature verification failed: verify key not set or invalid",
         ));
     }
-    match l10n4x_core::pak::decompress_pak(bytes) {
+    match l10n4x_core::lpk::decompress_lpk(bytes) {
         Ok(decompressed) => {
             match l10n4x_core::loader::try_load_namespace_bytes(locale, namespace, decompressed) {
                 Ok(()) => {
@@ -168,20 +168,20 @@ pub fn l10n4x_load_namespace_bytes(
 }
 
 #[wasm_bindgen]
-pub fn l10n4x_load_pak_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> {
+pub fn l10n4x_load_lpk_bytes(bytes: &[u8], locale: &str) -> Result<(), JsValue> {
     if !l10n4x_core::integrity::verify_key_configured() {
         return Err(JsValue::from_str(
             "Signature verification failed: verify key not set or invalid",
         ));
     }
-    match l10n4x_core::pak::decompress_pak(bytes) {
+    match l10n4x_core::lpk::decompress_lpk(bytes) {
         Ok(decompressed) => {
             if l10n4x_core::loader::load_raw_bytes(locale, decompressed) {
                 clear_translate_cache();
                 Ok(())
             } else {
                 Err(JsValue::from_str(
-                    "Failed to load decompressed pak bytes into store",
+                    "Failed to load decompressed lpk bytes into store",
                 ))
             }
         }
@@ -290,7 +290,7 @@ pub fn l10n4x_on_locale_changed(callback: js_sys::Function) {
     }));
 }
 
-/// Returns `true` if the given locale's pak has been successfully loaded.
+/// Returns `true` if the given locale's lpk has been successfully loaded.
 #[wasm_bindgen]
 pub fn l10n4x_locale_loaded(locale: &str) -> bool {
     l10n4x_core::store::locale_loaded(locale)
@@ -308,15 +308,15 @@ pub fn l10n4x_key_exists_with_context(locale: &str, key_hash: u64, context_hash:
     l10n4x_core::store::key_exists(locale, key_hash, Some(context_hash))
 }
 
-/// Atomically reloads a signed locale `.pak`, retaining one retired snapshot for rollback.
+/// Atomically reloads a signed locale `.lpk`, retaining one retired snapshot for rollback.
 #[wasm_bindgen]
-pub fn l10n4x_ota_reload_pak(locale: &str, bytes: &[u8]) -> Result<(), JsValue> {
+pub fn l10n4x_ota_reload_lpk(locale: &str, bytes: &[u8]) -> Result<(), JsValue> {
     if !l10n4x_core::integrity::verify_key_configured() {
         return Err(JsValue::from_str(
             "Signature verification failed: verify key not set or invalid",
         ));
     }
-    match try_ota_reload_pak(locale, bytes) {
+    match try_ota_reload_lpk(locale, bytes) {
         Ok(()) => {
             clear_translate_cache();
             Ok(())
@@ -360,7 +360,7 @@ mod export_tests {
     }
 
     #[test]
-    fn key_exists_returns_false_without_pak() {
+    fn key_exists_returns_false_without_lpk() {
         super::l10n4x_clear();
         assert!(!super::l10n4x_key_exists("en", 0));
     }

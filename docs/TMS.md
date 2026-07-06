@@ -1,6 +1,6 @@
 # TMS Integration
 
-Exchange locale JSON with translation teams and push signed `.pak` artifacts to enterprise endpoints.
+Exchange locale JSON with translation teams and push signed `.lpk` artifacts to enterprise endpoints.
 
 ## Architecture
 
@@ -35,7 +35,7 @@ A shell script is valid if it is executable and implements the CLI above.
 | Provider | Export | Import | Push |
 |----------|--------|--------|------|
 | `file` | `l10n4x-tms.json` bundle | merge into `sourceDir` | — |
-| `webhook` | — | — | POST signed paks (base64 + SHA-256) |
+| `webhook` | — | — | POST signed lpks (base64 + SHA-256) |
 
 ## Crowdin plugin
 
@@ -95,7 +95,7 @@ l10n4x sync --provider crowdin --direction export --out ./tms-crowdin
 # Import Crowdin download directory (plugin)
 l10n4x sync --provider crowdin --direction import --from ./crowdin-download
 
-# Push signed paks after build (core)
+# Push signed lpks after build (core)
 l10n4x build
 l10n4x sync --provider webhook --direction push
 ```
@@ -129,9 +129,9 @@ l10n4x sync --provider webhook --direction push
     {
       "locale": "en",
       "namespace": "common",
-      "path": "dist/en/common.pak",
+      "path": "dist/en/common.lpk",
       "sha256": "…",
-      "pakBase64": "…"
+      "lpkBase64": "…"
     }
   ]
 }

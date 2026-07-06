@@ -1,4 +1,4 @@
-//! Ed25519 verification (runtime) for `.pak` integrity.
+//! Ed25519 verification (runtime) for `.lpk` integrity.
 
 extern crate alloc;
 
@@ -24,7 +24,7 @@ pub(crate) struct VerifyKeySlot {
 
 pub(crate) static VERIFY_KEY: AtomicPtr<VerifyKeySlot> = AtomicPtr::new(core::ptr::null_mut());
 
-/// Installs the 32-byte Ed25519 **public** key used to verify `.pak` signatures at runtime.
+/// Installs the 32-byte Ed25519 **public** key used to verify `.lpk` signatures at runtime.
 pub fn set_verify_key(key: &[u8]) -> bool {
     if key.len() != KEY_LEN {
         return false;
@@ -96,7 +96,7 @@ pub fn verify(message: &[u8], signature: &[u8]) -> CoreResult<()> {
         let sig = ed25519_dalek::Signature::from_bytes(&sig_bytes);
         verifying_key
             .verify(message, &sig)
-            .map_err(|_| crate::CoreError::SignatureInvalid("Pak signature invalid"))
+            .map_err(|_| crate::CoreError::SignatureInvalid("Lpk signature invalid"))
     }
     #[cfg(not(feature = "alloc"))]
     {

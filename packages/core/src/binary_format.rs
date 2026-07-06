@@ -43,7 +43,7 @@ fn read_u32_be(data: &[u8], off: usize) -> Option<u32> {
         .map(u32::from_be_bytes)
 }
 
-/// High-performance parser and reader for the custom binary `.pak` format.
+/// High-performance parser and reader for the custom binary `.lpk` format.
 #[derive(Debug)]
 pub struct BinaryFormatReader<'a> {
     data: &'a [u8],

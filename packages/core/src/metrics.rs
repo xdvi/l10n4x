@@ -5,7 +5,7 @@
 //! # Extended metrics string format (v2)
 //!
 //! ```text
-//! v2,{total},{hits},{misses},{loads},{errors},{pak_reload},{pak_verify_fail},{pak_rollback},{hit_ratio},{miss_by_locale}
+//! v2,{total},{hits},{misses},{loads},{errors},{lpk_reload},{lpk_verify_fail},{lpk_rollback},{hit_ratio},{miss_by_locale}
 //! ```
 //!
 //! - `hit_ratio` — cache hits / total translations (0.0 when total is 0).
@@ -32,12 +32,12 @@ static CACHE_MISSES: AtomicU64 = AtomicU64::new(0);
 static LOCALE_LOADS: AtomicU64 = AtomicU64::new(0);
 /// Number of format errors (malformed bytecode, etc).
 static FORMAT_ERRORS: AtomicU64 = AtomicU64::new(0);
-/// Successful OTA pak reloads.
-static PAK_RELOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
-/// OTA pak signature / verification failures.
-static PAK_VERIFY_FAILURES: AtomicU64 = AtomicU64::new(0);
+/// Successful OTA lpk reloads.
+static LPK_RELOAD_TOTAL: AtomicU64 = AtomicU64::new(0);
+/// OTA lpk signature / verification failures.
+static LPK_VERIFY_FAILURES: AtomicU64 = AtomicU64::new(0);
 /// OTA rollbacks to a retired snapshot.
-static PAK_ROLLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
+static LPK_ROLLBACK_TOTAL: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(feature = "std")]
 static MISS_BY_LOCALE: Mutex<Option<HashMap<String, u64>>> = Mutex::new(None);
@@ -93,17 +93,17 @@ pub fn inc_locale_loads() {
 pub fn inc_format_errors() {
     FORMAT_ERRORS.fetch_add(1, Ordering::Relaxed);
 }
-/// Increment successful OTA pak reload counter.
-pub fn inc_pak_reload_total() {
-    PAK_RELOAD_TOTAL.fetch_add(1, Ordering::Relaxed);
+/// Increment successful OTA lpk reload counter.
+pub fn inc_lpk_reload_total() {
+    LPK_RELOAD_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
-/// Increment OTA pak verification failure counter.
-pub fn inc_pak_verify_failures() {
-    PAK_VERIFY_FAILURES.fetch_add(1, Ordering::Relaxed);
+/// Increment OTA lpk verification failure counter.
+pub fn inc_lpk_verify_failures() {
+    LPK_VERIFY_FAILURES.fetch_add(1, Ordering::Relaxed);
 }
 /// Increment OTA rollback counter.
-pub fn inc_pak_rollback_total() {
-    PAK_ROLLBACK_TOTAL.fetch_add(1, Ordering::Relaxed);
+pub fn inc_lpk_rollback_total() {
+    LPK_ROLLBACK_TOTAL.fetch_add(1, Ordering::Relaxed);
 }
 
 /// Read the current format error count.
@@ -159,9 +159,9 @@ pub fn metrics_string() -> String {
         CACHE_MISSES.load(Ordering::Relaxed),
         LOCALE_LOADS.load(Ordering::Relaxed),
         FORMAT_ERRORS.load(Ordering::Relaxed),
-        PAK_RELOAD_TOTAL.load(Ordering::Relaxed),
-        PAK_VERIFY_FAILURES.load(Ordering::Relaxed),
-        PAK_ROLLBACK_TOTAL.load(Ordering::Relaxed),
+        LPK_RELOAD_TOTAL.load(Ordering::Relaxed),
+        LPK_VERIFY_FAILURES.load(Ordering::Relaxed),
+        LPK_ROLLBACK_TOTAL.load(Ordering::Relaxed),
         cache_hit_ratio(),
         miss_by_locale
     )
@@ -234,10 +234,10 @@ mod tests {
     }
 
     #[test]
-    fn pak_metrics_increment() {
-        inc_pak_reload_total();
-        inc_pak_verify_failures();
-        inc_pak_rollback_total();
+    fn lpk_metrics_increment() {
+        inc_lpk_reload_total();
+        inc_lpk_verify_failures();
+        inc_lpk_rollback_total();
         #[cfg(feature = "std")]
         {
             let s = metrics_string();

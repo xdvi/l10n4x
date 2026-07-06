@@ -66,7 +66,7 @@ struct Cli {
 enum Commands {
     /// Interactive wizard to initialize l10n4x.config.json
     Init,
-    /// Build translation packages (.pak) and target bindings
+    /// Build translation packages (.lpk) and target bindings
     Build {
         /// Validate and report errors without writing output files
         #[arg(long)]
@@ -135,7 +135,7 @@ enum Commands {
         #[command(subcommand)]
         command: PluginCommands,
     },
-    /// TMS exchange: export/import locale JSON or push signed paks to a webhook.
+    /// TMS exchange: export/import locale JSON or push signed lpks to a webhook.
     Sync {
         /// Provider: core `file`|`webhook`, or plugin `crowdin` (requires install).
         #[arg(long, default_value = "file")]
@@ -340,7 +340,7 @@ fn build_project(dry_run: bool, push_webhook: bool) -> Result<(), anyhow::Error>
     }
 
     println!(
-        "Compiled signed translation packages (.pak) at '{}'",
+        "Compiled signed translation packages (.lpk) at '{}'",
         config.output_dir
     );
 
@@ -387,24 +387,24 @@ fn sanitize_locale_filename(s: &str) -> Option<&str> {
 }
 
 async fn serve_locale_file(
-    AxumPath(lang_pak): AxumPath<String>,
+    AxumPath(lang_lpk): AxumPath<String>,
     State(state): State<ServerState>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
-    if lang_pak.len() > 512 {
+    if lang_lpk.len() > 512 {
         return (StatusCode::BAD_REQUEST, "Path too long").into_response();
     }
-    if lang_pak.ends_with(".json") {
-        let locale = lang_pak.trim_end_matches(".json");
+    if lang_lpk.ends_with(".json") {
+        let locale = lang_lpk.trim_end_matches(".json");
         if sanitize_locale_filename(locale).is_none() {
             return (StatusCode::BAD_REQUEST, "Invalid locale filename").into_response();
         }
-        let pak_path = Path::new(&state.output_dir).join(format!("{}.pak", locale));
-        if !pak_path.exists() {
+        let lpk_path = Path::new(&state.output_dir).join(format!("{}.lpk", locale));
+        if !lpk_path.exists() {
             return (StatusCode::NOT_FOUND, "Locale JSON not found").into_response();
         }
-        match fs::read(&pak_path) {
-            Ok(bytes) => match l10n4x_core::pak::decompress_pak(&bytes) {
+        match fs::read(&lpk_path) {
+            Ok(bytes) => match l10n4x_core::lpk::decompress_lpk(&bytes) {
                 Ok(decompressed) => {
                     let etag = fnv1a_hex(&bytes);
                     let etag_header = format!("\"{}\"", etag);
@@ -428,25 +428,25 @@ async fn serve_locale_file(
                 }
                 Err(e) => (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    format!("Pak decompression failed: {}", e),
+                    format!("Lpk decompression failed: {}", e),
                 )
                     .into_response(),
             },
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read pak file: {}", e),
+                format!("Failed to read lpk file: {}", e),
             )
                 .into_response(),
         }
-    } else if lang_pak.ends_with(".pak") {
-        if sanitize_locale_filename(&lang_pak).is_none() {
+    } else if lang_lpk.ends_with(".lpk") {
+        if sanitize_locale_filename(&lang_lpk).is_none() {
             return (StatusCode::BAD_REQUEST, "Invalid locale filename").into_response();
         }
-        let pak_path = Path::new(&state.output_dir).join(&lang_pak);
-        if !pak_path.exists() {
-            return (StatusCode::NOT_FOUND, "Locale PAK not found").into_response();
+        let lpk_path = Path::new(&state.output_dir).join(&lang_lpk);
+        if !lpk_path.exists() {
+            return (StatusCode::NOT_FOUND, "Locale LPK not found").into_response();
         }
-        match fs::read(&pak_path) {
+        match fs::read(&lpk_path) {
             Ok(bytes) => {
                 let etag = fnv1a_hex(&bytes);
                 let etag_header = format!("\"{}\"", etag);
@@ -470,7 +470,7 @@ async fn serve_locale_file(
             }
             Err(e) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read pak file: {}", e),
+                format!("Failed to read lpk file: {}", e),
             )
                 .into_response(),
         }
@@ -750,7 +750,7 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
     };
 
     let protected_routes = Router::new()
-        .route("/locales/:lang_pak", get(serve_locale_file))
+        .route("/locales/:lang_lpk", get(serve_locale_file))
         .route("/events", get(handle_events))
         .layer(middleware::from_fn(auth_middleware))
         .layer(middleware::from_fn(rate_limit_middleware));
@@ -1713,9 +1713,9 @@ mod path_safety_tests {
     use super::sanitize_locale_filename;
 
     #[test]
-    fn accepts_simple_locale_pak() {
-        assert!(sanitize_locale_filename("en.pak").is_some());
-        assert!(sanitize_locale_filename("zh-CN.pak").is_some());
+    fn accepts_simple_locale_lpk() {
+        assert!(sanitize_locale_filename("en.lpk").is_some());
+        assert!(sanitize_locale_filename("zh-CN.lpk").is_some());
         assert!(sanitize_locale_filename("en").is_some());
         assert!(sanitize_locale_filename("pt_BR").is_some());
     }
@@ -1728,25 +1728,25 @@ mod path_safety_tests {
     #[test]
     fn rejects_path_traversal() {
         assert!(sanitize_locale_filename("../../etc/passwd").is_none());
-        assert!(sanitize_locale_filename("../en.pak").is_none());
-        assert!(sanitize_locale_filename("..\\en.pak").is_none());
+        assert!(sanitize_locale_filename("../en.lpk").is_none());
+        assert!(sanitize_locale_filename("..\\en.lpk").is_none());
     }
 
     #[test]
     fn rejects_absolute_paths() {
         assert!(sanitize_locale_filename("/etc/passwd").is_none());
-        assert!(sanitize_locale_filename("\\windows\\system.pak").is_none());
+        assert!(sanitize_locale_filename("\\windows\\system.lpk").is_none());
     }
 
     #[test]
     fn rejects_directory_separators() {
-        assert!(sanitize_locale_filename("sub/dir/en.pak").is_none());
-        assert!(sanitize_locale_filename("sub\\en.pak").is_none());
+        assert!(sanitize_locale_filename("sub/dir/en.lpk").is_none());
+        assert!(sanitize_locale_filename("sub\\en.lpk").is_none());
     }
 
     #[test]
     fn rejects_null_bytes() {
-        assert!(sanitize_locale_filename("en\0.pak").is_none());
+        assert!(sanitize_locale_filename("en\0.lpk").is_none());
     }
 }
 

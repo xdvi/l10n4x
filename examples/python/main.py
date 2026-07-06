@@ -8,9 +8,9 @@ def examples_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
 def main() -> int:
-    pak_dir = os.path.join(examples_dir(), "dist", "locales")
+    lpk_dir = os.path.join(examples_dir(), "dist", "locales")
     if len(sys.argv) > 1:
-        pak_dir = sys.argv[1]
+        lpk_dir = sys.argv[1]
 
     try:
         tr = Translator()
@@ -48,7 +48,7 @@ def main() -> int:
 
     try:
         tr.set_fallback_locale("es")
-        tr.load_pak_directory(pak_dir)
+        tr.load_lpk_directory(lpk_dir)
     except Exception as exc:
         print(f"Initialization failed: {exc}")
         return 1

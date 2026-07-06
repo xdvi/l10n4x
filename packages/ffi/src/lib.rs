@@ -1,6 +1,6 @@
 //! `l10n4c` is the C-FFI runtime layer for `l10n4x`.
 //!
-//! This crate exposes **runtime-only** operations: loading signed `.pak` files,
+//! This crate exposes **runtime-only** operations: loading signed `.lpk` files,
 //! translating keys, and managing the fallback locale. Compilation is handled
 //! exclusively by the `l10n4x-toolkit` CLI, enforcing cryptographic integrity
 //! by architecture.
@@ -39,12 +39,12 @@ use l10n4x_core::binary_format::fnv1a_64;
 use l10n4x_core::encryption;
 use l10n4x_core::integrity;
 use l10n4x_core::loader::{
-    init_modular, load_pak_directory, try_load_namespace_locale, try_load_pak_locale,
-    try_load_pak_locale_for_store, try_load_static_bytes,
+    init_modular, load_lpk_directory, try_load_lpk_locale, try_load_lpk_locale_for_store,
+    try_load_namespace_locale, try_load_static_bytes,
 };
 use l10n4x_core::metrics;
 use l10n4x_core::ota::{
-    ota_can_rollback, try_ota_reload_pak, try_ota_reload_pak_for_store, try_ota_rollback,
+    ota_can_rollback, try_ota_reload_lpk, try_ota_reload_lpk_for_store, try_ota_rollback,
 };
 use l10n4x_core::store::{
     clear_translations, clear_translations_for_store, get_fallback_locale, hash_params,
@@ -416,7 +416,7 @@ fn string_to_c(s: &str) -> *mut c_char {
     }
 }
 
-/// Installs the 32-byte Ed25519 public key used to verify `.pak` signatures at runtime.
+/// Installs the 32-byte Ed25519 public key used to verify `.lpk` signatures at runtime.
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_set_verify_key(key: *const u8, key_len: usize) -> i32 {
     ffi_guard(move || {
@@ -489,9 +489,9 @@ pub unsafe extern "C" fn l10n4c_set_fallback_chain(
     })
 }
 
-/// Loads a single `.pak` file for a given locale.
+/// Loads a single `.lpk` file for a given locale.
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *const c_char) -> i32 {
+pub extern "C" fn l10n4c_load_lpk_locale(locale: *const c_char, file_path: *const c_char) -> i32 {
     ffi_guard(move || {
         let locale_str = match cstr_to_str(locale) {
             Ok(s) => s,
@@ -501,7 +501,7 @@ pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *cons
             Ok(s) => s,
             Err(e) => return e,
         };
-        match try_load_pak_locale(locale_str, path_str) {
+        match try_load_lpk_locale(locale_str, path_str) {
             Ok(()) => L10N4C_OK,
             Err(e) => core_error_to_ffi(e),
         }
@@ -550,7 +550,7 @@ pub unsafe extern "C" fn l10n4c_load_static_bytes(
     })
 }
 
-/// Merges a namespace `.pak` into an existing locale (modular bundle mode).
+/// Merges a namespace `.lpk` into an existing locale (modular bundle mode).
 #[unsafe(no_mangle)]
 pub extern "C" fn l10n4c_load_namespace(
     locale: *const c_char,
@@ -596,15 +596,15 @@ pub extern "C" fn l10n4c_init_modular(base_dir: *const c_char, locale: *const c_
     })
 }
 
-/// Scans a directory for all `.pak` files and loads them (filename stem = locale).
+/// Scans a directory for all `.lpk` files and loads them (filename stem = locale).
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_load_pak_directory(dir_path: *const c_char) -> i32 {
+pub extern "C" fn l10n4c_load_lpk_directory(dir_path: *const c_char) -> i32 {
     ffi_guard(move || {
         let dir = match cstr_to_str(dir_path) {
             Ok(s) => s,
             Err(e) => return e,
         };
-        if load_pak_directory(dir) {
+        if load_lpk_directory(dir) {
             L10N4C_OK
         } else {
             L10N4C_IO_ERROR
@@ -1025,9 +1025,9 @@ pub extern "C" fn l10n4c_store_destroy(store_handle: u32) -> i32 {
     })
 }
 
-/// Loads a single `.pak` file into a scoped store.
+/// Loads a single `.lpk` file into a scoped store.
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_store_load_pak_locale(
+pub extern "C" fn l10n4c_store_load_lpk_locale(
     store_handle: u32,
     locale: *const c_char,
     file_path: *const c_char,
@@ -1045,7 +1045,7 @@ pub extern "C" fn l10n4c_store_load_pak_locale(
             Ok(s) => s,
             Err(e) => return e,
         };
-        match try_load_pak_locale_for_store(Some(handle), locale_str, path_str) {
+        match try_load_lpk_locale_for_store(Some(handle), locale_str, path_str) {
             Ok(()) => L10N4C_OK,
             Err(e) => core_error_to_ffi(e),
         }
@@ -1130,13 +1130,13 @@ pub extern "C" fn l10n4c_store_clear(store_handle: u32) -> i32 {
     })
 }
 
-/// Atomically reloads a signed `.pak` for `locale` in a scoped store.
+/// Atomically reloads a signed `.lpk` for `locale` in a scoped store.
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_store_ota_reload_pak(
+pub extern "C" fn l10n4c_store_ota_reload_lpk(
     store_handle: u32,
     locale: *const c_char,
-    pak_bytes: *const u8,
-    pak_len: usize,
+    lpk_bytes: *const u8,
+    lpk_len: usize,
 ) -> i32 {
     ffi_guard(move || {
         let handle = match parse_store_handle(store_handle) {
@@ -1147,11 +1147,11 @@ pub extern "C" fn l10n4c_store_ota_reload_pak(
             Ok(s) => s,
             Err(e) => return e,
         };
-        if pak_bytes.is_null() || pak_len == 0 {
+        if lpk_bytes.is_null() || lpk_len == 0 {
             return L10N4C_INVALID_PARAMS;
         }
-        let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
-        match try_ota_reload_pak_for_store(Some(handle), locale_str, slice) {
+        let slice = unsafe { std::slice::from_raw_parts(lpk_bytes, lpk_len) };
+        match try_ota_reload_lpk_for_store(Some(handle), locale_str, slice) {
             Ok(()) => {
                 clear_translate_cache_for_store(store_handle);
                 L10N4C_OK
@@ -1161,23 +1161,23 @@ pub extern "C" fn l10n4c_store_ota_reload_pak(
     })
 }
 
-/// Atomically reloads a signed `.pak` for `locale`, retaining one retired snapshot for rollback.
+/// Atomically reloads a signed `.lpk` for `locale`, retaining one retired snapshot for rollback.
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_ota_reload_pak(
+pub extern "C" fn l10n4c_ota_reload_lpk(
     locale: *const c_char,
-    pak_bytes: *const u8,
-    pak_len: usize,
+    lpk_bytes: *const u8,
+    lpk_len: usize,
 ) -> i32 {
     ffi_guard(move || {
         let locale_str = match cstr_to_str(locale) {
             Ok(s) => s,
             Err(e) => return e,
         };
-        if pak_bytes.is_null() || pak_len == 0 {
+        if lpk_bytes.is_null() || lpk_len == 0 {
             return L10N4C_INVALID_PARAMS;
         }
-        let slice = unsafe { std::slice::from_raw_parts(pak_bytes, pak_len) };
-        match try_ota_reload_pak(locale_str, slice) {
+        let slice = unsafe { std::slice::from_raw_parts(lpk_bytes, lpk_len) };
+        match try_ota_reload_lpk(locale_str, slice) {
             Ok(()) => {
                 clear_translate_cache();
                 L10N4C_OK

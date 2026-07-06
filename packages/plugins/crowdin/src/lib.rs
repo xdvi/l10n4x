@@ -178,7 +178,7 @@ fn try_api_push(ctx: &SyncContext) -> Result<(), anyhow::Error> {
     anyhow::bail!(
         "crowdin push requires Crowdin API credentials in plugins.crowdin (projectId, tokenEnv).\n\
          For now use: l10n4x sync --provider crowdin --direction export\n\
-         Or push signed paks with: l10n4x sync --provider webhook --direction push"
+         Or push signed lpks with: l10n4x sync --provider webhook --direction push"
     );
 }
 

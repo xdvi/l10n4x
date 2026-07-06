@@ -22,13 +22,13 @@ All tasks from `PLAN_V3.md` have been implemented, tested, and pass `cargo test 
 
 | # | Task | Files Changed | Status |
 |---|------|-------------|--------|
-| 1 | HTML/XSS escaping | `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `PAK_FORMAT.md` | ✅ |
-| 2 | Ordinal plurals (opcodes `0x0A` + `0x03`) | `plural_rules.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `PAK_FORMAT.md` | ✅ |
-| 3 | Relative time formatting (opcode `0x08`) | `reltime.rs` (new), `lib.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `PAK_FORMAT.md` | ✅ |
-| 4 | List formatting (opcode `0x09`) | `list_format.rs` (new), `lib.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `PAK_FORMAT.md` | ✅ |
+| 1 | HTML/XSS escaping | `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `LPK_FORMAT.md` | ✅ |
+| 2 | Ordinal plurals (opcodes `0x0A` + `0x03`) | `plural_rules.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `LPK_FORMAT.md` | ✅ |
+| 3 | Relative time formatting (opcode `0x08`) | `reltime.rs` (new), `lib.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `LPK_FORMAT.md` | ✅ |
+| 4 | List formatting (opcode `0x09`) | `list_format.rs` (new), `lib.rs`, `formatter.rs`, `icu_parser.rs`, `binary_writer.rs`, `LPK_FORMAT.md` | ✅ |
 | 5 | Context suffixes (`_male`/`_female`) | `store.rs`, `ffi/l10n4c.h`, `ffi/src/lib.rs`, `wasm/src/lib.rs` | ✅ |
 | 6 | Reactive event system | `store.rs`, `wasm/src/lib.rs`, `loader.rs` | ✅ |
-| 7 | Interval plurals | `icu_parser.rs`, `compiler/src/lib.rs`, `PAK_FORMAT.md` | ✅ |
+| 7 | Interval plurals | `icu_parser.rs`, `compiler/src/lib.rs`, `LPK_FORMAT.md` | ✅ |
 | 8 | Vue.js + Svelte generators | `targets/vue.rs` (new), `targets/svelte.rs` (new), `targets/mod.rs`, `main.rs` | ✅ |
 | 9 | `l10n4x init` auto-detect | `main.rs` | ✅ |
 | 10 | Key-caching + offline | `ts_generated.ts`, `wasm/src/lib.rs`, `ffi/src/lib.rs`, `ffi/l10n4c.h`, `store.rs` | ✅ |

@@ -1,7 +1,7 @@
 //! Integration tests for the `l10n4c` FFI runtime layer.
 //!
 //! These tests exercise the **runtime-only** API surface: loading pre-compiled
-//! `.pak` files, translating keys, managing the fallback locale, and the alloc
+//! `.lpk` files, translating keys, managing the fallback locale, and the alloc
 //! API. Compilation is performed via `l10n4x_compiler` directly (as the CLI
 //! would), not through FFI.
 
@@ -11,8 +11,8 @@ use std::fs;
 use std::path::Path;
 
 use l10n4c::{
-    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales, l10n4c_load_pak_directory,
-    l10n4c_load_pak_locale, l10n4c_load_static_bytes, l10n4c_register_formatter,
+    l10n4c_clear, l10n4c_free_string, l10n4c_get_loaded_locales, l10n4c_load_lpk_directory,
+    l10n4c_load_lpk_locale, l10n4c_load_static_bytes, l10n4c_register_formatter,
     l10n4c_set_decrypt_key, l10n4c_set_fallback_chain, l10n4c_set_fallback_locale,
     l10n4c_set_missing_key_handler, l10n4c_set_verify_key, l10n4c_translate,
     l10n4c_translate_alloc, l10n4c_translate_required_size, l10n4c_translate_with_params,
@@ -35,7 +35,7 @@ fn install_test_keys() {
     );
 }
 
-/// Compile test fixtures from JSON → .pak using the compiler crate.
+/// Compile test fixtures from JSON → .lpk using the compiler crate.
 fn compile_fixtures(src: &Path, out: &Path, encrypt: bool) {
     l10n4x_compiler::compile_translations(src, out, encrypt, 8).unwrap();
 }
@@ -80,9 +80,9 @@ fn translate_with_params_helper(
     s
 }
 
-// ─── Test: compile .pak from JSON, load via FFI, translate ──────────────────
+// ─── Test: compile .lpk from JSON, load via FFI, translate ──────────────────
 
-fn test_compiler_and_pak_loading() {
+fn test_compiler_and_lpk_loading() {
     l10n4c_clear();
     install_test_keys();
 
@@ -107,12 +107,12 @@ fn test_compiler_and_pak_loading() {
     let temp_out = Path::new("temp_test_out");
     compile_fixtures(temp_src, temp_out, false);
 
-    assert!(temp_out.join("es.pak").is_file());
-    assert!(temp_out.join("en.pak").is_file());
+    assert!(temp_out.join("es.lpk").is_file());
+    assert!(temp_out.join("en.lpk").is_file());
 
     l10n4c_clear();
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_es = CString::new("es").unwrap();
     let locale_en = CString::new("en").unwrap();
@@ -154,7 +154,7 @@ fn test_fallback_locale() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
     let locale_es = CString::new("es").unwrap();
@@ -218,7 +218,7 @@ fn test_variable_interpolation_and_plurals() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
     let key_welcome = fnv1a_64(b"common.welcome");
@@ -248,9 +248,9 @@ fn test_variable_interpolation_and_plurals() {
     let _ = fs::remove_dir_all(temp_out);
 }
 
-// ─── Test: encrypted .pak (L10E envelope) ───────────────────────────────────
+// ─── Test: encrypted .lpk (L10E envelope) ───────────────────────────────────
 
-fn test_encrypted_pak_compile_and_load() {
+fn test_encrypted_lpk_compile_and_load() {
     l10n4c_clear();
     install_test_keys();
 
@@ -274,12 +274,12 @@ fn test_encrypted_pak_compile_and_load() {
     let temp_out = Path::new("temp_test_enc_out");
     compile_fixtures(temp_src, temp_out, true);
 
-    let pak_bytes = fs::read(temp_out.join("en.pak")).unwrap();
-    assert_eq!(&pak_bytes[0..4], b"L10E");
+    let lpk_bytes = fs::read(temp_out.join("en.lpk")).unwrap();
+    assert_eq!(&lpk_bytes[0..4], b"L10E");
 
     l10n4c_clear();
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
     let key_hash = fnv1a_64(b"common.greeting");
@@ -307,7 +307,7 @@ fn test_alloc_api() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale = CString::new("en").unwrap();
     let key_hash = fnv1a_64(b"common.greet");
@@ -463,7 +463,7 @@ fn test_fallback_chain() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     // Use fallback chain: [es, en]
     let es_c = CString::new("es").unwrap();
@@ -505,7 +505,7 @@ fn test_missing_key_handler_callback() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     unsafe extern "C" fn missing_key_cb(locale: *const std::os::raw::c_char, key_hash: u64) {
         let loc = unsafe { CStr::from_ptr(locale) }
@@ -575,7 +575,7 @@ fn test_register_custom_formatter_ffi() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
     let key_hash = fnv1a_64(b"common.welcome");
@@ -603,7 +603,7 @@ fn test_get_loaded_locales_with_data() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let mut buf = [0u8; 64];
     let result = l10n4c_get_loaded_locales(buf.as_mut_ptr(), 64);
@@ -635,7 +635,7 @@ fn test_translate_with_params_buffer_api() {
     compile_fixtures(temp_src, temp_out, false);
 
     let out_c = CString::new(temp_out.to_str().unwrap()).unwrap();
-    assert_eq!(l10n4c_load_pak_directory(out_c.as_ptr()), L10N4C_OK);
+    assert_eq!(l10n4c_load_lpk_directory(out_c.as_ptr()), L10N4C_OK);
 
     let locale_en = CString::new("en").unwrap();
     let key_hash = fnv1a_64(b"common.hello");
@@ -700,7 +700,7 @@ fn test_load_static_bytes_ffi() {
     );
 }
 
-fn test_tampered_pak_returns_signature_invalid() {
+fn test_tampered_lpk_returns_signature_invalid() {
     l10n4c_clear();
     install_test_keys();
 
@@ -711,17 +711,17 @@ fn test_tampered_pak_returns_signature_invalid() {
     let temp_out = Path::new("temp_tamper_out");
     compile_fixtures(temp_src, temp_out, false);
 
-    let pak_path = temp_out.join("en.pak");
-    let mut bytes = fs::read(&pak_path).unwrap();
+    let lpk_path = temp_out.join("en.lpk");
+    let mut bytes = fs::read(&lpk_path).unwrap();
     if let Some(last) = bytes.last_mut() {
         *last ^= 0xFF;
     }
-    fs::write(&pak_path, &bytes).unwrap();
+    fs::write(&lpk_path, &bytes).unwrap();
 
     let locale = CString::new("en").unwrap();
-    let path = CString::new(pak_path.to_str().unwrap()).unwrap();
+    let path = CString::new(lpk_path.to_str().unwrap()).unwrap();
     assert_eq!(
-        l10n4c_load_pak_locale(locale.as_ptr(), path.as_ptr()),
+        l10n4c_load_lpk_locale(locale.as_ptr(), path.as_ptr()),
         L10N4C_SIGNATURE_INVALID
     );
 
@@ -733,10 +733,10 @@ fn test_tampered_pak_returns_signature_invalid() {
 
 #[test]
 fn run_all_ffi_integration_tests() {
-    test_compiler_and_pak_loading();
+    test_compiler_and_lpk_loading();
     test_fallback_locale();
     test_variable_interpolation_and_plurals();
-    test_encrypted_pak_compile_and_load();
+    test_encrypted_lpk_compile_and_load();
     test_alloc_api();
     test_ffi_invalid_utf8();
     test_ffi_buffer_overflow();
@@ -746,5 +746,5 @@ fn run_all_ffi_integration_tests() {
     test_missing_key_handler_callback();
     test_register_custom_formatter_ffi();
     test_load_static_bytes_ffi();
-    test_tampered_pak_returns_signature_invalid();
+    test_tampered_lpk_returns_signature_invalid();
 }

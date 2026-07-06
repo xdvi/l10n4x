@@ -10,7 +10,7 @@ pub struct TmsConfig {
     /// TMS provider: core `file`|`webhook`, or plugin id e.g. `crowdin`.
     #[serde(default = "default_tms_provider")]
     pub provider: String,
-    /// HTTP endpoint for signed `.pak` upload (`webhook` provider).
+    /// HTTP endpoint for signed `.lpk` upload (`webhook` provider).
     #[serde(default)]
     pub webhook_url: Option<String>,
     /// Env var holding bearer token for webhook auth.
@@ -31,7 +31,7 @@ pub struct BundlesConfig {
     /// `monolith` (default) or `modular`.
     #[serde(default = "default_bundle_mode")]
     pub mode: String,
-    /// How to split modular bundles (`file` = one `.pak` per JSON source file).
+    /// How to split modular bundles (`file` = one `.lpk` per JSON source file).
     #[serde(default = "default_split_by")]
     pub split_by: String,
     /// Namespaces loaded at startup via `init_modular` (modular mode only).
@@ -60,7 +60,7 @@ pub struct Config {
     /// Hex-encoded 32-byte Ed25519 public key embedded in client bindings.
     #[serde(default)]
     pub verify_public_key: Option<String>,
-    /// When true, wraps signed `.pak` files in an optional `L10E` AES-GCM envelope.
+    /// When true, wraps signed `.lpk` files in an optional `L10E` AES-GCM envelope.
     #[serde(default)]
     pub encrypt: bool,
     /// zstd compression level (1-22, default 8).
@@ -71,7 +71,7 @@ pub struct Config {
     pub encrypt_key_env: String,
     #[serde(default)]
     pub cors_origins: Option<Vec<String>>,
-    /// Embed hash→key debug table in `.pak` files (requires `debug-keys` build feature).
+    /// Embed hash→key debug table in `.lpk` files (requires `debug-keys` build feature).
     #[serde(default)]
     pub debug_keys: bool,
     #[serde(default)]

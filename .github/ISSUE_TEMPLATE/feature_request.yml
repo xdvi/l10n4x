@@ -15,7 +15,7 @@ body:
       placeholder: |
         ```rust
         // Example API usage
-        l10n4x::load_from_url("https://cdn.example.com/en_US.pak")?;
+        l10n4x::load_from_url("https://cdn.example.com/en_US.lpk")?;
         ```
     validations:
       required: true

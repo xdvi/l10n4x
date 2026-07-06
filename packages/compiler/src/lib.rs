@@ -1,6 +1,6 @@
 //! `l10n4x-compiler` is the translation compilation toolkit component of `l10n4x`.
 //! It parses translation templates in JSON/ICU format, flattens hierarchical namespaces,
-//! and compiles them into compressed `.pak` binary assets.
+//! and compiles them into compressed `.lpk` binary assets.
 
 pub mod binary_writer;
 pub mod icu_parser;
@@ -11,7 +11,7 @@ use ahash::AHashMap as HashMap;
 use binary_writer::{write_binary_format, write_binary_format_with_keys};
 use icu_parser::MessageParser;
 use l10n4x_core::envelope;
-use l10n4x_core::pak::{build_unsigned, seal};
+use l10n4x_core::lpk::{build_unsigned, seal};
 use rayon::prelude::*;
 use serde_json::Value;
 use std::collections::HashMap as StdHashMap;
@@ -31,9 +31,9 @@ pub type ModularTranslationsMap =
 /// Bundle output strategy for `compile_translations`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BundleMode {
-    /// One `{locale}.pak` per locale (default).
+    /// One `{locale}.lpk` per locale (default).
     Monolith,
-    /// `{locale}/{namespace}.pak` per JSON source file.
+    /// `{locale}/{namespace}.lpk` per JSON source file.
     Modular,
 }
 
@@ -222,7 +222,7 @@ fn resolve_single(
     resolving.remove(&key);
 }
 
-fn write_signed_pak(
+fn write_signed_lpk(
     binary_bytes: Vec<u8>,
     parent: Option<&str>,
     encrypt: bool,
@@ -247,7 +247,7 @@ fn write_signed_pak(
     }
 }
 
-/// Compiles directories of JSON localization files into signed `.pak` files.
+/// Compiles directories of JSON localization files into signed `.lpk` files.
 pub fn compile_translations(
     src_path: &Path,
     out_path: &Path,
@@ -329,9 +329,9 @@ fn compile_monolith(
             let key_names: Option<HashMap<u64, String>> = None;
 
             let binary_bytes = write_binary_format_with_keys(&to_write, key_names.as_ref());
-            let pak_bytes =
-                write_signed_pak(binary_bytes, effective_parent, encryption, compression)?;
-            fs::write(out_path.join(format!("{locale}.pak")), pak_bytes)?;
+            let lpk_bytes =
+                write_signed_lpk(binary_bytes, effective_parent, encryption, compression)?;
+            fs::write(out_path.join(format!("{locale}.lpk")), lpk_bytes)?;
             Ok(())
         })() {
             compile_errors
@@ -398,8 +398,8 @@ fn compile_modular(
                 let key_names: Option<HashMap<u64, String>> = None;
 
                 let binary_bytes = write_binary_format_with_keys(nodes, key_names.as_ref());
-                let pak_bytes = write_signed_pak(binary_bytes, None, encryption, compression)?;
-                fs::write(locale_dir.join(format!("{namespace}.pak")), pak_bytes)?;
+                let lpk_bytes = write_signed_lpk(binary_bytes, None, encryption, compression)?;
+                fs::write(locale_dir.join(format!("{namespace}.lpk")), lpk_bytes)?;
             }
             ns_list.sort();
             manifest_locales
@@ -1104,7 +1104,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_modular_emits_namespace_paks() {
+    fn compile_modular_emits_namespace_lpks() {
         use std::fs;
         let tmp = std::env::temp_dir().join("l10n4x_test_modular");
         let _ = fs::remove_dir_all(&tmp);
@@ -1128,8 +1128,8 @@ mod tests {
         )
         .unwrap();
 
-        assert!(out.join("en").join("common.pak").is_file());
-        assert!(out.join("en").join("auth.pak").is_file());
+        assert!(out.join("en").join("common.lpk").is_file());
+        assert!(out.join("en").join("auth.lpk").is_file());
         assert!(out.join("namespaces.json").is_file());
 
         let _ = fs::remove_dir_all(&tmp);
@@ -1151,7 +1151,7 @@ mod tests {
         let out = tmp.join("out");
         let result = compile_translations(&tmp, &out, false, 6);
         assert!(result.is_ok());
-        assert!(out.join("en.pak").is_file());
+        assert!(out.join("en.lpk").is_file());
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -1174,8 +1174,8 @@ mod tests {
         let out = tmp.join("out");
         let result = compile_translations(&tmp, &out, true, 6);
         assert!(result.is_ok());
-        let pak = fs::read(out.join("en.pak")).unwrap();
-        assert_eq!(&pak[0..4], b"L10E");
+        let lpk = fs::read(out.join("en.lpk")).unwrap();
+        assert_eq!(&lpk[0..4], b"L10E");
 
         let _ = fs::remove_dir_all(&tmp);
     }
@@ -1207,7 +1207,7 @@ mod tests {
     fn compile_translations_interval_plural_e2e_translate() {
         use l10n4x_core::binary_format::fnv1a_64;
         use l10n4x_core::integrity;
-        use l10n4x_core::loader::try_load_pak_bytes;
+        use l10n4x_core::loader::try_load_lpk_bytes;
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
@@ -1229,10 +1229,10 @@ mod tests {
 
         let out = tmp.join("out");
         compile_translations(&tmp, &out, false, 6).unwrap();
-        let pak = fs::read(out.join("en.pak")).unwrap();
+        let lpk = fs::read(out.join("en.lpk")).unwrap();
 
         clear_translations();
-        try_load_pak_bytes("en", &pak).unwrap();
+        try_load_lpk_bytes("en", &lpk).unwrap();
 
         let key = fnv1a_64(b"common.messages");
         assert_eq!(
@@ -1251,7 +1251,7 @@ mod tests {
     fn compile_translations_interval_plural_large_range_e2e() {
         use l10n4x_core::binary_format::fnv1a_64;
         use l10n4x_core::integrity;
-        use l10n4x_core::loader::try_load_pak_bytes;
+        use l10n4x_core::loader::try_load_lpk_bytes;
         use l10n4x_core::store::{clear_translations, translate};
         use std::fs;
 
@@ -1273,10 +1273,10 @@ mod tests {
 
         let out = tmp.join("out");
         compile_translations(&tmp, &out, false, 6).unwrap();
-        let pak = fs::read(out.join("en.pak")).unwrap();
+        let lpk = fs::read(out.join("en.lpk")).unwrap();
 
         clear_translations();
-        try_load_pak_bytes("en", &pak).unwrap();
+        try_load_lpk_bytes("en", &lpk).unwrap();
 
         let key = fnv1a_64(b"common.messages");
         assert_eq!(translate("en", key, None, &[("count", "4")]), "many");

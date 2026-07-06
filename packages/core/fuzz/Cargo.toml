@@ -13,8 +13,8 @@ libfuzzer-sys = "0.4"
 l10n4x-core = { path = ".." }
 
 [[bin]]
-name = "decompress_pak"
-path = "fuzz_targets/decompress_pak.rs"
+name = "decompress_lpk"
+path = "fuzz_targets/decompress_lpk.rs"
 
 [[bin]]
 name = "lookup"
