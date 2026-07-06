@@ -19,6 +19,11 @@
 //! Functions returning `*mut c_char` allocate via the Rust global allocator. Callers must
 //! release results with [`l10n4c_free_string`].
 
+// Exports below take raw C pointers but are declared safe `extern "C"`: each
+// null-checks and only reads null-terminated strings / length-bounded buffers,
+// which is the conventional contract for a C ABI surface. The one export whose
+// contract goes beyond that (`l10n4c_load_static_bytes` stores the buffer as
+// `&'static`) is marked `unsafe` with a `# Safety` section.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 mod error;
@@ -512,8 +517,14 @@ pub extern "C" fn l10n4c_load_pak_locale(locale: *const c_char, file_path: *cons
 /// verified at build time and runtime will not re-verify it.
 ///
 /// Returns `L10N4C_OK` on success, or `L10N4C_INVALID_PARAMS` if pointers are null or length is 0.
+///
+/// # Safety
+/// `data` must remain valid and unmodified for the ENTIRE remaining lifetime of
+/// the program — it is stored internally as `&'static [u8]`. Passing a heap or
+/// stack buffer that is later freed is undefined behavior. `locale` must be a
+/// valid null-terminated UTF-8 C string.
 #[unsafe(no_mangle)]
-pub extern "C" fn l10n4c_load_static_bytes(
+pub unsafe extern "C" fn l10n4c_load_static_bytes(
     locale: *const c_char,
     data: *const u8,
     data_len: usize,
@@ -642,7 +653,6 @@ pub extern "C" fn l10n4c_translate(
         };
         match write_to_c_buffer(&outcome.text, buf, max_len) {
             Ok(_) => outcome_status(&outcome),
-            Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
             Err(e) => e,
         }
     })
@@ -945,10 +955,28 @@ pub extern "C" fn l10n4c_register_formatter(
         };
         l10n4x_core::formatter::register_formatter(
             &name_str,
-            Box::new(move |value, locale, _options| {
-                let c_value = CString::new(value).unwrap_or_default();
-                let c_locale = CString::new(locale).unwrap_or_default();
-                let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), core::ptr::null()) };
+            Box::new(move |value, locale, options| {
+                // Interior NUL would truncate silently through CString; skip
+                // the callback rather than hand it corrupted input.
+                let Ok(c_value) = CString::new(value) else {
+                    return value.to_string();
+                };
+                let Ok(c_locale) = CString::new(locale) else {
+                    return value.to_string();
+                };
+                // Deliver the documented options argument as a JSON object
+                // (previously always null).
+                let options_json = if options.is_empty() {
+                    None
+                } else {
+                    serde_json::to_string(options)
+                        .ok()
+                        .and_then(|json| CString::new(json).ok())
+                };
+                let options_ptr = options_json
+                    .as_ref()
+                    .map_or(core::ptr::null(), |c| c.as_ptr());
+                let result = unsafe { f(c_value.as_ptr(), c_locale.as_ptr(), options_ptr) };
                 if result.is_null() {
                     return value.to_string();
                 }
@@ -1045,7 +1073,6 @@ pub extern "C" fn l10n4c_store_translate(
         };
         match write_to_c_buffer(&outcome.text, buf, max_len) {
             Ok(_) => outcome_status(&outcome),
-            Err(L10N4C_BUFFER_TOO_SMALL) => L10N4C_BUFFER_TOO_SMALL,
             Err(e) => e,
         }
     })

@@ -1491,6 +1491,7 @@ dependencies = [
  "criterion",
  "l10n4x-compiler",
  "l10n4x-core",
+ "serde_json",
 ]
 
 [[package]]
