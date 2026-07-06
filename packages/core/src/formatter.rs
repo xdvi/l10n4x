@@ -30,13 +30,28 @@ pub type CustomFormatter = Box<dyn Fn(&str, &str, &HashMap<String, String>) -> S
 #[cfg(feature = "std")]
 static FORMATTER_REGISTRY: Mutex<Option<HashMap<String, CustomFormatter>>> = Mutex::new(None);
 
+/// Fast-path flag so renders skip the registry mutex (and the per-render
+/// options map) entirely when no custom formatter was ever registered —
+/// the common case.
+#[cfg(feature = "std")]
+static HAS_CUSTOM_FORMATTERS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// Returns `true` when at least one custom formatter is registered.
+#[cfg(feature = "std")]
+pub fn has_custom_formatters() -> bool {
+    HAS_CUSTOM_FORMATTERS.load(core::sync::atomic::Ordering::Acquire)
+}
+
 /// Registers a custom formatter function.
 #[cfg(feature = "std")]
 pub fn register_formatter(name: &str, formatter: CustomFormatter) {
-    if let Ok(mut lock) = FORMATTER_REGISTRY.lock() {
-        lock.get_or_insert_with(HashMap::new)
-            .insert(name.to_string(), formatter);
-    }
+    FORMATTER_REGISTRY
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get_or_insert_with(HashMap::new)
+        .insert(name.to_string(), formatter);
+    HAS_CUSTOM_FORMATTERS.store(true, core::sync::atomic::Ordering::Release);
 }
 
 /// Formats a value using a registered custom formatter.
@@ -48,11 +63,13 @@ pub fn format_with_custom(
     locale: &str,
     options: &HashMap<String, String>,
 ) -> Option<String> {
-    if let Ok(lock) = FORMATTER_REGISTRY.lock() {
-        if let Some(ref map) = *lock {
-            if let Some(f) = map.get(name) {
-                return Some(f(value, locale, options));
-            }
+    if !has_custom_formatters() {
+        return None;
+    }
+    let lock = FORMATTER_REGISTRY.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(ref map) = *lock {
+        if let Some(f) = map.get(name) {
+            return Some(f(value, locale, options));
         }
     }
     None
@@ -218,11 +235,14 @@ fn read_len_string<'a>(bytecode: &'a [u8], pos: &mut usize) -> Result<&'a str, c
     Ok(s)
 }
 
-fn read_decl_expr(bytecode: &[u8], pos: &mut usize) -> Result<DeclExpr, core::fmt::Error> {
-    let var = read_len_string(bytecode, pos)?.to_string();
-    let literal = read_len_string(bytecode, pos)?.to_string();
-    let formatter = read_len_string(bytecode, pos)?.to_string();
-    let options = read_len_string(bytecode, pos)?.to_string();
+fn read_decl_expr<'a>(
+    bytecode: &'a [u8],
+    pos: &mut usize,
+) -> Result<DeclExpr<'a>, core::fmt::Error> {
+    let var = read_len_string(bytecode, pos)?;
+    let literal = read_len_string(bytecode, pos)?;
+    let formatter = read_len_string(bytecode, pos)?;
+    let options = read_len_string(bytecode, pos)?;
     Ok(DeclExpr {
         var,
         literal,
@@ -246,9 +266,9 @@ fn format_mf2_match<W: core::fmt::Write>(
     let num_selectors = bytecode[*pos] as usize;
     *pos += 1;
 
-    let mut selectors: alloc::vec::Vec<String> = alloc::vec::Vec::with_capacity(num_selectors);
+    let mut selectors: alloc::vec::Vec<&str> = alloc::vec::Vec::with_capacity(num_selectors);
     for _ in 0..num_selectors {
-        selectors.push(read_len_string(bytecode, pos)?.to_string());
+        selectors.push(read_len_string(bytecode, pos)?);
     }
 
     if *pos + 2 > bytecode.len() {
@@ -256,10 +276,10 @@ fn format_mf2_match<W: core::fmt::Write>(
     }
     let num_inputs = u16::from_be_bytes(bytecode[*pos..*pos + 2].try_into().unwrap()) as usize;
     *pos += 2;
-    let mut input_decls: alloc::vec::Vec<(String, DeclExpr)> =
+    let mut input_decls: alloc::vec::Vec<(&str, DeclExpr)> =
         alloc::vec::Vec::with_capacity(num_inputs);
     for _ in 0..num_inputs {
-        let name = read_len_string(bytecode, pos)?.to_string();
+        let name = read_len_string(bytecode, pos)?;
         let expr = read_decl_expr(bytecode, pos)?;
         input_decls.push((name, expr));
     }
@@ -269,18 +289,18 @@ fn format_mf2_match<W: core::fmt::Write>(
     }
     let num_locals = u16::from_be_bytes(bytecode[*pos..*pos + 2].try_into().unwrap()) as usize;
     *pos += 2;
-    let mut local_decls: alloc::vec::Vec<(String, DeclExpr)> =
+    let mut local_decls: alloc::vec::Vec<(&str, DeclExpr)> =
         alloc::vec::Vec::with_capacity(num_locals);
     for _ in 0..num_locals {
-        let name = read_len_string(bytecode, pos)?.to_string();
+        let name = read_len_string(bytecode, pos)?;
         let expr = read_decl_expr(bytecode, pos)?;
         local_decls.push((name, expr));
     }
 
     let input_refs: alloc::vec::Vec<(&str, &DeclExpr)> =
-        input_decls.iter().map(|(n, e)| (n.as_str(), e)).collect();
+        input_decls.iter().map(|(n, e)| (*n, e)).collect();
     let local_refs: alloc::vec::Vec<(&str, &DeclExpr)> =
-        local_decls.iter().map(|(n, e)| (n.as_str(), e)).collect();
+        local_decls.iter().map(|(n, e)| (*n, e)).collect();
     let resolved = resolve_selector_states(&input_refs, &local_refs, params);
 
     let mut selector_values: alloc::vec::Vec<SelectorState> =
@@ -300,7 +320,7 @@ fn format_mf2_match<W: core::fmt::Write>(
     *pos += 2;
 
     let variants_start = *pos;
-    let mut variants: alloc::vec::Vec<(alloc::vec::Vec<String>, usize, usize)> =
+    let mut variants: alloc::vec::Vec<(alloc::vec::Vec<&str>, usize, usize)> =
         alloc::vec::Vec::with_capacity(num_variants);
     for _ in 0..num_variants {
         if *pos + 1 > bytecode.len() {
@@ -310,7 +330,7 @@ fn format_mf2_match<W: core::fmt::Write>(
         *pos += 1;
         let mut keys = alloc::vec::Vec::with_capacity(num_keys);
         for _ in 0..num_keys {
-            keys.push(read_len_string(bytecode, pos)?.to_string());
+            keys.push(read_len_string(bytecode, pos)?);
         }
         if *pos + 4 > bytecode.len() {
             return Err(core::fmt::Error);
@@ -782,11 +802,8 @@ fn format_message_depth<W: core::fmt::Write>(
                     .map_err(|_| core::fmt::Error)?;
                 pos += default_len;
 
-                let value = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or(default_val);
+                let value =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or(default_val);
 
                 write_localized(locale, writer, value)?;
             }
@@ -821,11 +838,8 @@ fn format_message_depth<W: core::fmt::Write>(
                     _ => RelTimeStyle::Auto,
                 };
 
-                let raw_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("0");
+                let raw_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("0");
                 let delta: i64 = raw_val.parse().unwrap_or(0);
 
                 let formatted = format_relative_time(delta, locale, style);
@@ -857,11 +871,8 @@ fn format_message_depth<W: core::fmt::Write>(
                     _ => ListStyle::Conjunction,
                 };
 
-                let raw_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or("[]");
+                let raw_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or("[]");
 
                 let formatted = format_list(raw_val, locale, style);
                 write_localized(locale, writer, &formatted)?;
@@ -900,11 +911,8 @@ fn format_message_depth<W: core::fmt::Write>(
                 let flags = bytecode[pos];
                 pos += 1;
 
-                let raw_val = params
-                    .iter()
-                    .find(|(k, _)| *k == var_name)
-                    .map(|(_, v)| *v)
-                    .unwrap_or(default_val);
+                let raw_val =
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or(default_val);
 
                 if flags & 0x01 == 0 {
                     write_localized(locale, writer, &html_escape(raw_val))?;
@@ -970,11 +978,7 @@ fn format_message_depth<W: core::fmt::Write>(
                 };
 
                 let raw_val = if !var_name.is_empty() {
-                    params
-                        .iter()
-                        .find(|(k, _)| *k == var_name)
-                        .map(|(_, v)| *v)
-                        .unwrap_or(var_name)
+                    param_value(params, param_index.as_ref(), var_name).unwrap_or(var_name)
                 } else {
                     literal
                 };
@@ -1005,18 +1009,24 @@ fn format_message_depth<W: core::fmt::Write>(
                     let result: Option<alloc::string::String> = {
                         #[cfg(feature = "std")]
                         {
-                            let mut opts = HashMap::new();
-                            if !options_str.is_empty() {
-                                for pair in options_str.split(',') {
-                                    if let Some(eq_pos) = pair.find('=') {
-                                        opts.insert(
-                                            pair[..eq_pos].trim().to_string(),
-                                            pair[eq_pos + 1..].trim().to_string(),
-                                        );
+                            // Build the options map only when a custom
+                            // formatter could actually consume it.
+                            if has_custom_formatters() {
+                                let mut opts = HashMap::new();
+                                if !options_str.is_empty() {
+                                    for pair in options_str.split(',') {
+                                        if let Some(eq_pos) = pair.find('=') {
+                                            opts.insert(
+                                                pair[..eq_pos].trim().to_string(),
+                                                pair[eq_pos + 1..].trim().to_string(),
+                                            );
+                                        }
                                     }
                                 }
+                                format_with_custom(fmt_name, raw_val, locale, &opts)
+                            } else {
+                                None
                             }
-                            format_with_custom(fmt_name, raw_val, locale, &opts)
                         }
                         #[cfg(not(feature = "std"))]
                         {
