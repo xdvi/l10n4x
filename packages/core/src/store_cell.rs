@@ -78,10 +78,32 @@ impl StoreCell {
         f()
     }
 
+    /// Atomically transforms the current store: reads a snapshot, applies `f`,
+    /// and installs the result — all under the writer mutex. Use this instead
+    /// of separate `read` + `swap` calls, which would let two concurrent
+    /// writers base their new store on the same snapshot and silently lose one
+    /// writer's changes.
+    ///
+    /// If `f` returns `Err`, the store is left unchanged.
+    pub fn update<F, E>(&self, f: F) -> Result<(), E>
+    where
+        F: FnOnce(&TranslationStore) -> Result<TranslationStore, E>,
+    {
+        #[cfg(feature = "std")]
+        let _guard = self.write_mutex.lock().unwrap_or_else(|p| p.into_inner());
+        let new_store = self.read(|store| f(store))?;
+        self.swap_unlocked(new_store);
+        Ok(())
+    }
+
     /// Replaces the active store and schedules the previous one for reclamation.
     pub fn swap(&self, new_store: TranslationStore) {
         #[cfg(feature = "std")]
         let _guard = self.write_mutex.lock().unwrap_or_else(|p| p.into_inner());
+        self.swap_unlocked(new_store);
+    }
+
+    fn swap_unlocked(&self, new_store: TranslationStore) {
         let new_ptr = Box::into_raw(Box::new(new_store));
         let old_ptr = self.ptr.swap(new_ptr, Ordering::SeqCst);
         if !old_ptr.is_null() {

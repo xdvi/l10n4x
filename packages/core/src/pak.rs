@@ -68,8 +68,13 @@ pub fn build_unsigned(compressed: &[u8], parent_locale: Option<&str>) -> Vec<u8>
 }
 
 /// Appends a signature to an unsigned container.
+///
+/// Reserves the exact final capacity up front (`unsigned + signature`) so the result is a
+/// single allocation with no intermediate realloc, rather than `to_vec()` (exact-size) followed
+/// by an `extend` that forces a second allocation and a full copy of the payload.
 pub fn seal(unsigned: &[u8], signature: &[u8; PAK_SIGNATURE_SIZE]) -> Vec<u8> {
-    let mut out = unsigned.to_vec();
+    let mut out = Vec::with_capacity(unsigned.len() + PAK_SIGNATURE_SIZE);
+    out.extend_from_slice(unsigned);
     out.extend_from_slice(signature);
     out
 }

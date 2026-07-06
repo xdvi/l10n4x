@@ -16,10 +16,17 @@ debug-keys = ["l10n4x-core/debug-keys"]
 
 [dev-dependencies]
 tempfile = "3"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "compile"
+harness = false
 
 [dependencies]
 serde_json = "1.0"
 l10n4x-core = { version = "0.1.0", path = "../core", default-features = false, features = ["alloc", "std", "encryption"] }
 zstd = "0.13"
+rayon = "1.10"
+ahash = { version = "0.8", default-features = false, features = ["std", "serde", "runtime-rng"] }
 thiserror = "1.0"
 ed25519-dalek = { version = "2.1", default-features = false, features = ["alloc", "std"] }
