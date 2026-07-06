@@ -4,10 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Create a realistic multi-locale test fixture.
-fn create_fixture(base: &PathBuf, locale_count: usize, files_per_locale: usize, keys_per_file: usize) {
-    let locales = [
-        "en", "es", "fr", "de", "pt", "it", "nl", "pl", "sv",
-    ];
+fn create_fixture(
+    base: &PathBuf,
+    locale_count: usize,
+    files_per_locale: usize,
+    keys_per_file: usize,
+) {
+    let locales = ["en", "es", "fr", "de", "pt", "it", "nl", "pl", "sv"];
 
     for i in 0..locale_count {
         let locale = locales[i % locales.len()];

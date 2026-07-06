@@ -84,7 +84,7 @@ pub fn generate_bindings(
                         .unwrap_or_default();
                 targets::typescript::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     &ctx,
                     &params_map,
@@ -93,7 +93,7 @@ pub fn generate_bindings(
             "flutter" => {
                 targets::flutter::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     &ctx,
                     to_lower_camel_case,
@@ -105,7 +105,7 @@ pub fn generate_bindings(
             "python" => {
                 targets::python::generate(
                     out_dir,
-                    &key_pairs,
+                    key_pairs,
                     &target.options,
                     to_upper_snake_case,
                 )?;

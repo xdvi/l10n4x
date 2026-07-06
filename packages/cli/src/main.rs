@@ -4,13 +4,13 @@ mod plugins;
 mod targets;
 mod tms;
 
+use ahash::AHashMap;
 use clap::{Parser, Subcommand};
 use config::{
     format_verify_public_key, get_encrypt_key, get_signing_key, load_config,
     parse_verify_public_key, save_config, Config, Target,
 };
 use generator::generate_bindings;
-use ahash::AHashMap;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io::{stdin, stdout, Write};
@@ -834,7 +834,10 @@ fn check_command(src_globs: Vec<String>, json_output: bool) -> i32 {
     };
 
     let globs = if src_globs.is_empty() {
-        DEFAULT_EXTRACT_GLOBS.iter().map(|g| g.to_string()).collect()
+        DEFAULT_EXTRACT_GLOBS
+            .iter()
+            .map(|g| g.to_string())
+            .collect()
     } else {
         src_globs
     };
@@ -1254,7 +1257,10 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
     let config = load_config()?;
 
     let globs = if src_globs.is_empty() {
-        DEFAULT_EXTRACT_GLOBS.iter().map(|g| g.to_string()).collect()
+        DEFAULT_EXTRACT_GLOBS
+            .iter()
+            .map(|g| g.to_string())
+            .collect()
     } else {
         src_globs
     };
@@ -1304,8 +1310,7 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
             let obj: serde_json::Value = serde_json::from_str(&content)
                 .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
 
-            let mut flat: AHashMap<String, String> =
-                AHashMap::new();
+            let mut flat: AHashMap<String, String> = AHashMap::new();
             l10n4x_compiler::flatten_value(ns.clone(), &obj, &mut flat);
             for k in flat.keys() {
                 existing_keys.insert(k.clone());
