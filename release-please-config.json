@@ -3,7 +3,7 @@
   "release-type": "rust",
   "include-v-in-tag": true,
   "include-component-in-tag": false,
-  "pull-request-title-pattern": "release: Prepare v${version}",
+  "pull-request-title-pattern": "release: prepare v${version}",
   "pull-request-header": ":robot: Release **v${version}** will begin when this PR is merged. See [CHANGELOG.md](https://github.com/xdvi/l10n4x/blob/main/CHANGELOG.md) for details.",
   "changelog-sections": [
     {"type": "feat", "section": "Features", "hidden": false},

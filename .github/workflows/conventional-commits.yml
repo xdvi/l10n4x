@@ -34,14 +34,15 @@ jobs:
             revert
             release
           requireScope: false
-          subjectPattern: ^[A-Z].+[^.]$
+          # Imperative lowercase subjects (Angular / cocogitto style). No trailing period.
+          subjectPattern: ^[a-z].+[^.]$
           subjectPatternError: |
-            Subject must start with a capital letter and not end with a period.
+            Subject must start with a lowercase letter and not end with a period.
 
             Examples:
-              feat: Add user authentication
-              fix: Resolve buffer overflow in lookup
-              docs: Update API documentation
+              feat: add user authentication
+              fix: resolve buffer overflow in lookup
+              release: prepare v1.0.1
 
   commit-messages:
     name: Commit messages follow conventional commits
