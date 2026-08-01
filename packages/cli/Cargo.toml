@@ -35,7 +35,7 @@ l10n4x-plugin-crowdin = { version = "1.0.0", path = "../plugins/crowdin", option
 tokio-stream = { version = "0.1", features = ["sync"] }
 tower-http = { version = "0.5", features = ["cors", "timeout"] } # For browser cross-origin dev server requests
 subtle = "2.5"
-base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+base64 = { version = "0.23", default-features = false, features = ["alloc"] }
 regex-lite = "0.1"
 glob = { version = "0.3", default-features = false }
 ureq = { version = "2.10", default-features = false, features = ["tls"] }
