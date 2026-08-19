@@ -18,7 +18,7 @@ catch (Exception ex)
     return 1;
 }
 
-if (L10n.l10n4c_set_fallback_locale("es") != L10n.L10N4C_OK)
+if (L10n.SetFallbackLocale("es") != L10n.L10N4C_OK)
 {
     Console.WriteLine("Failed to set fallback locale.");
     return 1;
@@ -27,7 +27,7 @@ if (L10n.l10n4c_set_fallback_locale("es") != L10n.L10N4C_OK)
 var examplesDir = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".."));
 var lpkDir = Path.Combine(examplesDir, "dist", "locales");
 
-if (L10n.l10n4c_load_lpk_directory(lpkDir) != L10n.L10N4C_OK)
+if (L10n.LoadLpkDirectory(lpkDir) != L10n.L10N4C_OK)
 {
     Console.WriteLine("Failed to load lpk directory.");
     return 1;
@@ -36,5 +36,5 @@ if (L10n.l10n4c_load_lpk_directory(lpkDir) != L10n.L10N4C_OK)
 Console.WriteLine(L10n.Translate("es", "common.welcome"));
 Console.WriteLine(L10n.TranslateBuffered("en", "common.welcome"));
 
-L10n.l10n4c_clear();
+L10n.Clear();
 return 0;
