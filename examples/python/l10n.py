@@ -1,6 +1,5 @@
 import ctypes
 import os
-import sys
 from typing import Dict, Optional
 
 RELEASES_URL = "https://github.com/xdvi/l10n4x/releases/latest"
@@ -196,7 +195,7 @@ class Translator:
         code = self._lib.l10n4c_translate_required_size(
             c_locale, ctypes.c_uint64(key_hash), ctypes.byref(out_size)
         )
-        if code != L10N4C_OK and code != L10N4C_KEY_NOT_FOUND:
+        if code not in (L10N4C_OK, L10N4C_KEY_NOT_FOUND):
             return key
 
         size = out_size.value

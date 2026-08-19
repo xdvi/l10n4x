@@ -368,7 +368,7 @@ pub fn pack_l10n<V: AsRef<[u8]>>(
     min_runtime_version: u32,
     locale_data_version: u32,
     #[cfg(feature = "debug-keys")] debug_keys: Option<&[(u64, String)]>,
-    #[cfg(not(feature = "debug-keys"))] _debug_keys: Option<&[(u64, String)]>,
+    #[cfg(not(feature = "debug-keys"))] _no_debug_keys: Option<&[(u64, String)]>,
 ) -> Vec<u8> {
     let mut data_pool = Vec::new();
     let mut index_entries = Vec::with_capacity(entries.len());

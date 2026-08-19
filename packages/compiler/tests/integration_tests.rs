@@ -107,12 +107,7 @@ fn test_parser_plural_mf1() {
         MessageParser::new("{count, plural, =0 {no messages} =1 {one message} other {# messages}}");
     let nodes = parser.parse().unwrap();
     assert_eq!(nodes.len(), 1);
-    if let MessageNode::Plural {
-        var,
-        ordinal: _,
-        cases,
-    } = &nodes[0]
-    {
+    if let MessageNode::Plural { var, cases, .. } = &nodes[0] {
         assert_eq!(&var[..], "count");
         assert_eq!(cases.len(), 3);
         assert_eq!(cases[0].0, PluralCaseKey::Exact(0.0));
@@ -414,7 +409,7 @@ when * * {other}"#;
         "Two-var match with =prefix keys should work"
     );
     match &result.unwrap()[0] {
-        MessageNode::Select { var, cases: _ } => {
+        MessageNode::Select { var, .. } => {
             assert_eq!(&var[..], "size", "Outer var should be the 2nd selector");
         }
         other => panic!("Expected Select, got {:?}", other),
@@ -734,7 +729,7 @@ when * y {second}
 when * * {all}"#;
     let nodes = MessageParser::new(input).parse().unwrap();
     match &nodes[0] {
-        MessageNode::Select { var, cases: _ } => {
+        MessageNode::Select { var, .. } => {
             assert_eq!(&var[..], "b");
         }
         other => panic!("Expected Select, got {:?}", other),
@@ -799,12 +794,7 @@ fn test_parser_plural_mf2() {
     );
     let nodes = parser.parse().unwrap();
     assert_eq!(nodes.len(), 1);
-    if let MessageNode::Plural {
-        var,
-        ordinal: _,
-        cases,
-    } = &nodes[0]
-    {
+    if let MessageNode::Plural { var, cases, .. } = &nodes[0] {
         assert_eq!(&var[..], "count");
         assert_eq!(cases.len(), 3);
 

@@ -229,8 +229,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 fn iso_timestamp() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let days = (secs / 86_400) as i64;
     let rem = secs % 86_400;
     let (hh, mm, ss) = (rem / 3600, (rem % 3600) / 60, rem % 60);

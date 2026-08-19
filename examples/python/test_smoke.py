@@ -1,8 +1,7 @@
 import os
-import sys
 import unittest
 
-from l10n import RELEASES_URL, Translator
+from l10n import Translator
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 EXAMPLES_DIR = os.path.join(TEST_DIR, "..")

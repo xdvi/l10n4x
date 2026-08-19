@@ -52,11 +52,10 @@ pub fn plugin_info(name: &str) -> Result<(), anyhow::Error> {
         anyhow::bail!("'{name}' is a core TMS provider, not a plugin");
     }
 
-    let install = KNOWN_PLUGINS
-        .iter()
-        .find(|(id, _)| *id == name)
-        .map(|(_, cmd)| *cmd)
-        .unwrap_or("place an executable l10n4x-plugin-<id> on PATH");
+    let install = KNOWN_PLUGINS.iter().find(|(id, _)| *id == name).map_or(
+        "place an executable l10n4x-plugin-<id> on PATH",
+        |(_, cmd)| *cmd,
+    );
 
     println!("Plugin: {name}");
     println!("Binary: l10n4x-plugin-{name}");
@@ -98,8 +97,10 @@ pub fn run_plugin_sync(
     let install_hint = KNOWN_PLUGINS
         .iter()
         .find(|(id, _)| *id == plugin_id)
-        .map(|(_, cmd)| *cmd)
-        .unwrap_or("install l10n4x-plugin-<id> on PATH (see: l10n4x plugin validate)");
+        .map_or(
+            "install l10n4x-plugin-<id> on PATH (see: l10n4x plugin validate)",
+            |(_, cmd)| *cmd,
+        );
 
     anyhow::bail!(
         "TMS plugin '{plugin_id}' is not installed.\n\
@@ -121,7 +122,7 @@ fn sync_context_from_config(config: &Config, plugin_id: &str) -> SyncContext {
             .plugins
             .get(plugin_id)
             .cloned()
-            .unwrap_or(serde_json::Value::Object(serde_json::Map::new())),
+            .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new())),
     }
 }
 

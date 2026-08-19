@@ -531,7 +531,7 @@ pub fn parse_interval_plural(input: &str) -> Result<Option<PluralCases>, String>
         let close_paren = remaining
             .find(')')
             .ok_or_else(|| "Unmatched '(' in interval plural".to_string())?;
-        let range_part = &remaining[0..close_paren + 1]; // e.g., "(0)" or "(2-7)" or "(7-inf)"
+        let range_part = &remaining[0..=close_paren]; // e.g., "(0)" or "(2-7)" or "(7-inf)"
 
         // Find the matching [ for body
         let open_body = remaining[close_paren..]
@@ -716,11 +716,7 @@ fn collect_params<'a>(
                     out.push(name.to_string());
                 }
             }
-            MessageNode::Plural {
-                var,
-                ordinal: _,
-                cases,
-            } => {
+            MessageNode::Plural { var, cases, .. } => {
                 if seen.insert(var) {
                     out.push(var.to_string());
                 }
@@ -954,7 +950,7 @@ when warn * {Warning}
 when *   * {Unknown}"#;
         let nodes = MessageParser::new(input).parse().unwrap();
         match &nodes[0] {
-            MessageNode::Select { var, cases: _ } => {
+            MessageNode::Select { var, .. } => {
                 assert_eq!(
                     &var[..],
                     "level",
