@@ -2,6 +2,7 @@
 import os
 import sys
 import ctypes
+from typing import Dict
 from l10n import RELEASES_URL, Translator
 
 # 1. Definir la firma del tipo de callback para C (FFI)
@@ -15,7 +16,7 @@ LOADER_CALLBACK_TYPE = ctypes.CFUNCTYPE(
 
 # Mantenemos las variables vivas en memoria global para que Python no limpie el garbage collector
 _loader_keepalive = None
-_buffer_keepalive = {}
+_buffer_keepalive: Dict[str, object] = {}
 
 def examples_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -69,11 +70,15 @@ def main() -> int:
     # 3. Registrar el callback en el FFI
     try:
         # En la implementación de FFI, usaremos: l10n4c_register_loader_backend
+        # Acceso intencional a _lib: API interna del wrapper para registrar el
+        # callback FFI del loader (ejemplo didáctico de FFI).
+        # pylint: disable=protected-access
         _loader_keepalive = LOADER_CALLBACK_TYPE(my_python_loader)
         tr._lib.l10n4c_register_loader_backend.argtypes = [LOADER_CALLBACK_TYPE]
         tr._lib.l10n4c_register_loader_backend.restype = ctypes.c_int
         
         code = tr._lib.l10n4c_register_loader_backend(_loader_keepalive)
+        # pylint: enable=protected-access
         if code != 0:
             raise RuntimeError(f"FFI error code: {code}")
     except AttributeError:
@@ -87,7 +92,7 @@ def main() -> int:
     en_welcome = tr.translate("en", "common.welcome")
     en_greet = tr.translate("en", "common.greet", params={"name": "Diego"})
 
-    print(f"\nResultados:")
+    print("\nResultados:")
     print(f"[es] welcome: {es_welcome}")
     print(f"[en] welcome: {en_welcome}")
     print(f"[en] greet:   {en_greet}")

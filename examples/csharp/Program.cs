@@ -6,6 +6,8 @@
 //
 // Releases: https://github.com/xdvi/l10n4x/releases/latest
 
+using L10n4x;
+
 try
 {
     L10n.InstallRuntimeKeys();

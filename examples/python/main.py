@@ -62,9 +62,12 @@ def main() -> int:
     print(f"[en] welcome: {en_welcome}")
     print(f"[en] greet:   {en_greet}")
 
-    assert "Bienvenido" in es_welcome, f"unexpected es welcome: {es_welcome!r}"
-    assert "Welcome" in en_welcome, f"unexpected en welcome: {en_welcome!r}"
-    assert "World" in en_greet, f"unexpected en greet: {en_greet!r}"
+    if "Bienvenido" not in es_welcome:
+        raise RuntimeError(f"unexpected es welcome: {es_welcome!r}")
+    if "Welcome" not in en_welcome:
+        raise RuntimeError(f"unexpected en welcome: {en_welcome!r}")
+    if "World" not in en_greet:
+        raise RuntimeError(f"unexpected en greet: {en_greet!r}")
 
     tr.clear()
     return 0

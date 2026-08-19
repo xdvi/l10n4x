@@ -180,9 +180,10 @@ mod tests {
 
     #[test]
     fn generate_bindings_unknown_target_warns() {
+        let temp = tempfile::tempdir().unwrap();
         let targets = vec![Target {
             r#type: "nonexistent".to_string(),
-            out_dir: "/tmp".to_string(),
+            out_dir: temp.path().join("out").to_str().unwrap().to_string(),
             options: serde_json::json!({}),
         }];
         let key_pairs = vec![(0xabcdefu64, "a.b".to_string())];
@@ -191,7 +192,7 @@ mod tests {
             &key_pairs,
             "en",
             ".",
-            "/tmp",
+            temp.path().to_str().unwrap(),
             "0000000000000000000000000000000000000000000000000000000000000000",
             false,
             "",

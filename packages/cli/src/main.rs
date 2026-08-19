@@ -518,8 +518,7 @@ fn extract_token(req: &Request<Body>) -> Option<String> {
     }
     if let Some(query) = req.uri().query() {
         for pair in query.split('&') {
-            let mut parts = pair.splitn(2, '=');
-            if let (Some(k), Some(v)) = (parts.next(), parts.next()) {
+            if let Some((k, v)) = pair.split_once('=') {
                 if k == "token" {
                     return Some(v.to_string());
                 }
@@ -529,8 +528,11 @@ fn extract_token(req: &Request<Body>) -> Option<String> {
     None
 }
 
+/// Env var holding the dev-server bearer token (unset or empty disables auth).
+const DEV_TOKEN_ENV: &str = "L10N4X_DEV_TOKEN";
+
 async fn auth_middleware(req: Request<Body>, next: Next) -> Result<impl IntoResponse, StatusCode> {
-    let expected_token = match std::env::var("L10N4X_DEV_TOKEN") {
+    let expected_token = match std::env::var(DEV_TOKEN_ENV) {
         Ok(t) if !t.is_empty() => t,
         _ => return Ok(next.run(req).await),
     };
@@ -780,16 +782,18 @@ async fn run_dev_server(port: u16, flutter_web: bool) -> Result<(), anyhow::Erro
 
 /// Inserts a dot-separated key path into a nested JSON object.
 fn insert_nested_key(obj: &mut serde_json::Value, key_path: &str, value: &str) {
-    let parts: Vec<&str> = key_path.splitn(2, '.').collect();
     if let serde_json::Value::Object(map) = obj {
-        if parts.len() == 1 {
-            map.entry(parts[0])
-                .or_insert(serde_json::Value::String(value.to_string()));
-        } else {
-            let child = map
-                .entry(parts[0])
-                .or_insert(serde_json::Value::Object(serde_json::Map::new()));
-            insert_nested_key(child, parts[1], value);
+        match key_path.split_once('.') {
+            None => {
+                map.entry(key_path)
+                    .or_insert(serde_json::Value::String(value.to_string()));
+            }
+            Some((head, rest)) => {
+                let child = map
+                    .entry(head)
+                    .or_insert(serde_json::Value::Object(serde_json::Map::new()));
+                insert_nested_key(child, rest, value);
+            }
         }
     }
 }
@@ -1027,8 +1031,7 @@ fn pseudolocalize_string(s: &str) -> String {
             let sub = SUBSTITUTIONS
                 .iter()
                 .find(|(from, _)| *from == c)
-                .map(|(_, to)| *to)
-                .unwrap_or(c);
+                .map_or(c, |(_, to)| *to);
             result.push(sub);
             visible_chars += 1;
         }
@@ -1308,7 +1311,7 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
             let ns = fpath.file_stem().unwrap().to_string_lossy().to_string();
             let content = std::fs::read_to_string(&fpath)?;
             let obj: serde_json::Value = serde_json::from_str(&content)
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                .unwrap_or_else(|_| serde_json::Value::Object(serde_json::Map::new()));
 
             let mut flat: AHashMap<String, String> = AHashMap::new();
             l10n4x_compiler::flatten_value(ns.clone(), &obj, &mut flat);
@@ -1340,7 +1343,7 @@ fn extract_command(src_globs: Vec<String>, dry_run: bool) -> Result<(), anyhow::
             let mut obj = namespaces
                 .get(&ns)
                 .cloned()
-                .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
+                .unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
 
             for key in &keys {
                 let rest = key.strip_prefix(&format!("{}.", ns)).unwrap_or(key);
