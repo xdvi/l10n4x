@@ -7,6 +7,14 @@ automate releases. Entries below are generated from conventional commits.
 
 ---
 
+## [1.0.1](https://github.com/xdvi/l10n4x/compare/v1.0.0...v1.0.1) (2026-08-21)
+
+
+### Refactors
+
+* apply lint fixes for DeepSource findings ([2b4b0ba](https://github.com/xdvi/l10n4x/commit/2b4b0ba20bd6dfc7f022b5873b581dc139a89a90))
+* encapsulate C# P/Invoke behind public wrappers (CS-W1059) ([4444d78](https://github.com/xdvi/l10n4x/commit/4444d786585958f30e11f6f7e0031b920f2c4bbc))
+
 ## [1.0.0](https://github.com/xdvi/l10n4x/compare/v0.1.0...v1.0.0) (2026-07-17)
 
 
