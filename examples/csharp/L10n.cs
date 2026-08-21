@@ -24,42 +24,42 @@ internal static class L10n
     }
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_set_verify_key(byte[] key, nuint keyLen);
+    private static extern int l10n4c_set_verify_key(byte[] key, nuint keyLen);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_set_decrypt_key(byte[] key, nuint keyLen);
+    private static extern int l10n4c_set_decrypt_key(byte[] key, nuint keyLen);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_set_fallback_locale(
+    private static extern int l10n4c_set_fallback_locale(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_load_lpk_directory(
+    private static extern int l10n4c_load_lpk_directory(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dirPath);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_translate_required_size(
+    private static extern int l10n4c_translate_required_size(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale,
         ulong keyHash,
         out nuint outSize);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern int l10n4c_translate(
+    private static extern int l10n4c_translate(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale,
         ulong keyHash,
         byte[] buf,
         nuint maxLen);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern nint l10n4c_translate_alloc(
+    private static extern nint l10n4c_translate_alloc(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string locale,
         ulong keyHash);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void l10n4c_free_string(nint ptr);
+    private static extern void l10n4c_free_string(nint ptr);
 
     [DllImport(LibName, CallingConvention = CallingConvention.Cdecl)]
-    internal static extern void l10n4c_clear();
+    private static extern void l10n4c_clear();
 
     private static nint LoadNativeLibrary()
     {
@@ -123,6 +123,12 @@ internal static class L10n
             }
         }
     }
+
+    public static int SetFallbackLocale(string locale) => l10n4c_set_fallback_locale(locale);
+
+    public static int LoadLpkDirectory(string dirPath) => l10n4c_load_lpk_directory(dirPath);
+
+    public static void Clear() => l10n4c_clear();
 
     private static byte[] HexToBytes(string hex)
     {
