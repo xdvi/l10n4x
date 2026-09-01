@@ -34,4 +34,4 @@ dwarf-debug-info = false
 omit-default-module-path = false
 
 [dev-dependencies]
-wasmtime = "47"
+wasmtime = "48"
